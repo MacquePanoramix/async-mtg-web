@@ -1,0 +1,10 @@
+@import "tailwindcss";
+
+/* tiny safe reset */
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+}

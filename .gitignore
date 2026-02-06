@@ -1,3 +1,9 @@
+# Local env files (never commit)
+.env
+.env.*
+!.env.example
+
+
 # Logs
 logs
 *.log

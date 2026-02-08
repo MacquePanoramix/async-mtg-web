@@ -89,7 +89,7 @@ const copyToClipboard = (text) => {
 };
 
 // --- Components ---
-const Lobby = ({ onCreate, onJoin, isError, errorMsg, currentUserId, isActionLoading }) => {
+const Lobby = ({ onCreate, onJoin, onWatch, isError, errorMsg, currentUserId, isActionLoading }) => {
   const [name, setName] = useState('');
   const [code, setCode] = useState('');
   const [mode, setMode] = useState('menu');
@@ -127,20 +127,29 @@ const Lobby = ({ onCreate, onJoin, isError, errorMsg, currentUserId, isActionLoa
           </div>
 
           {mode === 'menu' && (
-            <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  onClick={() => onCreate(name)}
+                  disabled={!name || isInitLoading || isActionLoading}
+                  className="bg-purple-600 hover:bg-purple-700 disabled:opacity-50 disabled:cursor-wait text-white p-3 rounded-lg font-bold transition-colors flex justify-center items-center gap-2"
+                >
+                  {isActionLoading ? <Loader2 className="animate-spin" size={18}/> : 'Create Game'}
+                </button>
+                <button
+                  onClick={() => setMode('join')}
+                  disabled={!name || isInitLoading || isActionLoading}
+                  className="bg-slate-700 hover:bg-slate-600 disabled:opacity-50 disabled:cursor-wait text-white p-3 rounded-lg font-bold transition-colors flex justify-center items-center gap-2"
+                >
+                  {isInitLoading ? <Loader2 className="animate-spin" size={18}/> : 'Join Game'}
+                </button>
+              </div>
               <button
-                onClick={() => onCreate(name)}
+                onClick={() => setMode('watch')}
                 disabled={!name || isInitLoading || isActionLoading}
-                className="bg-purple-600 hover:bg-purple-700 disabled:opacity-50 disabled:cursor-wait text-white p-3 rounded-lg font-bold transition-colors flex justify-center items-center gap-2"
+                className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-wait text-white p-3 rounded-lg font-bold transition-colors flex justify-center items-center gap-2"
               >
-                {isActionLoading ? <Loader2 className="animate-spin" size={18}/> : 'Create Game'}
-              </button>
-              <button
-                onClick={() => setMode('join')}
-                disabled={!name || isInitLoading || isActionLoading}
-                className="bg-slate-700 hover:bg-slate-600 disabled:opacity-50 disabled:cursor-wait text-white p-3 rounded-lg font-bold transition-colors flex justify-center items-center gap-2"
-              >
-                {isInitLoading ? <Loader2 className="animate-spin" size={18}/> : 'Join Game'}
+                {isInitLoading ? <Loader2 className="animate-spin" size={18}/> : 'Watch Game'}
               </button>
             </div>
           )}
@@ -172,6 +181,38 @@ const Lobby = ({ onCreate, onJoin, isError, errorMsg, currentUserId, isActionLoa
                   className="flex-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white p-3 rounded-lg font-bold flex justify-center items-center gap-2"
                 >
                   {isActionLoading ? <Loader2 className="animate-spin" size={18}/> : 'Enter'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {mode === 'watch' && (
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-400 mb-1">Room Code</label>
+                <input
+                  type="text"
+                  value={code}
+                  onChange={(e) => setCode(e.target.value.toUpperCase())}
+                  className="w-full bg-slate-900 border border-slate-700 rounded p-3 text-white focus:ring-2 focus:ring-purple-500 outline-none tracking-widest font-mono uppercase"
+                  placeholder="A7X92B"
+                  maxLength={6}
+                />
+              </div>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setMode('menu')}
+                  disabled={isActionLoading}
+                  className="flex-1 bg-slate-700 hover:bg-slate-600 text-white p-3 rounded-lg font-bold"
+                >
+                  Back
+                </button>
+                <button
+                  onClick={() => onWatch(name, code)}
+                  disabled={!code || isInitLoading || isActionLoading}
+                  className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white p-3 rounded-lg font-bold flex justify-center items-center gap-2"
+                >
+                  {isActionLoading ? <Loader2 className="animate-spin" size={18}/> : 'Watch'}
                 </button>
               </div>
             </div>
@@ -297,7 +338,7 @@ const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isD
   );
 };
 
-const GameBoard = ({ gameId, realUserId, onExit }) => {
+const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const [game, setGame] = useState(null);
   const [loading, setLoading] = useState(true);
   const [deckInput, setDeckInput] = useState('');
@@ -316,6 +357,8 @@ const GameBoard = ({ gameId, realUserId, onExit }) => {
   const [libraryMenuPos, setLibraryMenuPos] = useState(null);
   const [notification, setNotification] = useState(null);
   const [boardUnlocked, setBoardUnlocked] = useState(false);
+  const [viewAsId, setViewAsId] = useState(null);
+  const [spectatorLastSeenChatAt, setSpectatorLastSeenChatAt] = useState(0);
   const boardRef = useRef(null);
   const diceButtonRef = useRef(null);
   const libraryButtonRef = useRef(null);
@@ -337,6 +380,27 @@ const GameBoard = ({ gameId, realUserId, onExit }) => {
 
   // Use the viewAsId to determine which player is "Active" on this screen
   const userId = realUserId;
+  const isPlayer = (game?.players || []).some(p => p.id === userId);
+  const isSpectator = !isPlayer && (game?.spectatorIds || []).includes(userId);
+
+  useEffect(() => {
+    if (!game || !isSpectator) return;
+    const players = game.players || [];
+    if (players.length === 0) return;
+    if (!viewAsId || !players.some(p => p.id === viewAsId)) {
+      setViewAsId(players[0].id);
+    }
+  }, [game, isSpectator, viewAsId]);
+
+  useEffect(() => {
+    if (isSpectator && boardUnlocked) {
+      setBoardUnlocked(false);
+    }
+  }, [isSpectator, boardUnlocked]);
+
+  const viewAsPlayerId = isSpectator ? viewAsId : userId;
+  const viewAsPlayer = (game?.players || []).find(p => p.id === viewAsPlayerId);
+  const canAct = !isSpectator;
 
   const getFallbackPos = (i) => ({ x: (i % 5) * 18 + 5, y: 10 + Math.floor(i / 5) * 22 });
   const getPlayerTargetId = (pid) => `player:${pid}`;
@@ -411,8 +475,8 @@ const GameBoard = ({ gameId, realUserId, onExit }) => {
   // Chat Helpers
   const chatMessages = (game?.log || []).filter(e => e.type === 'CHAT');
   // FIX: Safety check for players array
-  const myPlayer = (game?.players || []).find(p => p.id === userId);
-  const lastSeen = myPlayer?.lastSeenChatAt || 0;
+  const myPlayer = viewAsPlayer;
+  const lastSeen = isSpectator ? spectatorLastSeenChatAt : (myPlayer?.lastSeenChatAt || 0);
   const unreadCount = chatMessages.filter(m => m.timestamp > lastSeen && m.playerId !== userId).length;
 
   useEffect(() => {
@@ -430,11 +494,15 @@ const GameBoard = ({ gameId, realUserId, onExit }) => {
 
   const openChat = () => {
     setChatOpen(true);
-    handleAction('SET_CHAT_SEEN', { timestamp: Date.now() });
+    if (isSpectator) {
+      setSpectatorLastSeenChatAt(Date.now());
+    } else {
+      handleAction('SET_CHAT_SEEN', { timestamp: Date.now() });
+    }
   };
 
   const handleDragStart = (e, card) => {
-    if (!boardUnlocked || targetingState) return;
+    if (isSpectator || !boardUnlocked || targetingState) return;
     e.stopPropagation();
     const clientX = e.touches ? e.touches[0].clientX : e.clientX;
     const clientY = e.touches ? e.touches[0].clientY : e.clientY;
@@ -474,10 +542,10 @@ const GameBoard = ({ gameId, realUserId, onExit }) => {
     setDraggingCard(null);
   };
 
-  const isMyTurn = game?.turnPlayerId === userId;
-  const hasPriority = game?.priorityPlayerId === userId;
+  const isMyTurn = game?.turnPlayerId === viewAsPlayerId;
+  const hasPriority = game?.priorityPlayerId === viewAsPlayerId;
 
-  const opponent = game?.players.find(p => p.id !== userId);
+  const opponent = game?.players.find(p => p.id !== viewAsPlayerId);
   const isOppTurn = !!opponent && game?.turnPlayerId === opponent.id;
   const handRevealed = myPlayer?.handRevealed || false;
 
@@ -485,6 +553,11 @@ const GameBoard = ({ gameId, realUserId, onExit }) => {
 
   const handleAction = async (actionType, payload = {}) => {
     if (!game) return;
+    if (isSpectator && actionType !== 'SEND_CHAT') {
+      setNotification("Spectators can't take game actions.");
+      setTimeout(() => setNotification(null), 2000);
+      return;
+    }
     // UPDATED: Path
     const gameRef = doc(db, 'games_v3', gameId);
 
@@ -492,7 +565,7 @@ const GameBoard = ({ gameId, realUserId, onExit }) => {
     const logEntry = {
       timestamp: Date.now(),
       playerId: userId,
-      playerName: myPlayer?.name || 'Unknown',
+      playerName: isSpectator ? (displayName || 'Viewer') : (myPlayer?.name || 'Unknown'),
       type: actionType,
       desc: payload.desc || actionType
     };
@@ -517,7 +590,7 @@ const GameBoard = ({ gameId, realUserId, onExit }) => {
       const chatEntry = {
         timestamp: Date.now(),
         playerId: userId,
-        playerName: myPlayer?.name || 'Unknown',
+        playerName: logEntry.playerName,
         type: 'CHAT',
         text: payload.text,
         desc: 'CHAT'
@@ -997,6 +1070,11 @@ const GameBoard = ({ gameId, realUserId, onExit }) => {
   };
 
   const importDeck = async () => {
+    if (isSpectator) {
+      setNotification("Spectators can't import decks.");
+      setTimeout(() => setNotification(null), 2000);
+      return;
+    }
     setImporting(true);
     const lines = deckInput.split('\n').filter(l => l.trim());
     const newCards = [...(game.cards || [])];
@@ -1045,7 +1123,7 @@ const GameBoard = ({ gameId, realUserId, onExit }) => {
       log: arrayUnion({
         timestamp: Date.now(),
         playerId: userId,
-        playerName: myPlayer?.name || 'Unknown',
+        playerName: myPlayer?.name || displayName || 'Unknown',
         type: 'IMPORT',
         desc: `Imported ${lines.length} cards`
       })
@@ -1056,18 +1134,28 @@ const GameBoard = ({ gameId, realUserId, onExit }) => {
   };
 
   const createToken = () => {
+    if (isSpectator) {
+      setNotification("Spectators can't create tokens.");
+      setTimeout(() => setNotification(null), 2000);
+      return;
+    }
     setLibraryMenuOpen(false);
     setTokenModal({ name: "Token", power: "1", toughness: "1" });
   };
 
   const addCustomCounter = () => {
+    if (isSpectator) {
+      setNotification("Spectators can't modify counters.");
+      setTimeout(() => setNotification(null), 2000);
+      return;
+    }
     if(!selectedCard) return;
     setCustomCounterModal({ cardId: selectedCard.instanceId, label: 'default', amount: 1 });
     setSelectedCard(null);
   };
 
   const toggleTarget = (card) => {
-    if (!targetingState) return;
+    if (isSpectator || !targetingState) return;
     const newSelected = [...targetingState.selectedIds];
     const idx = newSelected.indexOf(card.instanceId);
     if (idx >= 0) newSelected.splice(idx, 1);
@@ -1076,7 +1164,7 @@ const GameBoard = ({ gameId, realUserId, onExit }) => {
   };
 
   const toggleTargetPlayer = (pid) => {
-    if (!targetingState) return;
+    if (isSpectator || !targetingState) return;
     const pidStr = getPlayerTargetId(pid);
     const newSelected = [...targetingState.selectedIds];
     const idx = newSelected.indexOf(pidStr);
@@ -1086,7 +1174,7 @@ const GameBoard = ({ gameId, realUserId, onExit }) => {
   };
 
   const finishTargeting = async () => {
-    if (!targetingState || !game) return;
+    if (isSpectator || !targetingState || !game) return;
     const { source, mode, selectedIds } = targetingState;
 
     const cardTargets = selectedIds.filter(id => !id.startsWith('player:'));
@@ -1124,6 +1212,11 @@ const GameBoard = ({ gameId, realUserId, onExit }) => {
   };
 
   const clearTargets = async (card) => {
+    if (isSpectator) {
+      setNotification("Spectators can't modify targets.");
+      setTimeout(() => setNotification(null), 2000);
+      return;
+    }
     if (!game.targets) return;
     const newTargets = game.targets.filter(t => !((t.sourceId === card.instanceId || t.targetId === card.instanceId) && t.controllerId === userId));
 
@@ -1145,6 +1238,11 @@ const GameBoard = ({ gameId, realUserId, onExit }) => {
 
   // Reorder Logic
   const startReorderTop = (targetId = userId) => {
+    if (isSpectator) {
+      setNotification("Spectators can't reorder libraries.");
+      setTimeout(() => setNotification(null), 2000);
+      return;
+    }
     setLibraryMenuOpen(false);
     if (!game) return;
     const lib = game.cards.filter(c => c.ownerId === targetId && c.zone === ZONES.LIBRARY);
@@ -1201,21 +1299,23 @@ const GameBoard = ({ gameId, realUserId, onExit }) => {
   if (!game) return <div className="text-white p-10">Game not found</div>;
 
   // FIX: Add defaults (|| []) to prevent crashes on initial sync
-  const myHand = (game.cards || []).filter(c => c.controllerId === userId && c.zone === ZONES.HAND);
-  const myBattlefield = (game.cards || []).filter(c => c.controllerId === userId && c.zone === ZONES.BATTLEFIELD);
-  const oppBattlefield = (game.cards || []).filter(c => c.controllerId !== userId && c.zone === ZONES.BATTLEFIELD);
-  const oppHand = (game.cards || []).filter(c => c.controllerId !== userId && c.zone === ZONES.HAND);
-  const opponentIsRevealing = (game.players || []).find(p => p.id !== userId)?.handRevealed;
+  const myHand = (game.cards || []).filter(c => c.controllerId === viewAsPlayerId && c.zone === ZONES.HAND);
+  const myBattlefield = (game.cards || []).filter(c => c.controllerId === viewAsPlayerId && c.zone === ZONES.BATTLEFIELD);
+  const oppBattlefield = (game.cards || []).filter(c => c.controllerId !== viewAsPlayerId && c.zone === ZONES.BATTLEFIELD);
+  const oppHand = (game.cards || []).filter(c => c.controllerId !== viewAsPlayerId && c.zone === ZONES.HAND);
+  const opponentIsRevealing = (game.players || []).find(p => p.id !== viewAsPlayerId)?.handRevealed;
 
   const getZoneCount = (pid, zone) => (game.cards || []).filter(c => c.ownerId === pid && c.zone === zone).length;
-  const myGYCount = getZoneCount(userId, ZONES.GRAVEYARD);
-  const myExileCount = getZoneCount(userId, ZONES.EXILE);
+  const myGYCount = getZoneCount(viewAsPlayerId, ZONES.GRAVEYARD);
+  const myExileCount = getZoneCount(viewAsPlayerId, ZONES.EXILE);
   // Opponent Counts
   const oppGYCount = opponent ? getZoneCount(opponent.id, ZONES.GRAVEYARD) : 0;
   const oppExileCount = opponent ? getZoneCount(opponent.id, ZONES.EXILE) : 0;
 
   const stackCards = game.stack || [];
   const cardsMap = new Map((game.cards || []).map(c => [c.instanceId, c]));
+  const playerOne = (game.players || [])[0];
+  const playerTwo = (game.players || [])[1];
 
   // Collect player targets from stack
   const stackPlayerTargets = new Set();
@@ -1226,7 +1326,7 @@ const GameBoard = ({ gameId, realUserId, onExit }) => {
   });
 
   const isOpponentTargeted = (opponent && targetingState?.selectedIds.includes(getPlayerTargetId(opponent.id))) || (opponent && stackPlayerTargets.has(opponent.id));
-  const isSelfTargeted = targetingState?.selectedIds.includes(getPlayerTargetId(userId)) || stackPlayerTargets.has(userId);
+  const isSelfTargeted = targetingState?.selectedIds.includes(getPlayerTargetId(viewAsPlayerId)) || stackPlayerTargets.has(viewAsPlayerId);
 
   return (
     <div
@@ -1256,6 +1356,35 @@ const GameBoard = ({ gameId, realUserId, onExit }) => {
           <span className="text-[9px] text-slate-500 uppercase tracking-widest hidden sm:block">Room Code</span>
           <span className="text-xs font-mono font-bold text-white tracking-widest">{gameId}</span>
         </div>
+
+        {isSpectator && (
+          <div className="flex items-center gap-2 bg-slate-900 border border-slate-700 rounded px-3 py-1 w-full sm:w-auto order-4 sm:order-none">
+            <span className="text-[10px] font-bold uppercase tracking-widest text-blue-300 bg-blue-900/40 border border-blue-500/40 px-2 py-0.5 rounded-full">
+              VIEWER
+            </span>
+            <div className="flex items-center gap-2 text-xs text-slate-400">
+              <span>View as:</span>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => playerOne && setViewAsId(playerOne.id)}
+                  disabled={!playerOne}
+                  className={`px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider border ${viewAsPlayerId === playerOne?.id ? 'bg-blue-600 text-white border-blue-500' : 'bg-slate-800 text-slate-300 border-slate-700 hover:text-white'} disabled:opacity-40`}
+                  title={playerOne?.name || 'Player 1'}
+                >
+                  Player 1
+                </button>
+                <button
+                  onClick={() => playerTwo && setViewAsId(playerTwo.id)}
+                  disabled={!playerTwo}
+                  className={`px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider border ${viewAsPlayerId === playerTwo?.id ? 'bg-blue-600 text-white border-blue-500' : 'bg-slate-800 text-slate-300 border-slate-700 hover:text-white'} disabled:opacity-40`}
+                  title={playerTwo?.name || 'Player 2'}
+                >
+                  Player 2
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="flex items-center gap-4">
           <div className="flex flex-col items-center">
@@ -1289,7 +1418,9 @@ const GameBoard = ({ gameId, realUserId, onExit }) => {
           </button>
           <div className="h-8 w-[1px] bg-slate-700 mx-1"></div>
           {/* Priority Button */}
-          {waitingForPlayers ? (
+          {isSpectator ? (
+            <div className="text-xs text-blue-300 font-bold flex items-center gap-1"><Eye size={12} /> Viewing</div>
+          ) : waitingForPlayers ? (
             <div className="text-xs text-yellow-500 font-bold flex items-center gap-1"><Users size={12} /> Waiting</div>
           ) : hasPriority ? (
             <button
@@ -1423,15 +1554,15 @@ const GameBoard = ({ gameId, realUserId, onExit }) => {
           {/* Unlock Controls */}
           <div className="sticky top-0 z-30 flex justify-end gap-2 pointer-events-none">
             <button
-              onClick={() => handleAction('TIDY_BOARD')}
-              className={`pointer-events-auto p-2 rounded-full shadow-xl bg-slate-700/50 text-slate-400 hover:text-white hover:bg-slate-600`}
+              onClick={canAct ? () => handleAction('TIDY_BOARD') : undefined}
+              className={`pointer-events-auto p-2 rounded-full shadow-xl bg-slate-700/50 text-slate-400 hover:text-white hover:bg-slate-600 ${canAct ? '' : 'opacity-40 cursor-not-allowed'}`}
               title="Tidy Board (Reset to Grid)"
             >
               <LayoutGrid size={20} />
             </button>
             <button
-              onClick={() => setBoardUnlocked(!boardUnlocked)}
-              className={`pointer-events-auto p-2 rounded-full shadow-xl transition-all ${boardUnlocked ? 'bg-orange-500 text-white animate-pulse' : 'bg-slate-700/50 text-slate-400'}`}
+              onClick={canAct ? () => setBoardUnlocked(!boardUnlocked) : undefined}
+              className={`pointer-events-auto p-2 rounded-full shadow-xl transition-all ${boardUnlocked ? 'bg-orange-500 text-white animate-pulse' : 'bg-slate-700/50 text-slate-400'} ${canAct ? '' : 'opacity-40 cursor-not-allowed'}`}
               title={boardUnlocked ? "Lock Board (Disable Drag)" : "Unlock Board (Enable Drag)"}
             >
               {boardUnlocked ? <Unlock size={20} /> : <Lock size={20} />}
@@ -1474,12 +1605,12 @@ const GameBoard = ({ gameId, realUserId, onExit }) => {
             {/* IDENTITY BADGE */}
             <div
               className={`flex items-center gap-2 border-r border-slate-700 pr-3 mr-1 rounded p-1 transition-all ${isSelfTargeted ? 'ring-2 ring-blue-500 bg-blue-900/40' : ''} ${targetingState ? 'cursor-crosshair hover:bg-slate-800' : ''}`}
-              onClick={() => targetingState ? toggleTargetPlayer(userId) : null}
+              onClick={() => targetingState ? toggleTargetPlayer(viewAsPlayerId) : null}
             >
               <div className="flex flex-col items-end">
-                <span className="text-[9px] text-slate-400 font-bold uppercase tracking-widest">You</span>
+                <span className="text-[9px] text-slate-400 font-bold uppercase tracking-widest">{isSpectator ? 'Viewing' : 'You'}</span>
                 <div className="flex items-center gap-2">
-                  <span className="text-xs font-bold text-white max-w-[80px] truncate">{myPlayer?.name}</span>
+                  <span className="text-xs font-bold text-white max-w-[80px] truncate">{viewAsPlayer?.name || (isSpectator ? 'Player' : '')}</span>
                   {isMyTurn && (
                     <span className="text-[10px] font-extrabold uppercase tracking-widest px-2 py-0.5 rounded-full bg-green-600/30 text-green-200 border border-green-500/40">
                       TURN
@@ -1493,13 +1624,13 @@ const GameBoard = ({ gameId, realUserId, onExit }) => {
             </div>
 
             <div className="flex items-center gap-2 cursor-pointer p-1 rounded hover:bg-slate-800" onClick={(e) => {
-              if(targetingState) { e.stopPropagation(); toggleTargetPlayer(userId); }
+              if(targetingState) { e.stopPropagation(); toggleTargetPlayer(viewAsPlayerId); }
               else { setPlayerStatsOpen(true); }
             }}>
               <span className="text-red-400 font-bold text-xl">{myPlayer?.life}</span>
               <div className="flex flex-col">
-                <button onClick={(e) => { e.stopPropagation(); handleAction('LIFE_CHANGE', { targetPlayerId: userId, amount: 1 }); }} className="text-slate-500 hover:text-green-400"><ChevronUp size={12}/></button>
-                <button onClick={(e) => { e.stopPropagation(); handleAction('LIFE_CHANGE', { targetPlayerId: userId, amount: -1 }); }} className="text-slate-500 hover:text-red-400"><ChevronDown size={12}/></button>
+                <button onClick={(e) => { e.stopPropagation(); handleAction('LIFE_CHANGE', { targetPlayerId: viewAsPlayerId, amount: 1 }); }} className="text-slate-500 hover:text-green-400"><ChevronUp size={12}/></button>
+                <button onClick={(e) => { e.stopPropagation(); handleAction('LIFE_CHANGE', { targetPlayerId: viewAsPlayerId, amount: -1 }); }} className="text-slate-500 hover:text-red-400"><ChevronDown size={12}/></button>
               </div>
               {myPlayer?.counters?.poison > 0 && (
                 <div className="ml-2 bg-green-900 text-green-200 text-xs px-1 rounded flex items-center" title="Poison">
@@ -1511,10 +1642,10 @@ const GameBoard = ({ gameId, realUserId, onExit }) => {
             <div className="h-6 w-[1px] bg-slate-700"></div>
 
             <div className="flex gap-2 text-xs text-slate-400">
-              <div className="flex items-center gap-1 cursor-pointer hover:text-white" onClick={() => { setViewZone({ zone: ZONES.GRAVEYARD, ownerId: userId }); }}>
+              <div className="flex items-center gap-1 cursor-pointer hover:text-white" onClick={() => { setViewZone({ zone: ZONES.GRAVEYARD, ownerId: viewAsPlayerId }); }}>
                 <Skull size={14} /> GY: {myGYCount}
               </div>
-              <div className="flex items-center gap-1 cursor-pointer hover:text-white" onClick={() => { setViewZone({ zone: ZONES.EXILE, ownerId: userId }); }}>
+              <div className="flex items-center gap-1 cursor-pointer hover:text-white" onClick={() => { setViewZone({ zone: ZONES.EXILE, ownerId: viewAsPlayerId }); }}>
                 <RotateCw size={14} /> Ex: {myExileCount}
               </div>
             </div>
@@ -1525,8 +1656,8 @@ const GameBoard = ({ gameId, realUserId, onExit }) => {
             <div className="relative">
               <button
                 ref={diceButtonRef}
-                onClick={() => setDiceMenuOpen(!diceMenuOpen)}
-                className={`p-2 rounded-full ${diceMenuOpen ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-white'}`}
+                onClick={canAct ? () => setDiceMenuOpen(!diceMenuOpen) : undefined}
+                className={`p-2 rounded-full ${diceMenuOpen ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-white'} ${canAct ? '' : 'opacity-40 cursor-not-allowed'}`}
               >
                 <Dices size={18} />
               </button>
@@ -1534,8 +1665,8 @@ const GameBoard = ({ gameId, realUserId, onExit }) => {
 
             {myHand.length > 0 && (
               <button
-                onClick={() => handleAction('REVEAL_ALL_HAND')}
-                className="p-2 rounded-full text-slate-400 hover:text-white hover:bg-slate-700"
+                onClick={canAct ? () => handleAction('REVEAL_ALL_HAND') : undefined}
+                className={`p-2 rounded-full text-slate-400 hover:text-white hover:bg-slate-700 ${canAct ? '' : 'opacity-40 cursor-not-allowed'}`}
                 title="Reveal All Hand Cards"
               >
                 <Eye size={18} />
@@ -1543,8 +1674,8 @@ const GameBoard = ({ gameId, realUserId, onExit }) => {
             )}
 
             <button
-              onClick={() => handleAction('TOGGLE_HAND_REVEAL')}
-              className={`p-2 rounded-full ${handRevealed ? 'text-purple-400 bg-purple-900/30' : 'text-slate-500 hover:text-slate-300'}`}
+              onClick={canAct ? () => handleAction('TOGGLE_HAND_REVEAL') : undefined}
+              className={`p-2 rounded-full ${handRevealed ? 'text-purple-400 bg-purple-900/30' : 'text-slate-500 hover:text-slate-300'} ${canAct ? '' : 'opacity-40 cursor-not-allowed'}`}
             >
               {handRevealed ? <Unlock size={18} /> : <Lock size={18} />}
             </button>
@@ -1553,8 +1684,8 @@ const GameBoard = ({ gameId, realUserId, onExit }) => {
             <div className="relative">
               <button
                 ref={libraryButtonRef}
-                onClick={() => setLibraryMenuOpen(!libraryMenuOpen)}
-                className={`p-2 rounded-full hover:bg-slate-700 ${libraryMenuOpen ? 'text-white bg-slate-700' : 'text-slate-400'}`}
+                onClick={canAct ? () => setLibraryMenuOpen(!libraryMenuOpen) : undefined}
+                className={`p-2 rounded-full hover:bg-slate-700 ${libraryMenuOpen ? 'text-white bg-slate-700' : 'text-slate-400'} ${canAct ? '' : 'opacity-40 cursor-not-allowed'}`}
               >
                 <BookOpen size={18} />
               </button>
@@ -1628,8 +1759,8 @@ const GameBoard = ({ gameId, realUserId, onExit }) => {
         <div className="p-2 overflow-x-auto whitespace-nowrap hide-scrollbar flex gap-2 min-h-[140px] items-center px-4">
           {myHand.length === 0 && (
             <button
-              onClick={() => setDeckInput('20 Mountain\n20 Lightning Bolt\n20 Llanowar Elves')}
-              className="mx-auto text-sm text-slate-500 border border-slate-600 border-dashed rounded px-4 py-2 hover:text-white hover:border-slate-400"
+              onClick={canAct ? () => setDeckInput('20 Mountain\n20 Lightning Bolt\n20 Llanowar Elves') : undefined}
+              className={`mx-auto text-sm text-slate-500 border border-slate-600 border-dashed rounded px-4 py-2 hover:text-white hover:border-slate-400 ${canAct ? '' : 'opacity-40 cursor-not-allowed'}`}
             >
               Import Deck
             </button>
@@ -1647,7 +1778,7 @@ const GameBoard = ({ gameId, realUserId, onExit }) => {
             />
           ))}
           {myHand.length > 0 && (
-            <button onClick={() => handleAction('DISCARD_RANDOM')} className="ml-4 px-2 py-8 border-l border-slate-700 text-slate-600 hover:text-red-400 flex flex-col items-center justify-center text-[10px]">
+            <button onClick={canAct ? () => handleAction('DISCARD_RANDOM') : undefined} className={`ml-4 px-2 py-8 border-l border-slate-700 text-slate-600 hover:text-red-400 flex flex-col items-center justify-center text-[10px] ${canAct ? '' : 'opacity-40 cursor-not-allowed'}`}>
               <Shuffle size={14} className="mb-1"/> Discard<br/>Random
             </button>
           )}
@@ -1941,7 +2072,7 @@ const GameBoard = ({ gameId, realUserId, onExit }) => {
                   <span className="capitalize text-slate-300 font-medium">{type}</span>
                   <div className="flex items-center gap-3">
                     <button onClick={() => handleAction('PLAYER_COUNTER', { counterType: type, amount: -1 })} className="w-8 h-8 rounded bg-slate-900 text-red-400 font-bold">-</button>
-                    <span className="w-6 text-center font-bold text-white">{myPlayer.counters?.[type] || 0}</span>
+                    <span className="w-6 text-center font-bold text-white">{myPlayer?.counters?.[type] || 0}</span>
                     <button onClick={() => handleAction('PLAYER_COUNTER', { counterType: type, amount: 1 })} className="w-8 h-8 rounded bg-slate-900 text-green-400 font-bold">+</button>
                   </div>
                 </div>
@@ -2024,7 +2155,7 @@ const GameBoard = ({ gameId, realUserId, onExit }) => {
                 <>
                   <button onClick={() => { handleAction('PLAY_LAND', { cardId: selectedCard.instanceId }); setSelectedCard(null); }} className="bg-amber-900/50 hover:bg-amber-800 text-amber-100 p-3 rounded-lg font-medium border border-amber-800">Play Land</button>
                   <button onClick={() => { handleAction('CAST_SPELL', { cardId: selectedCard.instanceId }); setSelectedCard(null); }} className="bg-purple-900/50 hover:bg-purple-800 text-purple-100 p-3 rounded-lg font-medium border border-purple-800">Cast Spell</button>
-                  <button onClick={() => { setTargetingState({ source: selectedCard, mode: 'CAST', selectedIds: [] }); setSelectedCard(null); }} className="col-span-2 bg-purple-900/50 hover:bg-purple-800 text-purple-100 p-3 rounded-lg font-medium border border-purple-800 flex items-center justify-center gap-2">Cast + Target 🎯</button>
+                  <button onClick={() => { if (!canAct) return; setTargetingState({ source: selectedCard, mode: 'CAST', selectedIds: [] }); setSelectedCard(null); }} className="col-span-2 bg-purple-900/50 hover:bg-purple-800 text-purple-100 p-3 rounded-lg font-medium border border-purple-800 flex items-center justify-center gap-2">Cast + Target 🎯</button>
                   <button onClick={() => { handleAction('MOVE_ZONE', { cardId: selectedCard.instanceId, targetZone: ZONES.BATTLEFIELD }); handleAction('TOGGLE_FACE', { cardId: selectedCard.instanceId }); setSelectedCard(null); }} className="col-span-2 bg-slate-700 text-slate-300 p-2 rounded-lg text-sm">Play Face Down (Morph)</button>
                 </>
               )}
@@ -2043,8 +2174,8 @@ const GameBoard = ({ gameId, realUserId, onExit }) => {
                     </div>
                     <button onClick={addCustomCounter} className="text-xs text-blue-300 hover:text-white text-left pl-1 flex items-center gap-1"><Hexagon size={10}/> Add Custom Counter...</button>
                   </div>
-                  <button onClick={() => { setTargetingState({ source: selectedCard, mode: 'ABILITY', selectedIds: [] }); setSelectedCard(null); }} className="bg-blue-900/50 hover:bg-blue-800 text-blue-100 p-2 rounded-lg text-sm flex items-center justify-center gap-2 border border-blue-800">Ability 🎯</button>
-                  <button onClick={() => { setTargetingState({ source: selectedCard, mode: 'MANUAL', selectedIds: [] }); setSelectedCard(null); }} className="bg-slate-700 hover:bg-slate-600 text-slate-300 p-2 rounded-lg text-sm flex items-center justify-center gap-2 border border-slate-600">Target... 🎯</button>
+                  <button onClick={() => { if (!canAct) return; setTargetingState({ source: selectedCard, mode: 'ABILITY', selectedIds: [] }); setSelectedCard(null); }} className="bg-blue-900/50 hover:bg-blue-800 text-blue-100 p-2 rounded-lg text-sm flex items-center justify-center gap-2 border border-blue-800">Ability 🎯</button>
+                  <button onClick={() => { if (!canAct) return; setTargetingState({ source: selectedCard, mode: 'MANUAL', selectedIds: [] }); setSelectedCard(null); }} className="bg-slate-700 hover:bg-slate-600 text-slate-300 p-2 rounded-lg text-sm flex items-center justify-center gap-2 border border-slate-600">Target... 🎯</button>
                   <button onClick={() => clearTargets(selectedCard)} className="col-span-2 bg-slate-700 hover:bg-slate-600 text-slate-300 p-2 rounded-lg text-sm flex items-center justify-center gap-2">✖ Clear Targets</button>
                   <button onClick={() => { handleAction('CLONE_CARD', { cardId: selectedCard.instanceId }); setSelectedCard(null); }} className="bg-slate-700 text-slate-300 p-2 rounded-lg text-sm flex items-center justify-center gap-2"><Copy size={12}/> Clone</button>
                   <button onClick={() => { handleAction('CHANGE_CONTROL', { cardId: selectedCard.instanceId, cardName: selectedCard.name }); setSelectedCard(null); }} className="bg-slate-700 text-slate-300 p-2 rounded-lg text-sm flex items-center justify-center gap-2"><UserCheck size={12}/> Give Control</button>
@@ -2105,6 +2236,7 @@ export default function App() {
   const [activeGameId, setActiveGameId] = useState(null);
   const [initError, setInitError] = useState(null);
   const [isActionLoading, setIsActionLoading] = useState(false);
+  const [playerName, setPlayerName] = useState('');
 
   useEffect(() => {
     const initAuth = async () => {
@@ -2124,10 +2256,13 @@ export default function App() {
     if (!user) return;
     setIsActionLoading(true);
     setInitError(null);
+    setPlayerName(playerName);
     try {
       const initialData = {
         createdAt: serverTimestamp(),
         hostId: user.uid,
+        allowSpectators: true,
+        spectatorIds: [],
         players: [{
           id: user.uid,
           name: playerName,
@@ -2164,8 +2299,10 @@ export default function App() {
   };
 
   const joinGame = async (playerName, code) => {
+    if (!user) return;
     setIsActionLoading(true);
     setInitError(null);
+    setPlayerName(playerName);
     try {
       // UPDATED: Safe code
       const safeCode = (code || '').trim().toUpperCase();
@@ -2215,7 +2352,44 @@ export default function App() {
     }
   };
 
-  if (activeGameId && user) return <GameBoard gameId={activeGameId} realUserId={user.uid} onExit={() => setActiveGameId(null)} />;
+  const watchGame = async (playerName, code) => {
+    if (!user) return;
+    setIsActionLoading(true);
+    setInitError(null);
+    setPlayerName(playerName);
+    try {
+      const safeCode = (code || '').trim().toUpperCase();
+      const gameRef = doc(db, 'games_v3', safeCode);
 
-  return <Lobby onCreate={createGame} onJoin={joinGame} isError={!!initError} errorMsg={initError} currentUserId={user?.uid} isActionLoading={isActionLoading} />;
+      await runTransaction(db, async (transaction) => {
+        const gameDoc = await transaction.get(gameRef);
+        if (!gameDoc.exists()) {
+          throw new Error("Game not found! Check the code.");
+        }
+        const gameData = gameDoc.data();
+        if (gameData.allowSpectators === false) {
+          throw new Error("Spectators are not allowed in this game.");
+        }
+        const players = gameData.players || [];
+        const isPlayer = players.some(p => p.id === user.uid);
+        const spectatorIds = gameData.spectatorIds || [];
+        const isSpectator = spectatorIds.includes(user.uid);
+
+        if (isPlayer || isSpectator) return;
+
+        transaction.update(gameRef, { spectatorIds: [...spectatorIds, user.uid] });
+      });
+
+      setActiveGameId(safeCode);
+    } catch (e) {
+      console.error(e);
+      setInitError(e.message);
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
+
+  if (activeGameId && user) return <GameBoard gameId={activeGameId} realUserId={user.uid} displayName={playerName} onExit={() => setActiveGameId(null)} />;
+
+  return <Lobby onCreate={createGame} onJoin={joinGame} onWatch={watchGame} isError={!!initError} errorMsg={initError} currentUserId={user?.uid} isActionLoading={isActionLoading} />;
 }

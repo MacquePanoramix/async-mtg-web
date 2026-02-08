@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged, signOut } from 'firebase/auth';
 import { getFirestore, doc, getDoc, setDoc, addDoc, collection, onSnapshot, updateDoc, arrayUnion, serverTimestamp, runTransaction } from 'firebase/firestore';
@@ -184,10 +185,10 @@ const Lobby = ({ onCreate, onJoin, isError, errorMsg, currentUserId, isActionLoa
             ) : (
               <span className="text-yellow-500 flex items-center gap-1"><Loader2 className="animate-spin" size={10}/> Initializing...</span>
             )}
+            </div>
           </div>
         </div>
       </div>
-    </div>
   );
 };
 
@@ -311,9 +312,13 @@ const GameBoard = ({ gameId, realUserId, onExit }) => {
   const [peekCard, setPeekCard] = useState(null);
   const [diceMenuOpen, setDiceMenuOpen] = useState(false);
   const [libraryMenuOpen, setLibraryMenuOpen] = useState(false);
+  const [diceMenuPos, setDiceMenuPos] = useState(null);
+  const [libraryMenuPos, setLibraryMenuPos] = useState(null);
   const [notification, setNotification] = useState(null);
   const [boardUnlocked, setBoardUnlocked] = useState(false);
   const boardRef = useRef(null);
+  const diceButtonRef = useRef(null);
+  const libraryButtonRef = useRef(null);
   const [draggingCard, setDraggingCard] = useState(null);
   const [oppBoardOpen, setOppBoardOpen] = useState(false);
 
@@ -335,6 +340,48 @@ const GameBoard = ({ gameId, realUserId, onExit }) => {
 
   const getFallbackPos = (i) => ({ x: (i % 5) * 18 + 5, y: 10 + Math.floor(i / 5) * 22 });
   const getPlayerTargetId = (pid) => `player:${pid}`;
+
+  useLayoutEffect(() => {
+    if (!diceMenuOpen) {
+      setDiceMenuPos(null);
+      return;
+    }
+
+    const updatePosition = () => {
+      if (!diceButtonRef.current) return;
+      const rect = diceButtonRef.current.getBoundingClientRect();
+      setDiceMenuPos({ top: rect.top, right: rect.right });
+    };
+
+    updatePosition();
+    window.addEventListener('resize', updatePosition);
+    window.addEventListener('scroll', updatePosition, true);
+    return () => {
+      window.removeEventListener('resize', updatePosition);
+      window.removeEventListener('scroll', updatePosition, true);
+    };
+  }, [diceMenuOpen]);
+
+  useLayoutEffect(() => {
+    if (!libraryMenuOpen) {
+      setLibraryMenuPos(null);
+      return;
+    }
+
+    const updatePosition = () => {
+      if (!libraryButtonRef.current) return;
+      const rect = libraryButtonRef.current.getBoundingClientRect();
+      setLibraryMenuPos({ top: rect.top, right: rect.right });
+    };
+
+    updatePosition();
+    window.addEventListener('resize', updatePosition);
+    window.addEventListener('scroll', updatePosition, true);
+    return () => {
+      window.removeEventListener('resize', updatePosition);
+      window.removeEventListener('scroll', updatePosition, true);
+    };
+  }, [libraryMenuOpen]);
 
   useEffect(() => {
     if (!gameId) return;
@@ -1420,8 +1467,9 @@ const GameBoard = ({ gameId, realUserId, onExit }) => {
 
       {/* 3. Footer */}
       <div className="bg-slate-800 border-t border-slate-700 shadow-[0_-5px_15px_rgba(0,0,0,0.5)] z-30">
-        <div className="px-4 py-2 bg-slate-900/80 border-b border-slate-700/50 overflow-x-auto sm:overflow-visible hide-scrollbar snap-x snap-proximity scroll-smooth">
-          <div className="flex items-center gap-6 flex-nowrap min-w-max whitespace-nowrap sm:min-w-0 sm:justify-between sm:w-full">
+        <div className="px-4 py-2 bg-slate-900/80 border-b border-slate-700/50">
+          <div className="overflow-x-auto sm:overflow-visible hide-scrollbar snap-x snap-proximity scroll-smooth">
+            <div className="flex items-center gap-6 flex-nowrap min-w-max whitespace-nowrap sm:min-w-0 sm:justify-between sm:w-full">
             <div className="flex items-center gap-4 snap-start">
             {/* IDENTITY BADGE */}
             <div
@@ -1475,16 +1523,13 @@ const GameBoard = ({ gameId, realUserId, onExit }) => {
             <div className="flex items-center gap-2 snap-start">
             {/* Dice/Coin Menu */}
             <div className="relative">
-              <button onClick={() => setDiceMenuOpen(!diceMenuOpen)} className={`p-2 rounded-full ${diceMenuOpen ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-white'}`}>
+              <button
+                ref={diceButtonRef}
+                onClick={() => setDiceMenuOpen(!diceMenuOpen)}
+                className={`p-2 rounded-full ${diceMenuOpen ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-white'}`}
+              >
                 <Dices size={18} />
               </button>
-              {diceMenuOpen && (
-                <div className="absolute bottom-full right-0 mb-2 bg-slate-800 border border-slate-600 rounded shadow-xl p-1 flex flex-col gap-1 w-32 z-50">
-                  <button onClick={() => {handleAction('ROLL_DICE', {diceType: 'coin'}); setDiceMenuOpen(false);}} className="text-left px-3 py-2 hover:bg-slate-700 rounded text-sm flex items-center gap-2"><Coins size={12}/> Flip Coin</button>
-                  <button onClick={() => {handleAction('ROLL_DICE', {diceType: 'd6'}); setDiceMenuOpen(false);}} className="text-left px-3 py-2 hover:bg-slate-700 rounded text-sm flex items-center gap-2"><Hexagon size={12}/> Roll D6</button>
-                  <button onClick={() => {handleAction('ROLL_DICE', {diceType: 'd20'}); setDiceMenuOpen(false);}} className="text-left px-3 py-2 hover:bg-slate-700 rounded text-sm flex items-center gap-2"><Dices size={12}/> Roll D20</button>
-                </div>
-              )}
             </div>
 
             {myHand.length > 0 && (
@@ -1507,61 +1552,78 @@ const GameBoard = ({ gameId, realUserId, onExit }) => {
             {/* Library Menu */}
             <div className="relative">
               <button
+                ref={libraryButtonRef}
                 onClick={() => setLibraryMenuOpen(!libraryMenuOpen)}
                 className={`p-2 rounded-full hover:bg-slate-700 ${libraryMenuOpen ? 'text-white bg-slate-700' : 'text-slate-400'}`}
               >
                 <BookOpen size={18} />
               </button>
-              {libraryMenuOpen && (
-                <div className="absolute bottom-full right-0 mb-2 w-40 bg-slate-800 rounded shadow-xl border border-slate-600 overflow-hidden z-50">
-                  <button onClick={() => handleAction('DRAW_CARD')} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-700 flex items-center gap-2 text-blue-300">
-                    <Plus size={12} /> Draw
-                  </button>
-                  <button onClick={() => { handleAction('MULLIGAN'); setLibraryMenuOpen(false); }} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-700 flex items-center gap-2 text-amber-300" >
-                    <RefreshCw size={12} /> Mulligan (7)
-                  </button>
-                  <button onClick={() => handleAction('SCRY_TOP')} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-700 flex items-center gap-2 text-purple-300">
-                    <Eye size={12} /> Scry 1
-                  </button>
-                  <button onClick={() => setSearchLibraryOwner(userId)} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-700 flex items-center gap-2 text-green-300">
-                    <Search size={12} /> Search Lib
-                  </button>
-                  <button onClick={() => startReorderTop()} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-700 flex items-center gap-2 text-indigo-300">
-                    <Layers size={12} /> Reorder Top...
-                  </button>
-                  <button onClick={() => handleAction('SHUFFLE_LIBRARY')} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-700 flex items-center gap-2 text-yellow-300">
-                    <Shuffle size={12} /> Shuffle
-                  </button>
-
-                  {opponent && (
-                    <>
-                      <div className="border-t border-slate-600 my-1 pt-1 px-2 text-[10px] text-slate-500 uppercase tracking-widest font-bold">Opponent Library</div>
-                      <div className="px-2 text-[9px] text-slate-500 mb-1 italic">Use only when allowed</div>
-                      <button onClick={() => { setSearchLibraryOwner(opponent.id); setLibraryMenuOpen(false); }} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-700 flex items-center gap-2 text-green-300">
-                        <Search size={12} /> Search Opp Lib
-                      </button>
-                      <button onClick={() => { handleAction('SCRY_TOP', { targetOwnerId: opponent.id }); setLibraryMenuOpen(false); }} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-700 flex items-center gap-2 text-purple-300">
-                        <Eye size={12} /> Peek Opp Top
-                      </button>
-                      <button onClick={() => startReorderTop(opponent.id)} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-700 flex items-center gap-2 text-indigo-300">
-                        <Layers size={12} /> Reorder Opp Top...
-                      </button>
-                      <button onClick={() => { handleAction('SHUFFLE_LIBRARY', { targetOwnerId: opponent.id }); setLibraryMenuOpen(false); }} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-700 flex items-center gap-2 text-yellow-300">
-                        <Shuffle size={12} /> Shuffle Opp Lib
-                      </button>
-                    </>
-                  )}
-
-                  <div className="border-t border-slate-600 my-1"></div>
-                  <button onClick={createToken} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-700 flex items-center gap-2 text-slate-300">
-                    <UserCheck size={12} /> Create Token
-                  </button>
-                </div>
-              )}
             </div>
             </div>
           </div>
         </div>
+      </div>
+        {diceMenuOpen && diceMenuPos && createPortal(
+          <div
+            className="fixed z-[100] bg-slate-800 border border-slate-600 rounded shadow-xl p-1 flex flex-col gap-1 w-32"
+            style={{ top: diceMenuPos.top - 8, left: diceMenuPos.right, transform: 'translate(-100%, -100%)' }}
+          >
+            <button onClick={() => {handleAction('ROLL_DICE', {diceType: 'coin'}); setDiceMenuOpen(false);}} className="text-left px-3 py-2 hover:bg-slate-700 rounded text-sm flex items-center gap-2"><Coins size={12}/> Flip Coin</button>
+            <button onClick={() => {handleAction('ROLL_DICE', {diceType: 'd6'}); setDiceMenuOpen(false);}} className="text-left px-3 py-2 hover:bg-slate-700 rounded text-sm flex items-center gap-2"><Hexagon size={12}/> Roll D6</button>
+            <button onClick={() => {handleAction('ROLL_DICE', {diceType: 'd20'}); setDiceMenuOpen(false);}} className="text-left px-3 py-2 hover:bg-slate-700 rounded text-sm flex items-center gap-2"><Dices size={12}/> Roll D20</button>
+          </div>,
+          document.body
+        )}
+        {libraryMenuOpen && libraryMenuPos && createPortal(
+          <div
+            className="fixed z-[100] w-40 bg-slate-800 rounded shadow-xl border border-slate-600 overflow-hidden"
+            style={{ top: libraryMenuPos.top - 8, left: libraryMenuPos.right, transform: 'translate(-100%, -100%)' }}
+          >
+            <button onClick={() => handleAction('DRAW_CARD')} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-700 flex items-center gap-2 text-blue-300">
+              <Plus size={12} /> Draw
+            </button>
+            <button onClick={() => { handleAction('MULLIGAN'); setLibraryMenuOpen(false); }} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-700 flex items-center gap-2 text-amber-300" >
+              <RefreshCw size={12} /> Mulligan (7)
+            </button>
+            <button onClick={() => handleAction('SCRY_TOP')} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-700 flex items-center gap-2 text-purple-300">
+              <Eye size={12} /> Scry 1
+            </button>
+            <button onClick={() => setSearchLibraryOwner(userId)} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-700 flex items-center gap-2 text-green-300">
+              <Search size={12} /> Search Lib
+            </button>
+            <button onClick={() => startReorderTop()} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-700 flex items-center gap-2 text-indigo-300">
+              <Layers size={12} /> Reorder Top...
+            </button>
+            <button onClick={() => handleAction('SHUFFLE_LIBRARY')} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-700 flex items-center gap-2 text-yellow-300">
+              <Shuffle size={12} /> Shuffle
+            </button>
+
+            {opponent && (
+              <>
+                <div className="border-t border-slate-600 my-1 pt-1 px-2 text-[10px] text-slate-500 uppercase tracking-widest font-bold">Opponent Library</div>
+                <div className="px-2 text-[9px] text-slate-500 mb-1 italic">Use only when allowed</div>
+                <button onClick={() => { setSearchLibraryOwner(opponent.id); setLibraryMenuOpen(false); }} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-700 flex items-center gap-2 text-green-300">
+                  <Search size={12} /> Search Opp Lib
+                </button>
+                <button onClick={() => { handleAction('SCRY_TOP', { targetOwnerId: opponent.id }); setLibraryMenuOpen(false); }} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-700 flex items-center gap-2 text-purple-300">
+                  <Eye size={12} /> Peek Opp Top
+                </button>
+                <button onClick={() => startReorderTop(opponent.id)} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-700 flex items-center gap-2 text-indigo-300">
+                  <Layers size={12} /> Reorder Opp Top...
+                </button>
+                <button onClick={() => { handleAction('SHUFFLE_LIBRARY', { targetOwnerId: opponent.id }); setLibraryMenuOpen(false); }} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-700 flex items-center gap-2 text-yellow-300">
+                  <Shuffle size={12} /> Shuffle Opp Lib
+                </button>
+              </>
+            )}
+
+            <div className="border-t border-slate-600 my-1"></div>
+            <button onClick={createToken} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-700 flex items-center gap-2 text-slate-300">
+              <UserCheck size={12} /> Create Token
+            </button>
+          </div>,
+          document.body
+        )}
 
         <div className="p-2 overflow-x-auto whitespace-nowrap hide-scrollbar flex gap-2 min-h-[140px] items-center px-4">
           {myHand.length === 0 && (

@@ -1420,8 +1420,9 @@ const GameBoard = ({ gameId, realUserId, onExit }) => {
 
       {/* 3. Footer */}
       <div className="bg-slate-800 border-t border-slate-700 shadow-[0_-5px_15px_rgba(0,0,0,0.5)] z-30">
-        <div className="flex justify-between items-center px-4 py-2 bg-slate-900/80 border-b border-slate-700/50">
-          <div className="flex items-center gap-4">
+        <div className="px-4 py-2 bg-slate-900/80 border-b border-slate-700/50 overflow-x-auto sm:overflow-visible hide-scrollbar snap-x snap-proximity scroll-smooth">
+          <div className="flex items-center gap-6 flex-nowrap min-w-max whitespace-nowrap sm:min-w-0 sm:justify-between sm:w-full">
+            <div className="flex items-center gap-4 snap-start">
             {/* IDENTITY BADGE */}
             <div
               className={`flex items-center gap-2 border-r border-slate-700 pr-3 mr-1 rounded p-1 transition-all ${isSelfTargeted ? 'ring-2 ring-blue-500 bg-blue-900/40' : ''} ${targetingState ? 'cursor-crosshair hover:bg-slate-800' : ''}`}
@@ -1469,9 +1470,9 @@ const GameBoard = ({ gameId, realUserId, onExit }) => {
                 <RotateCw size={14} /> Ex: {myExileCount}
               </div>
             </div>
-          </div>
+            </div>
 
-          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 snap-start">
             {/* Dice/Coin Menu */}
             <div className="relative">
               <button onClick={() => setDiceMenuOpen(!diceMenuOpen)} className={`p-2 rounded-full ${diceMenuOpen ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-white'}`}>
@@ -1557,6 +1558,7 @@ const GameBoard = ({ gameId, realUserId, onExit }) => {
                   </button>
                 </div>
               )}
+            </div>
             </div>
           </div>
         </div>

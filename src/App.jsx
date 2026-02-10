@@ -94,6 +94,37 @@ const copyToClipboard = (text) => {
   }
 };
 
+const NON_MEANINGFUL_AUTOPASS_TYPES = new Set([
+  'PASS',
+  'PASS_PRIORITY',
+  'PRIORITY_PASS',
+  'CHAT',
+  'PHASE_ADVANCE',
+  'STEP_ADVANCE'
+]);
+
+const isMeaningfulOpponentAction = (entry, currentUid) => {
+  if (!entry || !currentUid || entry.playerId === currentUid) return false;
+
+  const entryType = (entry.type || '').toUpperCase();
+  if (NON_MEANINGFUL_AUTOPASS_TYPES.has(entryType)) return false;
+
+  const description = (entry.desc || '').trim();
+  if (/^(phase|step)\s*:/i.test(description)) return false;
+
+  return true;
+};
+
+const getAutoPassLogKey = (entry, entryIndex) => {
+  if (!entry) return null;
+  const safeIndex = Number.isInteger(entryIndex) ? entryIndex : -1;
+  const timestamp = entry.timestamp ?? 'na';
+  const playerId = entry.playerId || 'na';
+  const type = entry.type || 'na';
+  const desc = entry.desc || 'na';
+  return `${safeIndex}:${timestamp}:${playerId}:${type}:${desc}`;
+};
+
 // --- Components ---
 const Lobby = ({
   onCreate,
@@ -419,6 +450,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const [autoPassMenuOpen, setAutoPassMenuOpen] = useState(false);
   const autoPassInFlightRef = useRef(false);
   const lastAutoPassSignatureRef = useRef(null);
+  const lastSeenAutoPassLogKeyRef = useRef(null);
 
   // New state for multi-targeting
   const [targetingState, setTargetingState] = useState(null); // { source, mode: 'CAST'|'ABILITY'|'MANUAL', selectedIds: [] }
@@ -1208,6 +1240,31 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       lastAutoPassSignatureRef.current = null;
     }
   }, [isAutoPassEnabled, game?.phase, game?.priorityPlayerId, game?.stack?.length]);
+
+  useEffect(() => {
+    if (!game) return;
+
+    const latestLogIndex = (game.log?.length || 0) - 1;
+    const latestLogEntry = latestLogIndex >= 0 ? game.log[latestLogIndex] : null;
+    if (!latestLogEntry) return;
+
+    const latestLogKey = getAutoPassLogKey(latestLogEntry, latestLogIndex);
+
+    if (!isAutoPassEnabled) {
+      lastSeenAutoPassLogKeyRef.current = latestLogKey;
+      return;
+    }
+
+    if (lastSeenAutoPassLogKeyRef.current === latestLogKey) return;
+    lastSeenAutoPassLogKeyRef.current = latestLogKey;
+
+    console.debug('[AutoPass] processed latest log entry', { key: latestLogKey, type: latestLogEntry.type });
+
+    if (isMeaningfulOpponentAction(latestLogEntry, userId)) {
+      const actionLabel = latestLogEntry.type || 'UNKNOWN';
+      disableAutoPass(true, `AutoPass stopped: opponent acted (${actionLabel}).`);
+    }
+  }, [game?.log, isAutoPassEnabled, userId]);
 
   useEffect(() => {
     if (!isAutoPassEnabled || !game || autoPassInFlightRef.current) return;

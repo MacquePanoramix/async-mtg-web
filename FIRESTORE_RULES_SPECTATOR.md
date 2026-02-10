@@ -1,6 +1,6 @@
-# Firestore rules update for spectator mode
+# Firestore rules update for spectator mode + user game index
 
-Paste the following rules into your Firebase console (Firestore Rules) to support spectators:
+Paste the following rules into your Firebase console (Firestore Rules):
 
 ```rules
 rules_version = '2';
@@ -33,10 +33,14 @@ service cloud.firestore {
       allow update: if isPlayer() || (isSpectator() && isChatOnlyUpdate());
       allow delete: if false;
     }
+
+    match /users/{uid}/games/{gameId} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
   }
 }
 ```
 
 Notes:
-- `isChatOnlyUpdate` ensures spectators can only append one chat log entry per write.
-- If your Firestore rules do not support `where` or `diff` in your rules runtime, you may need to denormalize `playerIds` as a top-level array to make these checks simpler.
+- The `users/{uid}/games/{gameId}` rule enables each signed-in user to manage only their own “My Games” index.
+- Spectator users remain restricted to chat-only updates in active games.

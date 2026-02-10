@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, onAuthStateChanged, signOut } from 'firebase/auth';
-import { getFirestore, doc, getDoc, setDoc, addDoc, collection, onSnapshot, updateDoc, arrayUnion, serverTimestamp, runTransaction } from 'firebase/firestore';
+import { getAuth, signInAnonymously, onAuthStateChanged, GoogleAuthProvider, linkWithPopup, signInWithPopup } from 'firebase/auth';
+import { getFirestore, doc, setDoc, collection, onSnapshot, updateDoc, arrayUnion, serverTimestamp, runTransaction, query, orderBy } from 'firebase/firestore';
 import { X, ArrowRight, Clock, Shield, Skull, Layers, Eye, ChevronDown, ChevronUp, BookOpen, Shuffle, Plus, Copy, UserCheck, EyeOff, RotateCw, Search, Hexagon, Unlock, Lock, Move, Dices, Coins, LayoutGrid, LogOut, Users, User, Bug, Loader2, RefreshCw, AlertTriangle, Repeat, Check, ArrowUp, ArrowDown, MessageSquare } from 'lucide-react';
 
 // --- Firebase Configuration ---
@@ -81,7 +81,7 @@ const copyToClipboard = (text) => {
     try {
       document.execCommand('copy');
       alert(`Copied: ${text}`);
-    } catch (err) {
+    } catch (_err) {
       prompt("Copy this code:", text);
     }
     document.body.removeChild(textArea);
@@ -89,11 +89,27 @@ const copyToClipboard = (text) => {
 };
 
 // --- Components ---
-const Lobby = ({ onCreate, onJoin, onWatch, isError, errorMsg, currentUserId, isActionLoading }) => {
+const Lobby = ({
+  onCreate,
+  onJoin,
+  onWatch,
+  onContinueWithGoogle,
+  myGames,
+  isError,
+  errorMsg,
+  currentUser,
+  isActionLoading
+}) => {
   const [name, setName] = useState('');
   const [code, setCode] = useState('');
   const [mode, setMode] = useState('menu');
-  const isInitLoading = !currentUserId;
+  const isInitLoading = !currentUser;
+
+  const openGameFromHistory = (game) => {
+    const params = new URLSearchParams({ room: game.roomCode });
+    if (game.role === 'spectator') params.set('mode', 'viewer');
+    window.open(`/?${params.toString()}`, '_blank', 'noopener,noreferrer');
+  };
 
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col items-center justify-center p-4">
@@ -217,15 +233,44 @@ const Lobby = ({ onCreate, onJoin, onWatch, isError, errorMsg, currentUserId, is
               </div>
             </div>
           )}
+
+          <button
+            onClick={onContinueWithGoogle}
+            disabled={isInitLoading || isActionLoading}
+            className="w-full bg-white text-slate-800 hover:bg-slate-100 disabled:opacity-50 disabled:cursor-wait p-3 rounded-lg font-bold transition-colors"
+          >
+            Continue with Google
+          </button>
+
+          <div className="border border-slate-700 rounded-lg p-3 space-y-2">
+            <div className="text-sm font-semibold text-slate-300">My Games</div>
+            {myGames.length === 0 ? (
+              <div className="text-xs text-slate-500">No recent games yet.</div>
+            ) : (
+              <div className="space-y-2">
+                {myGames.map((game) => (
+                  <button
+                    key={game.id}
+                    onClick={() => openGameFromHistory(game)}
+                    className="w-full text-left bg-slate-900 hover:bg-slate-700 p-2 rounded text-sm border border-slate-700"
+                  >
+                    <div className="font-mono tracking-widest text-white">{game.roomCode}</div>
+                    <div className="text-xs text-slate-400 capitalize">{game.role}</div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="absolute -bottom-24 left-0 right-0 flex flex-col items-center gap-2">
           <div className="text-[10px] text-slate-500 font-mono flex items-center gap-2">
-            Current ID: {currentUserId ? (
-              <span className="text-slate-300">{currentUserId.slice(0, 8) + '...'}</span>
+            Current ID: {currentUser ? (
+              <span className="text-slate-300">{currentUser.uid.slice(0, 8) + '...'}</span>
             ) : (
               <span className="text-yellow-500 flex items-center gap-1"><Loader2 className="animate-spin" size={10}/> Initializing...</span>
             )}
+            {currentUser?.isAnonymous === false && <span className="text-green-400">(Google)</span>}
             </div>
           </div>
         </div>
@@ -2237,11 +2282,21 @@ export default function App() {
   const [initError, setInitError] = useState(null);
   const [isActionLoading, setIsActionLoading] = useState(false);
   const [playerName, setPlayerName] = useState('');
+  const [myGames, setMyGames] = useState([]);
+  const [pendingUrlEntry, setPendingUrlEntry] = useState(null);
+
+  const upsertUserGameMembership = async (uid, roomCode, role) => {
+    const membershipRef = doc(db, 'users', uid, 'games', roomCode);
+    await setDoc(membershipRef, {
+      roomCode,
+      role,
+      updatedAt: serverTimestamp()
+    }, { merge: true });
+  };
 
   useEffect(() => {
     const initAuth = async () => {
       try {
-        // UPDATED: Simple anonymous auth
         await signInAnonymously(auth);
       } catch (e) {
         setInitError(e.message);
@@ -2252,11 +2307,39 @@ export default function App() {
     return () => unsub();
   }, []);
 
-  const createGame = async (playerName) => {
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const roomFromQuery = (params.get('room') || '').trim().toUpperCase();
+    const mode = (params.get('mode') || '').toLowerCase();
+
+    const pathMatch = window.location.pathname.match(/^\/game\/([A-Za-z0-9]{4,12})$/);
+    const roomFromPath = pathMatch ? pathMatch[1].toUpperCase() : '';
+    const roomCode = roomFromQuery || roomFromPath;
+
+    if (roomCode) {
+      setPendingUrlEntry({ roomCode, mode: mode === 'viewer' ? 'viewer' : 'player' });
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!user) {
+      setMyGames([]);
+      return;
+    }
+
+    const q = query(collection(db, 'users', user.uid, 'games'), orderBy('updatedAt', 'desc'));
+    const unsub = onSnapshot(q, (snap) => {
+      setMyGames(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    }, (e) => setInitError(e.message));
+
+    return () => unsub();
+  }, [user]);
+
+  const createGame = async (playerNameInput) => {
     if (!user) return;
     setIsActionLoading(true);
     setInitError(null);
-    setPlayerName(playerName);
+    setPlayerName(playerNameInput);
     try {
       const initialData = {
         createdAt: serverTimestamp(),
@@ -2265,7 +2348,7 @@ export default function App() {
         spectatorIds: [],
         players: [{
           id: user.uid,
-          name: playerName,
+          name: playerNameInput,
           life: 20,
           turnOrder: 0,
           counters: { poison: 0, energy: 0, commanderTax: 0, experience: 0 },
@@ -2287,8 +2370,8 @@ export default function App() {
       };
 
       const shortCode = generateGameId();
-      // UPDATED: Path
       await setDoc(doc(db, 'games_v3', shortCode), { ...initialData, id: shortCode });
+      await upsertUserGameMembership(user.uid, shortCode, 'player');
       setActiveGameId(shortCode);
     } catch (e) {
       console.error(e);
@@ -2298,51 +2381,44 @@ export default function App() {
     }
   };
 
-  const joinGame = async (playerName, code) => {
+  const joinGame = async (playerNameInput, code) => {
     if (!user) return;
     setIsActionLoading(true);
     setInitError(null);
-    setPlayerName(playerName);
+    setPlayerName(playerNameInput);
     try {
-      // UPDATED: Safe code
       const safeCode = (code || '').trim().toUpperCase();
-      // UPDATED: Path
       const gameRef = doc(db, 'games_v3', safeCode);
 
-      // TRANSACTION: Prevents race conditions when joining
       await runTransaction(db, async (transaction) => {
         const gameDoc = await transaction.get(gameRef);
-        if (!gameDoc.exists()) {
-          throw new Error("Game not found! Check the code.");
-        }
+        if (!gameDoc.exists()) throw new Error('Game not found! Check the code.');
+
         const gameData = gameDoc.data();
         const players = gameData.players || [];
-        const existingPlayerIndex = players.findIndex(p => p.id === user.uid);
+        const existingPlayerIndex = players.findIndex((p) => p.id === user.uid);
 
         if (existingPlayerIndex >= 0) {
-          // RECONNECT: Update name and timestamp, don't add new player
           const newPlayers = [...players];
-          newPlayers[existingPlayerIndex] = { ...newPlayers[existingPlayerIndex], name: playerName, lastSeenChatAt: Date.now() };
+          newPlayers[existingPlayerIndex] = { ...newPlayers[existingPlayerIndex], name: playerNameInput, lastSeenChatAt: Date.now() };
           transaction.update(gameRef, { players: newPlayers });
         } else if (players.length < 2) {
-          // JOIN: Add as Player 2
           const newPlayer = {
             id: user.uid,
-            name: playerName,
+            name: playerNameInput,
             life: 20,
-            turnOrder: players.length, // 0 or 1
+            turnOrder: players.length,
             counters: { poison: 0, energy: 0, commanderTax: 0, experience: 0 },
             handRevealed: false,
             lastSeenChatAt: Date.now()
           };
           transaction.update(gameRef, { players: [...players, newPlayer] });
         } else {
-          throw new Error("Game is full.");
+          throw new Error('Game is full.');
         }
       });
 
-      // If transaction succeeds, enter game
-      // UPDATED: Safe code
+      await upsertUserGameMembership(user.uid, safeCode, 'player');
       setActiveGameId(safeCode);
     } catch (e) {
       console.error(e);
@@ -2352,34 +2428,31 @@ export default function App() {
     }
   };
 
-  const watchGame = async (playerName, code) => {
+  const watchGame = async (playerNameInput, code) => {
     if (!user) return;
     setIsActionLoading(true);
     setInitError(null);
-    setPlayerName(playerName);
+    setPlayerName(playerNameInput);
     try {
       const safeCode = (code || '').trim().toUpperCase();
       const gameRef = doc(db, 'games_v3', safeCode);
 
       await runTransaction(db, async (transaction) => {
         const gameDoc = await transaction.get(gameRef);
-        if (!gameDoc.exists()) {
-          throw new Error("Game not found! Check the code.");
-        }
+        if (!gameDoc.exists()) throw new Error('Game not found! Check the code.');
+
         const gameData = gameDoc.data();
-        if (gameData.allowSpectators === false) {
-          throw new Error("Spectators are not allowed in this game.");
-        }
+        if (gameData.allowSpectators === false) throw new Error('Spectators are not allowed in this game.');
+
         const players = gameData.players || [];
-        const isPlayer = players.some(p => p.id === user.uid);
+        const isPlayer = players.some((p) => p.id === user.uid);
         const spectatorIds = gameData.spectatorIds || [];
         const isSpectator = spectatorIds.includes(user.uid);
 
-        if (isPlayer || isSpectator) return;
-
-        transaction.update(gameRef, { spectatorIds: [...spectatorIds, user.uid] });
+        if (!isPlayer && !isSpectator) transaction.update(gameRef, { spectatorIds: [...spectatorIds, user.uid] });
       });
 
+      await upsertUserGameMembership(user.uid, safeCode, 'spectator');
       setActiveGameId(safeCode);
     } catch (e) {
       console.error(e);
@@ -2389,7 +2462,54 @@ export default function App() {
     }
   };
 
-  if (activeGameId && user) return <GameBoard gameId={activeGameId} realUserId={user.uid} displayName={playerName} onExit={() => setActiveGameId(null)} />;
+  useEffect(() => {
+    if (!pendingUrlEntry || !user || isActionLoading || activeGameId) return;
+    const defaultName = user.displayName || 'Guest';
+    if (!playerName) setPlayerName(defaultName);
 
-  return <Lobby onCreate={createGame} onJoin={joinGame} onWatch={watchGame} isError={!!initError} errorMsg={initError} currentUserId={user?.uid} isActionLoading={isActionLoading} />;
+    if (pendingUrlEntry.mode === 'viewer') {
+      watchGame(defaultName, pendingUrlEntry.roomCode);
+    } else {
+      joinGame(defaultName, pendingUrlEntry.roomCode);
+    }
+    setPendingUrlEntry(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingUrlEntry, user, isActionLoading, activeGameId]);
+
+  const continueWithGoogle = async () => {
+    if (!user) return;
+    setInitError(null);
+    setIsActionLoading(true);
+    try {
+      const provider = new GoogleAuthProvider();
+      if (user.isAnonymous) {
+        await linkWithPopup(user, provider);
+      } else {
+        await signInWithPopup(auth, provider);
+      }
+    } catch (e) {
+      console.error(e);
+      setInitError(e.message);
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
+
+  if (activeGameId && user) {
+    return <GameBoard gameId={activeGameId} realUserId={user.uid} displayName={playerName} onExit={() => setActiveGameId(null)} />;
+  }
+
+  return (
+    <Lobby
+      onCreate={createGame}
+      onJoin={joinGame}
+      onWatch={watchGame}
+      onContinueWithGoogle={continueWithGoogle}
+      myGames={myGames}
+      isError={!!initError}
+      errorMsg={initError}
+      currentUser={user}
+      isActionLoading={isActionLoading}
+    />
+  );
 }

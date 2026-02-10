@@ -94,6 +94,27 @@ const copyToClipboard = (text) => {
   }
 };
 
+const NON_MEANINGFUL_AUTOPASS_TYPES = new Set([
+  'PASS',
+  'PASS_PRIORITY',
+  'PRIORITY_PASS',
+  'CHAT',
+  'PHASE_ADVANCE',
+  'STEP_ADVANCE'
+]);
+
+const isMeaningfulOpponentAction = (entry, currentUid) => {
+  if (!entry || !currentUid || entry.playerId === currentUid) return false;
+
+  const entryType = (entry.type || '').toUpperCase();
+  if (NON_MEANINGFUL_AUTOPASS_TYPES.has(entryType)) return false;
+
+  const description = (entry.desc || '').trim();
+  if (/^(phase|step)\s*:/i.test(description)) return false;
+
+  return true;
+};
+
 // --- Components ---
 const Lobby = ({
   onCreate,
@@ -419,6 +440,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const [autoPassMenuOpen, setAutoPassMenuOpen] = useState(false);
   const autoPassInFlightRef = useRef(false);
   const lastAutoPassSignatureRef = useRef(null);
+  const lastSeenAutoPassLogTimestampRef = useRef(null);
 
   // New state for multi-targeting
   const [targetingState, setTargetingState] = useState(null); // { source, mode: 'CAST'|'ABILITY'|'MANUAL', selectedIds: [] }
@@ -1208,6 +1230,26 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       lastAutoPassSignatureRef.current = null;
     }
   }, [isAutoPassEnabled, game?.phase, game?.priorityPlayerId, game?.stack?.length]);
+
+  useEffect(() => {
+    if (!game) return;
+
+    const latestLogEntry = game.log?.[game.log.length - 1];
+    if (!latestLogEntry) return;
+
+    if (!isAutoPassEnabled) {
+      lastSeenAutoPassLogTimestampRef.current = latestLogEntry.timestamp;
+      return;
+    }
+
+    if (lastSeenAutoPassLogTimestampRef.current === latestLogEntry.timestamp) return;
+    lastSeenAutoPassLogTimestampRef.current = latestLogEntry.timestamp;
+
+    if (isMeaningfulOpponentAction(latestLogEntry, userId)) {
+      const actionLabel = latestLogEntry.type || 'UNKNOWN';
+      disableAutoPass(true, `AutoPass stopped: opponent acted (${actionLabel}).`);
+    }
+  }, [game?.log, isAutoPassEnabled, userId]);
 
   useEffect(() => {
     if (!isAutoPassEnabled || !game || autoPassInFlightRef.current) return;

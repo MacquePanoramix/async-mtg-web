@@ -418,7 +418,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const [autoPassConfig, setAutoPassConfig] = useState({ mode: AUTO_PASS_MODE.OFF, phaseId: null });
   const [autoPassMenuOpen, setAutoPassMenuOpen] = useState(false);
   const autoPassInFlightRef = useRef(false);
-  const lastOpponentActionRef = useRef(null);
+  const lastAutoPassSignatureRef = useRef(null);
 
   // New state for multi-targeting
   const [targetingState, setTargetingState] = useState(null); // { source, mode: 'CAST'|'ABILITY'|'MANUAL', selectedIds: [] }
@@ -607,17 +607,6 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const waitingForPlayers = game?.players.length < 2;
   const isAutoPassEnabled = autoPassConfig.mode !== AUTO_PASS_MODE.OFF;
 
-  const getLastOpponentGameAction = (currentGame, opponentId) => {
-    if (!currentGame || !opponentId) return null;
-    const entries = currentGame.log || [];
-    for (let i = entries.length - 1; i >= 0; i--) {
-      const entry = entries[i];
-      if (entry.playerId !== opponentId || entry.type === 'CHAT') continue;
-      return `${entry.timestamp}:${entry.type}:${entry.desc || ''}`;
-    }
-    return null;
-  };
-
   const hasReachedAutoPassTarget = (currentGame, config) => {
     if (!currentGame || !config || config.mode === AUTO_PASS_MODE.OFF) return false;
     if (config.mode === AUTO_PASS_MODE.END_OF_TURN) {
@@ -639,9 +628,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   };
 
   const enableAutoPass = (mode, phaseId = null) => {
-    const opponentId = opponent?.id;
     setAutoPassConfig({ mode, phaseId });
-    lastOpponentActionRef.current = getLastOpponentGameAction(game, opponentId);
+    lastAutoPassSignatureRef.current = null;
     setAutoPassMenuOpen(false);
   };
 
@@ -1195,19 +1183,6 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   }, [autoPassConfig, gameId, userId, isPlayer]);
 
   useEffect(() => {
-    if (!isAutoPassEnabled || !game || !opponent?.id) return;
-    const latestOpponentAction = getLastOpponentGameAction(game, opponent.id);
-    if (lastOpponentActionRef.current === null) {
-      lastOpponentActionRef.current = latestOpponentAction;
-      return;
-    }
-    if (latestOpponentAction && latestOpponentAction !== lastOpponentActionRef.current) {
-      lastOpponentActionRef.current = latestOpponentAction;
-      disableAutoPass(true, 'AutoPass stopped: opponent acted.');
-    }
-  }, [isAutoPassEnabled, game, opponent?.id]);
-
-  useEffect(() => {
     if (!isAutoPassEnabled || !game) return;
     if (isMyTurn) {
       disableAutoPass();
@@ -1223,11 +1198,27 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   }, [isAutoPassEnabled, game, isMyTurn, autoPassConfig]);
 
   useEffect(() => {
+    if (!isAutoPassEnabled || !game) {
+      lastAutoPassSignatureRef.current = null;
+      return;
+    }
+
+    const signature = `${game.phase}:${game.priorityPlayerId}:${(game.stack || []).length}`;
+    if (lastAutoPassSignatureRef.current && lastAutoPassSignatureRef.current !== signature) {
+      lastAutoPassSignatureRef.current = null;
+    }
+  }, [isAutoPassEnabled, game?.phase, game?.priorityPlayerId, game?.stack?.length]);
+
+  useEffect(() => {
     if (!isAutoPassEnabled || !game || autoPassInFlightRef.current) return;
     if (!canAct || waitingForPlayers || isMyTurn || !isOppTurn || !hasPriority) return;
     if ((game.stack || []).length > 0 || hasReachedAutoPassTarget(game, autoPassConfig)) return;
 
+    const prioritySignature = `${game.phase}:${game.priorityPlayerId}:${(game.stack || []).length}`;
+    if (lastAutoPassSignatureRef.current === prioritySignature) return;
+
     autoPassInFlightRef.current = true;
+    lastAutoPassSignatureRef.current = prioritySignature;
     handleAction('PASS_PRIORITY').finally(() => {
       autoPassInFlightRef.current = false;
     });

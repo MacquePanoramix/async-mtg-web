@@ -46,6 +46,12 @@ const ZONES = {
   COMMAND: 'command'
 };
 
+const AUTO_PASS_MODE = {
+  OFF: 'off',
+  END_OF_TURN: 'end_of_turn',
+  PHASE: 'phase'
+};
+
 // --- Helper Functions ---
 const generateGameId = () => {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -409,6 +415,10 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const libraryButtonRef = useRef(null);
   const [draggingCard, setDraggingCard] = useState(null);
   const [oppBoardOpen, setOppBoardOpen] = useState(false);
+  const [autoPassConfig, setAutoPassConfig] = useState({ mode: AUTO_PASS_MODE.OFF, phaseId: null });
+  const [autoPassMenuOpen, setAutoPassMenuOpen] = useState(false);
+  const autoPassInFlightRef = useRef(false);
+  const lastOpponentActionRef = useRef(null);
 
   // New state for multi-targeting
   const [targetingState, setTargetingState] = useState(null); // { source, mode: 'CAST'|'ABILITY'|'MANUAL', selectedIds: [] }
@@ -595,6 +605,51 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const handRevealed = myPlayer?.handRevealed || false;
 
   const waitingForPlayers = game?.players.length < 2;
+  const isAutoPassEnabled = autoPassConfig.mode !== AUTO_PASS_MODE.OFF;
+
+  const getLastOpponentGameAction = (currentGame, opponentId) => {
+    if (!currentGame || !opponentId) return null;
+    const entries = currentGame.log || [];
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const entry = entries[i];
+      if (entry.playerId !== opponentId || entry.type === 'CHAT') continue;
+      return `${entry.timestamp}:${entry.type}:${entry.desc || ''}`;
+    }
+    return null;
+  };
+
+  const hasReachedAutoPassTarget = (currentGame, config) => {
+    if (!currentGame || !config || config.mode === AUTO_PASS_MODE.OFF) return false;
+    if (config.mode === AUTO_PASS_MODE.END_OF_TURN) {
+      return currentGame.phase === 'end' || currentGame.phase === 'cleanup';
+    }
+    if (config.mode === AUTO_PASS_MODE.PHASE) {
+      return currentGame.phase === config.phaseId;
+    }
+    return false;
+  };
+
+  const disableAutoPass = (showNote = false, note = 'AutoPass turned off.') => {
+    setAutoPassConfig({ mode: AUTO_PASS_MODE.OFF, phaseId: null });
+    setAutoPassMenuOpen(false);
+    if (showNote) {
+      setNotification(note);
+      setTimeout(() => setNotification(null), 2000);
+    }
+  };
+
+  const enableAutoPass = (mode, phaseId = null) => {
+    const opponentId = opponent?.id;
+    setAutoPassConfig({ mode, phaseId });
+    lastOpponentActionRef.current = getLastOpponentGameAction(game, opponentId);
+    setAutoPassMenuOpen(false);
+  };
+
+  const autoPassLabel = autoPassConfig.mode === AUTO_PASS_MODE.END_OF_TURN
+    ? 'AUTO: until End of Turn'
+    : autoPassConfig.mode === AUTO_PASS_MODE.PHASE
+      ? `AUTO: until ${PHASES.find(p => p.id === autoPassConfig.phaseId)?.label || 'phase'}`
+      : null;
 
   const handleAction = async (actionType, payload = {}) => {
     if (!game) return;
@@ -1114,6 +1169,70 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     await updateDoc(gameRef, updates);
   };
 
+  useEffect(() => {
+    if (!gameId || !userId || !isPlayer) return;
+    try {
+      const raw = localStorage.getItem(`autopass:${gameId}:${userId}`);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (!parsed || parsed.mode === AUTO_PASS_MODE.OFF) return;
+      if (parsed.mode === AUTO_PASS_MODE.END_OF_TURN || (parsed.mode === AUTO_PASS_MODE.PHASE && parsed.phaseId)) {
+        setAutoPassConfig(parsed);
+      }
+    } catch (_err) {
+      // ignore invalid local storage values
+    }
+  }, [gameId, userId, isPlayer]);
+
+  useEffect(() => {
+    if (!gameId || !userId || !isPlayer) return;
+    const key = `autopass:${gameId}:${userId}`;
+    if (autoPassConfig.mode === AUTO_PASS_MODE.OFF) {
+      localStorage.removeItem(key);
+      return;
+    }
+    localStorage.setItem(key, JSON.stringify(autoPassConfig));
+  }, [autoPassConfig, gameId, userId, isPlayer]);
+
+  useEffect(() => {
+    if (!isAutoPassEnabled || !game || !opponent?.id) return;
+    const latestOpponentAction = getLastOpponentGameAction(game, opponent.id);
+    if (lastOpponentActionRef.current === null) {
+      lastOpponentActionRef.current = latestOpponentAction;
+      return;
+    }
+    if (latestOpponentAction && latestOpponentAction !== lastOpponentActionRef.current) {
+      lastOpponentActionRef.current = latestOpponentAction;
+      disableAutoPass(true, 'AutoPass stopped: opponent acted.');
+    }
+  }, [isAutoPassEnabled, game, opponent?.id]);
+
+  useEffect(() => {
+    if (!isAutoPassEnabled || !game) return;
+    if (isMyTurn) {
+      disableAutoPass();
+      return;
+    }
+    if (hasReachedAutoPassTarget(game, autoPassConfig)) {
+      disableAutoPass(true, 'AutoPass reached stop target.');
+      return;
+    }
+    if ((game.stack || []).length > 0) {
+      disableAutoPass(true, 'AutoPass stopped: stack needs attention.');
+    }
+  }, [isAutoPassEnabled, game, isMyTurn, autoPassConfig]);
+
+  useEffect(() => {
+    if (!isAutoPassEnabled || !game || autoPassInFlightRef.current) return;
+    if (!canAct || waitingForPlayers || isMyTurn || !isOppTurn || !hasPriority) return;
+    if ((game.stack || []).length > 0 || hasReachedAutoPassTarget(game, autoPassConfig)) return;
+
+    autoPassInFlightRef.current = true;
+    handleAction('PASS_PRIORITY').finally(() => {
+      autoPassInFlightRef.current = false;
+    });
+  }, [isAutoPassEnabled, game, canAct, waitingForPlayers, isMyTurn, isOppTurn, hasPriority, autoPassConfig]);
+
   const importDeck = async () => {
     if (isSpectator) {
       setNotification("Spectators can't import decks.");
@@ -1468,15 +1587,51 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           ) : waitingForPlayers ? (
             <div className="text-xs text-yellow-500 font-bold flex items-center gap-1"><Users size={12} /> Waiting</div>
           ) : hasPriority ? (
-            <button
-              onClick={() => handleAction('PASS_PRIORITY')}
-              className="bg-green-600 hover:bg-green-500 text-white px-4 py-1.5 rounded-full text-sm font-bold shadow-lg transform active:scale-95 transition-all flex items-center gap-2"
-            >
-              <ArrowRight size={14} /> Pass
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => handleAction('PASS_PRIORITY')}
+                className="bg-green-600 hover:bg-green-500 text-white px-4 py-1.5 rounded-full text-sm font-bold shadow-lg transform active:scale-95 transition-all flex items-center gap-2"
+              >
+                <ArrowRight size={14} /> Pass
+              </button>
+              <div className="relative">
+                <button
+                  onClick={() => setAutoPassMenuOpen(prev => !prev)}
+                  className={`px-3 py-1.5 rounded-full text-xs font-bold border flex items-center gap-1 ${isAutoPassEnabled ? 'bg-purple-700/60 border-purple-400 text-purple-100' : 'bg-slate-800 border-slate-600 text-slate-300 hover:text-white'}`}
+                >
+                  AutoPass <ChevronDown size={12} />
+                </button>
+                {autoPassMenuOpen && (
+                  <div className="absolute right-0 mt-2 w-56 bg-slate-900 border border-slate-700 rounded-lg shadow-xl z-40 p-2 space-y-1">
+                    <button onClick={() => disableAutoPass()} className="w-full text-left px-2 py-1.5 rounded hover:bg-slate-700 text-sm">Off</button>
+                    <button onClick={() => enableAutoPass(AUTO_PASS_MODE.END_OF_TURN)} className="w-full text-left px-2 py-1.5 rounded hover:bg-slate-700 text-sm">Until End of Turn</button>
+                    <div className="border-t border-slate-700 my-1"></div>
+                    <div className="text-[10px] uppercase tracking-wider text-slate-400 px-2">Until phase/step…</div>
+                    <div className="max-h-48 overflow-auto">
+                      {PHASES.map((phase) => (
+                        <button
+                          key={phase.id}
+                          onClick={() => enableAutoPass(AUTO_PASS_MODE.PHASE, phase.id)}
+                          className="w-full text-left px-2 py-1.5 rounded hover:bg-slate-700 text-sm"
+                        >
+                          {phase.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
           ) : (
             <div className="flex items-center gap-2 text-slate-500 px-3 py-1 bg-slate-900/50 rounded-full border border-slate-800">
               <Clock size={14} /> <span className="text-xs font-medium italic">Waiting...</span>
+            </div>
+          )}
+
+          {isAutoPassEnabled && (
+            <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wide bg-purple-900/40 border border-purple-500/40 text-purple-200 px-2 py-1 rounded-md">
+              <span>{autoPassLabel}</span>
+              <button onClick={() => disableAutoPass()} className="text-purple-100 hover:text-white underline text-[10px]">Off</button>
             </div>
           )}
 

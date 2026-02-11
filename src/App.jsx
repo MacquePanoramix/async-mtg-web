@@ -689,6 +689,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const [loading, setLoading] = useState(true);
   const [deckInput, setDeckInput] = useState('');
   const [importing, setImporting] = useState(false);
+  const [deletingDeck, setDeletingDeck] = useState(false);
+  const [deleteDeckConfirmOpen, setDeleteDeckConfirmOpen] = useState(false);
   const [selectedCard, setSelectedCard] = useState(null);
   const [zoomedCard, setZoomedCard] = useState(null);
   const [scryCard, setScryCard] = useState(null);
@@ -1643,6 +1645,45 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     setDeckInput('');
   };
 
+  const deleteDeck = async () => {
+    if (!game || !userId || isSpectator) return;
+
+    setDeletingDeck(true);
+    try {
+      const deckZonesToClear = new Set([
+        ZONES.LIBRARY,
+        ZONES.HAND,
+        ZONES.BATTLEFIELD,
+        ZONES.GRAVEYARD,
+        ZONES.EXILE
+      ]);
+
+      const playerDeckCards = (game.cards || []).filter(card => card.ownerId === userId && deckZonesToClear.has(card.zone));
+      const deckCardIds = new Set(playerDeckCards.map(card => card.instanceId));
+      const nextCards = (game.cards || []).filter(card => !deckCardIds.has(card.instanceId));
+      const nextReveals = (game.reveals || []).filter(entry => entry.revealerId !== userId && !deckCardIds.has(entry.cardId));
+
+      await updateDoc(doc(db, 'games_v3', gameId), {
+        cards: nextCards,
+        reveals: nextReveals,
+        log: arrayUnion({
+          timestamp: Date.now(),
+          playerId: userId,
+          playerName: myPlayer?.name || displayName || 'Unknown',
+          type: 'DECK_DELETE',
+          desc: 'Deleted their deck.'
+        })
+      });
+
+      setDeleteDeckConfirmOpen(false);
+      setDeckInput('');
+      setNotification('Deck deleted.');
+      setTimeout(() => setNotification(null), 2000);
+    } finally {
+      setDeletingDeck(false);
+    }
+  };
+
   const createToken = () => {
     if (isSpectator) {
       setNotification("Spectators can't create tokens.");
@@ -1818,6 +1859,14 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const getZoneCount = (pid, zone) => (game.cards || []).filter(c => c.ownerId === pid && c.zone === zone).length;
   const myGYCount = getZoneCount(viewAsPlayerId, ZONES.GRAVEYARD);
   const myExileCount = getZoneCount(viewAsPlayerId, ZONES.EXILE);
+  const hasDeckLoaded = [
+    ZONES.LIBRARY,
+    ZONES.HAND,
+    ZONES.BATTLEFIELD,
+    ZONES.GRAVEYARD,
+    ZONES.EXILE
+  ].some(zone => getZoneCount(viewAsPlayerId, zone) > 0);
+  const noDeckLoaded = !hasDeckLoaded;
   // Opponent Counts
   const oppGYCount = opponent ? getZoneCount(opponent.id, ZONES.GRAVEYARD) : 0;
   const oppExileCount = opponent ? getZoneCount(opponent.id, ZONES.EXILE) : 0;
@@ -2320,12 +2369,20 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         )}
 
         <div className="p-2 overflow-x-auto whitespace-nowrap hide-scrollbar flex gap-2 min-h-[140px] items-center px-4">
-          {myHand.length === 0 && (
+          {canAct && noDeckLoaded && (
             <button
-              onClick={canAct ? () => setDeckInput('20 Mountain\n20 Lightning Bolt\n20 Llanowar Elves') : undefined}
-              className={`mx-auto text-sm text-slate-500 border border-slate-600 border-dashed rounded px-4 py-2 hover:text-white hover:border-slate-400 ${canAct ? '' : 'opacity-40 cursor-not-allowed'}`}
+              onClick={() => setDeckInput('20 Mountain\n20 Lightning Bolt\n20 Llanowar Elves')}
+              className="mx-auto text-sm text-slate-500 border border-slate-600 border-dashed rounded px-4 py-2 hover:text-white hover:border-slate-400"
             >
               Import Deck
+            </button>
+          )}
+          {canAct && hasDeckLoaded && (
+            <button
+              onClick={() => setDeleteDeckConfirmOpen(true)}
+              className="mx-auto text-sm text-red-300 border border-red-700 rounded px-4 py-2 hover:text-white hover:border-red-500"
+            >
+              Delete Deck
             </button>
           )}
           {myHand.map(card => (
@@ -2760,7 +2817,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         </div>
       )}
 
-      {deckInput !== '' && !importing && myHand.length === 0 && (
+      {deckInput !== '' && !importing && noDeckLoaded && (
         <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
           <div className="bg-slate-800 w-full max-w-md rounded-xl p-6 shadow-2xl border border-slate-600">
             <h3 className="text-xl font-bold mb-4">Import Deck</h3>
@@ -2774,6 +2831,34 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             <div className="flex gap-3 mt-4">
               <button onClick={() => setDeckInput('')} className="flex-1 bg-slate-700 py-2 rounded">Cancel</button>
               <button onClick={importDeck} className="flex-1 bg-green-600 py-2 rounded font-bold text-white">Import Cards</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {deleteDeckConfirmOpen && (
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
+          <div className="bg-slate-800 w-full max-w-md rounded-xl p-6 shadow-2xl border border-slate-600">
+            <h3 className="text-xl font-bold mb-2">Delete your deck?</h3>
+            <p className="text-sm text-slate-300">
+              This will remove your current deck state (library/hand/etc). You can import again after.
+            </p>
+            <div className="flex gap-3 mt-5">
+              <button
+                onClick={() => setDeleteDeckConfirmOpen(false)}
+                className="flex-1 bg-slate-700 py-2 rounded"
+                disabled={deletingDeck}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={deleteDeck}
+                className="flex-1 bg-red-600 py-2 rounded font-bold text-white flex items-center justify-center gap-2 disabled:opacity-60"
+                disabled={deletingDeck}
+              >
+                {deletingDeck ? <RotateCw size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                Delete
+              </button>
             </div>
           </div>
         </div>

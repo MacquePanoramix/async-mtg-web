@@ -2,8 +2,8 @@ import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged, GoogleAuthProvider, linkWithPopup, signInWithPopup } from 'firebase/auth';
-import { getFirestore, doc, setDoc, collection, onSnapshot, updateDoc, arrayUnion, serverTimestamp, runTransaction, query, orderBy } from 'firebase/firestore';
-import { X, ArrowRight, Clock, Shield, Skull, Layers, Eye, ChevronDown, ChevronUp, BookOpen, Shuffle, Plus, Copy, UserCheck, EyeOff, RotateCw, Search, Hexagon, Unlock, Lock, Move, Dices, Coins, LayoutGrid, LogOut, Users, User, Bug, Loader2, RefreshCw, AlertTriangle, Repeat, Check, ArrowUp, ArrowDown, MessageSquare } from 'lucide-react';
+import { getFirestore, doc, setDoc, collection, onSnapshot, updateDoc, arrayUnion, serverTimestamp, runTransaction, query, orderBy, deleteDoc, getDoc } from 'firebase/firestore';
+import { X, ArrowRight, Clock, Shield, Skull, Layers, Eye, ChevronDown, ChevronUp, BookOpen, Shuffle, Plus, Copy, UserCheck, EyeOff, RotateCw, Search, Hexagon, Unlock, Lock, Move, Dices, Coins, LayoutGrid, LogOut, Users, User, Bug, Loader2, RefreshCw, AlertTriangle, Repeat, Check, ArrowUp, ArrowDown, MessageSquare, Trash2 } from 'lucide-react';
 
 // --- Firebase Configuration ---
 // UPDATED: Using standard Vite env vars
@@ -334,24 +334,29 @@ const Lobby = ({
   onCreate,
   onJoin,
   onWatch,
+  onRemoveFromList,
   onContinueWithGoogle,
   myGames,
+  toastMessage,
+  suggestedName,
   isError,
   errorMsg,
   currentUser,
   isActionLoading
 }) => {
   const [name, setName] = useState('');
+  const [gameTitle, setGameTitle] = useState('');
   const [code, setCode] = useState('');
   const [mode, setMode] = useState('menu');
+  const [pendingDeleteGame, setPendingDeleteGame] = useState(null);
   const isInitLoading = !currentUser;
+  const effectiveName = name || suggestedName || '';
 
   const openGameFromHistory = (game) => {
     const params = new URLSearchParams({ room: game.roomCode });
     if (game.role === 'spectator') params.set('mode', 'viewer');
     window.open(`/?${params.toString()}`, '_blank', 'noopener,noreferrer');
   };
-
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col items-center justify-center p-4">
       <div className="max-w-md w-full space-y-8 relative">
@@ -376,7 +381,7 @@ const Lobby = ({
             <label className="block text-sm font-medium text-slate-400 mb-1">Your Name</label>
             <input
               type="text"
-              value={name}
+              value={effectiveName}
               onChange={(e) => setName(e.target.value)}
               className="w-full bg-slate-900 border border-slate-700 rounded p-3 text-white focus:ring-2 focus:ring-purple-500 outline-none"
               placeholder="Planeswalker Name"
@@ -387,23 +392,34 @@ const Lobby = ({
             <div className="space-y-3">
               <div className="grid grid-cols-2 gap-3">
                 <button
-                  onClick={() => onCreate(name)}
-                  disabled={!name || isInitLoading || isActionLoading}
+                  onClick={() => onCreate(effectiveName, gameTitle)}
+                  disabled={!effectiveName.trim() || isInitLoading || isActionLoading}
                   className="bg-purple-600 hover:bg-purple-700 disabled:opacity-50 disabled:cursor-wait text-white p-3 rounded-lg font-bold transition-colors flex justify-center items-center gap-2"
                 >
                   {isActionLoading ? <Loader2 className="animate-spin" size={18}/> : 'Create Game'}
                 </button>
                 <button
                   onClick={() => setMode('join')}
-                  disabled={!name || isInitLoading || isActionLoading}
+                  disabled={!effectiveName.trim() || isInitLoading || isActionLoading}
                   className="bg-slate-700 hover:bg-slate-600 disabled:opacity-50 disabled:cursor-wait text-white p-3 rounded-lg font-bold transition-colors flex justify-center items-center gap-2"
                 >
                   {isInitLoading ? <Loader2 className="animate-spin" size={18}/> : 'Join Game'}
                 </button>
               </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-400 mb-1">Game Title (optional)</label>
+                <input
+                  type="text"
+                  value={gameTitle}
+                  onChange={(e) => setGameTitle(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-700 rounded p-3 text-white focus:ring-2 focus:ring-purple-500 outline-none"
+                  placeholder="e.g. 'Mono-Red vs Elves'"
+                  maxLength={80}
+                />
+              </div>
               <button
                 onClick={() => setMode('watch')}
-                disabled={!name || isInitLoading || isActionLoading}
+                disabled={!effectiveName.trim() || isInitLoading || isActionLoading}
                 className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-wait text-white p-3 rounded-lg font-bold transition-colors flex justify-center items-center gap-2"
               >
                 {isInitLoading ? <Loader2 className="animate-spin" size={18}/> : 'Watch Game'}
@@ -433,7 +449,7 @@ const Lobby = ({
                   Back
                 </button>
                 <button
-                  onClick={() => onJoin(name, code)}
+                  onClick={() => onJoin(effectiveName, code)}
                   disabled={!code || isInitLoading || isActionLoading}
                   className="flex-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white p-3 rounded-lg font-bold flex justify-center items-center gap-2"
                 >
@@ -465,7 +481,7 @@ const Lobby = ({
                   Back
                 </button>
                 <button
-                  onClick={() => onWatch(name, code)}
+                  onClick={() => onWatch(effectiveName, code)}
                   disabled={!code || isInitLoading || isActionLoading}
                   className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white p-3 rounded-lg font-bold flex justify-center items-center gap-2"
                 >
@@ -490,18 +506,35 @@ const Lobby = ({
             ) : (
               <div className="space-y-2">
                 {myGames.map((game) => (
-                  <button
+                  <div
                     key={game.id}
-                    onClick={() => openGameFromHistory(game)}
-                    className="w-full text-left bg-slate-900 hover:bg-slate-700 p-2 rounded text-sm border border-slate-700"
+                    className="bg-slate-900 p-2 rounded text-sm border border-slate-700 flex items-center gap-2"
                   >
-                    <div className="font-mono tracking-widest text-white">{game.roomCode}</div>
-                    <div className="text-xs text-slate-400 capitalize">{game.role}</div>
-                  </button>
+                    <button
+                      onClick={() => openGameFromHistory(game)}
+                      className="flex-1 text-left hover:bg-slate-700/60 rounded p-1"
+                    >
+                      <div className="text-white truncate">{(game.title || '').trim() || game.roomCode || game.id}</div>
+                      <div className="text-xs text-slate-400 capitalize">{game.role} • <span className="font-mono tracking-widest">{game.roomCode}</span></div>
+                    </button>
+                    <button
+                      onClick={() => setPendingDeleteGame(game)}
+                      className="p-2 rounded bg-slate-800 hover:bg-red-700/40 text-slate-300 hover:text-red-300"
+                      aria-label={`Remove ${game.roomCode} from list`}
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
                 ))}
               </div>
             )}
           </div>
+
+          {toastMessage && (
+            <div className="text-xs text-emerald-300 bg-emerald-900/30 border border-emerald-800 rounded p-2">
+              {toastMessage}
+            </div>
+          )}
         </div>
 
         <div className="absolute -bottom-24 left-0 right-0 flex flex-col items-center gap-2">
@@ -514,8 +547,35 @@ const Lobby = ({
             {currentUser?.isAnonymous === false && <span className="text-green-400">(Google)</span>}
             </div>
           </div>
-        </div>
       </div>
+      {pendingDeleteGame && (
+        <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
+          <div className="bg-slate-800 w-full max-w-sm rounded-xl border border-slate-700 p-4 space-y-3">
+            <div className="text-base font-semibold text-white">Remove this game from your list?</div>
+            <div className="text-sm text-slate-300">
+              This only removes it from YOUR list. The game still exists for the other player.
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setPendingDeleteGame(null)}
+                className="flex-1 bg-slate-700 hover:bg-slate-600 text-white p-2 rounded"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  await onRemoveFromList(pendingDeleteGame);
+                  setPendingDeleteGame(null);
+                }}
+                className="flex-1 bg-red-600 hover:bg-red-700 text-white p-2 rounded"
+              >
+                Remove
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
   );
 };
 
@@ -2741,15 +2801,43 @@ export default function App() {
   const [isActionLoading, setIsActionLoading] = useState(false);
   const [playerName, setPlayerName] = useState('');
   const [myGames, setMyGames] = useState([]);
+  const [toastMessage, setToastMessage] = useState('');
   const [pendingUrlEntry, setPendingUrlEntry] = useState(null);
+  const suggestedName = myGames.find((g) => (g.myName || '').trim())?.myName || '';
 
-  const upsertUserGameMembership = async (uid, roomCode, role) => {
+  const upsertUserGameMembership = async (uid, roomCode, role, extraFields = {}) => {
+    const trimmedName = (extraFields.myName || '').trim();
+    const trimmedTitle = (extraFields.title || '').trim();
     const membershipRef = doc(db, 'users', uid, 'games', roomCode);
     await setDoc(membershipRef, {
       roomCode,
       role,
+      gameId: roomCode,
+      ...(trimmedName ? { myName: trimmedName } : {}),
+      ...(trimmedTitle ? { title: trimmedTitle } : {}),
+      createdAt: serverTimestamp(),
       updatedAt: serverTimestamp()
     }, { merge: true });
+  };
+
+  const getPreferredNameForGame = async (uid, roomCode, fallbackName) => {
+    const defaultName = (fallbackName || '').trim() || 'Guest';
+    try {
+      const membershipRef = doc(db, 'users', uid, 'games', roomCode);
+      const membershipSnap = await getDoc(membershipRef);
+      const storedName = (membershipSnap.data()?.myName || '').trim();
+      if (storedName) return storedName;
+
+      const gameSnap = await getDoc(doc(db, 'games_v3', roomCode));
+      if (gameSnap.exists()) {
+        const players = gameSnap.data()?.players || [];
+        const playerNameFromGame = (players.find((p) => p.id === uid)?.name || '').trim();
+        if (playerNameFromGame) return playerNameFromGame;
+      }
+    } catch (e) {
+      console.warn('Could not resolve preferred name for game', roomCode, e);
+    }
+    return defaultName;
   };
 
   useEffect(() => {
@@ -2793,20 +2881,24 @@ export default function App() {
     return () => unsub();
   }, [user]);
 
-  const createGame = async (playerNameInput) => {
+  const createGame = async (playerNameInput, gameTitleInput) => {
     if (!user) return;
     setIsActionLoading(true);
     setInitError(null);
-    setPlayerName(playerNameInput);
+    const safeName = (playerNameInput || '').trim();
+    const safeTitle = (gameTitleInput || '').trim();
+    setPlayerName(safeName);
     try {
       const initialData = {
         createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
         hostId: user.uid,
+        ...(safeTitle ? { title: safeTitle } : {}),
         allowSpectators: true,
         spectatorIds: [],
         players: [{
           id: user.uid,
-          name: playerNameInput,
+          name: safeName,
           life: 20,
           turnOrder: 0,
           counters: { poison: 0, energy: 0, commanderTax: 0, experience: 0 },
@@ -2830,7 +2922,7 @@ export default function App() {
 
       const shortCode = generateGameId();
       await setDoc(doc(db, 'games_v3', shortCode), { ...initialData, id: shortCode });
-      await upsertUserGameMembership(user.uid, shortCode, 'player');
+      await upsertUserGameMembership(user.uid, shortCode, 'player', { myName: safeName, title: safeTitle });
       setActiveGameId(shortCode);
     } catch (e) {
       console.error(e);
@@ -2844,40 +2936,43 @@ export default function App() {
     if (!user) return;
     setIsActionLoading(true);
     setInitError(null);
-    setPlayerName(playerNameInput);
+    const safeName = (playerNameInput || '').trim();
+    setPlayerName(safeName);
     try {
       const safeCode = (code || '').trim().toUpperCase();
       const gameRef = doc(db, 'games_v3', safeCode);
+      let gameTitle = '';
 
       await runTransaction(db, async (transaction) => {
         const gameDoc = await transaction.get(gameRef);
         if (!gameDoc.exists()) throw new Error('Game not found! Check the code.');
 
         const gameData = gameDoc.data();
+        gameTitle = (gameData.title || '').trim();
         const players = gameData.players || [];
         const existingPlayerIndex = players.findIndex((p) => p.id === user.uid);
 
         if (existingPlayerIndex >= 0) {
           const newPlayers = [...players];
-          newPlayers[existingPlayerIndex] = { ...newPlayers[existingPlayerIndex], name: playerNameInput, lastSeenChatAt: Date.now() };
-          transaction.update(gameRef, { players: newPlayers });
+          newPlayers[existingPlayerIndex] = { ...newPlayers[existingPlayerIndex], name: safeName, lastSeenChatAt: Date.now() };
+          transaction.update(gameRef, { players: newPlayers, updatedAt: serverTimestamp() });
         } else if (players.length < 2) {
           const newPlayer = {
             id: user.uid,
-            name: playerNameInput,
+            name: safeName,
             life: 20,
             turnOrder: players.length,
             counters: { poison: 0, energy: 0, commanderTax: 0, experience: 0 },
             handRevealed: false,
             lastSeenChatAt: Date.now()
           };
-          transaction.update(gameRef, { players: [...players, newPlayer] });
+          transaction.update(gameRef, { players: [...players, newPlayer], updatedAt: serverTimestamp() });
         } else {
           throw new Error('Game is full.');
         }
       });
 
-      await upsertUserGameMembership(user.uid, safeCode, 'player');
+      await upsertUserGameMembership(user.uid, safeCode, 'player', { myName: safeName, title: gameTitle });
       setActiveGameId(safeCode);
     } catch (e) {
       console.error(e);
@@ -2891,16 +2986,19 @@ export default function App() {
     if (!user) return;
     setIsActionLoading(true);
     setInitError(null);
-    setPlayerName(playerNameInput);
+    const safeName = (playerNameInput || '').trim();
+    setPlayerName(safeName);
     try {
       const safeCode = (code || '').trim().toUpperCase();
       const gameRef = doc(db, 'games_v3', safeCode);
+      let gameTitle = '';
 
       await runTransaction(db, async (transaction) => {
         const gameDoc = await transaction.get(gameRef);
         if (!gameDoc.exists()) throw new Error('Game not found! Check the code.');
 
         const gameData = gameDoc.data();
+        gameTitle = (gameData.title || '').trim();
         if (gameData.allowSpectators === false) throw new Error('Spectators are not allowed in this game.');
 
         const players = gameData.players || [];
@@ -2911,7 +3009,7 @@ export default function App() {
         if (!isPlayer && !isSpectator) transaction.update(gameRef, { spectatorIds: [...spectatorIds, user.uid] });
       });
 
-      await upsertUserGameMembership(user.uid, safeCode, 'spectator');
+      await upsertUserGameMembership(user.uid, safeCode, 'spectator', { myName: safeName, title: gameTitle });
       setActiveGameId(safeCode);
     } catch (e) {
       console.error(e);
@@ -2923,17 +3021,45 @@ export default function App() {
 
   useEffect(() => {
     if (!pendingUrlEntry || !user || isActionLoading || activeGameId) return;
-    const defaultName = user.displayName || 'Guest';
-    if (!playerName) setPlayerName(defaultName);
+    let cancelled = false;
 
-    if (pendingUrlEntry.mode === 'viewer') {
-      watchGame(defaultName, pendingUrlEntry.roomCode);
-    } else {
-      joinGame(defaultName, pendingUrlEntry.roomCode);
-    }
-    setPendingUrlEntry(null);
+    const startFromUrl = async () => {
+      const defaultName = user.displayName || 'Guest';
+      const preferredName = await getPreferredNameForGame(user.uid, pendingUrlEntry.roomCode, defaultName);
+      if (cancelled) return;
+      setPlayerName(preferredName);
+
+      if (pendingUrlEntry.mode === 'viewer') {
+        await watchGame(preferredName, pendingUrlEntry.roomCode);
+      } else {
+        await joinGame(preferredName, pendingUrlEntry.roomCode);
+      }
+
+      if (!cancelled) setPendingUrlEntry(null);
+    };
+
+    startFromUrl();
+
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingUrlEntry, user, isActionLoading, activeGameId]);
+
+  const removeGameFromList = async (game) => {
+    if (!user || !game?.id) return;
+    const prevGames = myGames;
+    setMyGames((existing) => existing.filter((g) => g.id !== game.id));
+    try {
+      await deleteDoc(doc(db, 'users', user.uid, 'games', game.id));
+      setToastMessage('Removed from your list.');
+      setTimeout(() => setToastMessage(''), 2500);
+    } catch (e) {
+      console.error(e);
+      setInitError(e.message);
+      setMyGames(prevGames);
+    }
+  };
 
   const continueWithGoogle = async () => {
     if (!user) return;
@@ -2963,8 +3089,11 @@ export default function App() {
       onCreate={createGame}
       onJoin={joinGame}
       onWatch={watchGame}
+      onRemoveFromList={removeGameFromList}
       onContinueWithGoogle={continueWithGoogle}
       myGames={myGames}
+      toastMessage={toastMessage}
+      suggestedName={suggestedName}
       isError={!!initError}
       errorMsg={initError}
       currentUser={user}

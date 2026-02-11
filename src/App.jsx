@@ -100,7 +100,11 @@ const NON_MEANINGFUL_AUTOPASS_TYPES = new Set([
   'PRIORITY_PASS',
   'CHAT',
   'PHASE_ADVANCE',
-  'STEP_ADVANCE'
+  'STEP_ADVANCE',
+  'UNTAP',
+  'UNTAP_STEP',
+  'DRAW',
+  'DRAW_STEP'
 ]);
 
 const isMeaningfulOpponentAction = (entry, currentUid) => {
@@ -109,8 +113,10 @@ const isMeaningfulOpponentAction = (entry, currentUid) => {
   const entryType = (entry.type || '').toUpperCase();
   if (NON_MEANINGFUL_AUTOPASS_TYPES.has(entryType)) return false;
 
-  const description = (entry.desc || '').trim();
+  const description = (entry.description || entry.desc || '').trim();
   if (/^(phase|step)\s*:/i.test(description)) return false;
+  // Housekeeping steps happen every turn and should not be treated as meaningful actions.
+  if (/\b(untap|untapped|draw|drew|draws a card|draw step|untap step)\b/i.test(description)) return false;
 
   return true;
 };
@@ -127,17 +133,21 @@ const getAutoPassLogKey = (entry, entryIndex) => {
 
 const MAX_PROXY_AUTOPASS_ADVANCES = 10;
 
+const getDefaultAutoPassConfig = () => ({ mode: AUTO_PASS_MODE.OFF, phaseId: null, stopOnOpponentAction: true });
+
 const normalizeAutoPassConfig = (config) => {
-  if (!config || config.mode === AUTO_PASS_MODE.OFF) return { mode: AUTO_PASS_MODE.OFF, phaseId: null };
-  if (config.mode === AUTO_PASS_MODE.END_OF_TURN) return { mode: AUTO_PASS_MODE.END_OF_TURN, phaseId: null };
-  if (config.mode === AUTO_PASS_MODE.PHASE && config.phaseId) return { mode: AUTO_PASS_MODE.PHASE, phaseId: config.phaseId };
-  return { mode: AUTO_PASS_MODE.OFF, phaseId: null };
+  const stopOnOpponentAction = config?.stopOnOpponentAction !== false;
+  if (!config || config.mode === AUTO_PASS_MODE.OFF) return { mode: AUTO_PASS_MODE.OFF, phaseId: null, stopOnOpponentAction };
+  if (config.mode === AUTO_PASS_MODE.END_OF_TURN) return { mode: AUTO_PASS_MODE.END_OF_TURN, phaseId: null, stopOnOpponentAction };
+  if (config.mode === AUTO_PASS_MODE.PHASE && config.phaseId) return { mode: AUTO_PASS_MODE.PHASE, phaseId: config.phaseId, stopOnOpponentAction };
+  return { mode: AUTO_PASS_MODE.OFF, phaseId: null, stopOnOpponentAction };
 };
 
-const hasReachedAutoPassTarget = (currentGame, config) => {
+const hasReachedAutoPassTarget = (currentGame, config, autoPassPlayerId) => {
   if (!currentGame || !config || config.mode === AUTO_PASS_MODE.OFF) return false;
   if (config.mode === AUTO_PASS_MODE.END_OF_TURN) {
-    return currentGame.phase === 'end' || currentGame.phase === 'cleanup';
+    // "Until End of Turn" now means "until it is my turn again".
+    return !!autoPassPlayerId && currentGame.turnPlayerId === autoPassPlayerId;
   }
   if (config.mode === AUTO_PASS_MODE.PHASE) {
     return currentGame.phase === config.phaseId;
@@ -286,14 +296,14 @@ const runProxyAutoPassAdvances = (startingGame, actorId, actorName) => {
     const config = getPlayerAutoPassConfig(workingGame, autoPassPlayerId);
     if (config.mode === AUTO_PASS_MODE.OFF) break;
     if ((workingGame.stack || []).length > 0) break;
-    if (hasReachedAutoPassTarget(workingGame, config)) {
-      workingGame.autopass[autoPassPlayerId] = { mode: AUTO_PASS_MODE.OFF, phaseId: null };
+    if (hasReachedAutoPassTarget(workingGame, config, autoPassPlayerId)) {
+      workingGame.autopass[autoPassPlayerId] = getDefaultAutoPassConfig();
       break;
     }
 
     const latestLog = (workingGame.log || [])[workingGame.log.length - 1];
-    if (isMeaningfulOpponentAction(latestLog, autoPassPlayerId)) {
-      workingGame.autopass[autoPassPlayerId] = { mode: AUTO_PASS_MODE.OFF, phaseId: null };
+    if (config.stopOnOpponentAction && isMeaningfulOpponentAction(latestLog, autoPassPlayerId)) {
+      workingGame.autopass[autoPassPlayerId] = getDefaultAutoPassConfig();
       break;
     }
 
@@ -311,8 +321,8 @@ const runProxyAutoPassAdvances = (startingGame, actorId, actorName) => {
     advances += 1;
 
     const nextConfig = getPlayerAutoPassConfig(workingGame, autoPassPlayerId);
-    if (hasReachedAutoPassTarget(workingGame, nextConfig)) {
-      workingGame.autopass[autoPassPlayerId] = { mode: AUTO_PASS_MODE.OFF, phaseId: null };
+    if (hasReachedAutoPassTarget(workingGame, nextConfig, autoPassPlayerId)) {
+      workingGame.autopass[autoPassPlayerId] = getDefaultAutoPassConfig();
       break;
     }
   }
@@ -640,7 +650,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const libraryButtonRef = useRef(null);
   const [draggingCard, setDraggingCard] = useState(null);
   const [oppBoardOpen, setOppBoardOpen] = useState(false);
-  const [autoPassConfig, setAutoPassConfig] = useState({ mode: AUTO_PASS_MODE.OFF, phaseId: null });
+  const [autoPassConfig, setAutoPassConfig] = useState(getDefaultAutoPassConfig());
   const [autoPassMenuOpen, setAutoPassMenuOpen] = useState(false);
   const autoPassInFlightRef = useRef(false);
   const lastAutoPassSignatureRef = useRef(null);
@@ -834,7 +844,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const isAutoPassEnabled = autoPassConfig.mode !== AUTO_PASS_MODE.OFF;
 
   const disableAutoPass = async (showNote = false, note = 'AutoPass turned off.') => {
-    const nextConfig = { mode: AUTO_PASS_MODE.OFF, phaseId: null };
+    const nextConfig = getDefaultAutoPassConfig();
     setAutoPassConfig(nextConfig);
     setAutoPassMenuOpen(false);
     if (gameId && userId && isPlayer) {
@@ -846,11 +856,19 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     }
   };
 
-  const enableAutoPass = async (mode, phaseId = null) => {
-    const nextConfig = normalizeAutoPassConfig({ mode, phaseId });
+  const enableAutoPass = async (mode, phaseId = null, stopOnOpponentAction = autoPassConfig.stopOnOpponentAction) => {
+    const nextConfig = normalizeAutoPassConfig({ mode, phaseId, stopOnOpponentAction });
     setAutoPassConfig(nextConfig);
     lastAutoPassSignatureRef.current = null;
     setAutoPassMenuOpen(false);
+    if (gameId && userId && isPlayer) {
+      await updateDoc(doc(db, 'games_v3', gameId), { [`autopass.${userId}`]: nextConfig });
+    }
+  };
+
+  const setAutoPassStopOnOpponentAction = async (enabled) => {
+    const nextConfig = normalizeAutoPassConfig({ ...autoPassConfig, stopOnOpponentAction: enabled });
+    setAutoPassConfig(nextConfig);
     if (gameId && userId && isPlayer) {
       await updateDoc(doc(db, 'games_v3', gameId), { [`autopass.${userId}`]: nextConfig });
     }
@@ -1424,7 +1442,11 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     if (!game || !userId || !isPlayer) return;
     const remoteConfig = getPlayerAutoPassConfig(game, userId);
     setAutoPassConfig((prev) => {
-      if (prev.mode === remoteConfig.mode && prev.phaseId === remoteConfig.phaseId) return prev;
+      if (
+        prev.mode === remoteConfig.mode &&
+        prev.phaseId === remoteConfig.phaseId &&
+        prev.stopOnOpponentAction === remoteConfig.stopOnOpponentAction
+      ) return prev;
       return remoteConfig;
     });
   }, [game, userId, isPlayer]);
@@ -1433,17 +1455,17 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   useEffect(() => {
     if (!isAutoPassEnabled || !game) return;
     if (isMyTurn) {
-      disableAutoPass();
+      disableAutoPass(true, 'AutoPass ended: your turn.');
       return;
     }
-    if (hasReachedAutoPassTarget(game, autoPassConfig)) {
+    if (hasReachedAutoPassTarget(game, autoPassConfig, userId)) {
       disableAutoPass(true, 'AutoPass reached stop target.');
       return;
     }
     if ((game.stack || []).length > 0) {
       disableAutoPass(true, 'AutoPass stopped: stack needs attention.');
     }
-  }, [isAutoPassEnabled, game, isMyTurn, autoPassConfig]);
+  }, [isAutoPassEnabled, game, isMyTurn, autoPassConfig, userId]);
 
   useEffect(() => {
     if (!isAutoPassEnabled || !game) {
@@ -1476,16 +1498,16 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
     console.debug('[AutoPass] processed latest log entry', { key: latestLogKey, type: latestLogEntry.type });
 
-    if (isMeaningfulOpponentAction(latestLogEntry, userId)) {
+    if (autoPassConfig.stopOnOpponentAction && isMeaningfulOpponentAction(latestLogEntry, userId)) {
       const actionLabel = latestLogEntry.type || 'UNKNOWN';
       disableAutoPass(true, `AutoPass stopped: opponent acted (${actionLabel}).`);
     }
-  }, [game?.log, isAutoPassEnabled, userId]);
+  }, [game?.log, isAutoPassEnabled, userId, autoPassConfig.stopOnOpponentAction]);
 
   useEffect(() => {
     if (!isAutoPassEnabled || !game || autoPassInFlightRef.current) return;
     if (!canAct || waitingForPlayers || isMyTurn || !isOppTurn || !hasPriority) return;
-    if ((game.stack || []).length > 0 || hasReachedAutoPassTarget(game, autoPassConfig)) return;
+    if ((game.stack || []).length > 0 || hasReachedAutoPassTarget(game, autoPassConfig, userId)) return;
 
     const prioritySignature = `${game.phase}:${game.priorityPlayerId}:${(game.stack || []).length}`;
     if (lastAutoPassSignatureRef.current === prioritySignature) return;
@@ -1495,7 +1517,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     handleAction('PASS_PRIORITY').finally(() => {
       autoPassInFlightRef.current = false;
     });
-  }, [isAutoPassEnabled, game, canAct, waitingForPlayers, isMyTurn, isOppTurn, hasPriority, autoPassConfig]);
+  }, [isAutoPassEnabled, game, canAct, waitingForPlayers, isMyTurn, isOppTurn, hasPriority, autoPassConfig, userId]);
 
   const importDeck = async () => {
     if (isSpectator) {
@@ -1869,6 +1891,23 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                   <div className="absolute right-0 mt-2 w-56 bg-slate-900 border border-slate-700 rounded-lg shadow-xl z-40 p-2 space-y-1">
                     <button onClick={() => disableAutoPass()} className="w-full text-left px-2 py-1.5 rounded hover:bg-slate-700 text-sm">Off</button>
                     <button onClick={() => enableAutoPass(AUTO_PASS_MODE.END_OF_TURN)} className="w-full text-left px-2 py-1.5 rounded hover:bg-slate-700 text-sm">Until End of Turn</button>
+                    <div className="border-t border-slate-700 my-1"></div>
+                    <label className="flex items-center justify-between gap-3 px-2 py-1.5 rounded hover:bg-slate-800 text-sm cursor-pointer">
+                      <span className="text-slate-200">Stop when opponent acts</span>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setAutoPassStopOnOpponentAction(!autoPassConfig.stopOnOpponentAction);
+                        }}
+                        className={`relative w-9 h-5 rounded-full transition-colors ${autoPassConfig.stopOnOpponentAction ? 'bg-purple-600' : 'bg-slate-600'}`}
+                        aria-pressed={autoPassConfig.stopOnOpponentAction}
+                        aria-label="Stop when opponent acts"
+                      >
+                        <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-transform ${autoPassConfig.stopOnOpponentAction ? 'translate-x-4' : 'translate-x-0.5'}`}></span>
+                      </button>
+                    </label>
                     <div className="border-t border-slate-700 my-1"></div>
                     <div className="text-[10px] uppercase tracking-wider text-slate-400 px-2">Until phase/step…</div>
                     <div className="max-h-48 overflow-auto">

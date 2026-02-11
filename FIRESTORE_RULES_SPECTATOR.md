@@ -1,4 +1,4 @@
-# Firestore rules update for spectator mode + user game index
+# Firestore rules update for spectator mode + user game index + Proxy AutoPass
 
 Paste the following rules into your Firebase console (Firestore Rules):
 
@@ -28,9 +28,43 @@ service cloud.firestore {
           && request.resource.data.log[request.resource.data.log.size() - 1].playerId == request.auth.uid;
       }
 
+      function isProxyAutopassUpdate() {
+        let changed = request.resource.data.diff(resource.data).changedKeys();
+        let actorId = request.auth.uid;
+
+        let oldPriority = resource.data.priorityPlayerId;
+        let oldAutopass = resource.data.autopass == null ? {} : resource.data.autopass;
+        let oldCfg = oldAutopass[oldPriority];
+
+        return isPlayer()
+          && oldPriority != null
+          && resource.data.players.where(p, p.id == oldPriority).size() > 0
+          && oldCfg != null
+          && oldCfg.mode != 'off'
+          && changed.hasOnly([
+              'consecutivePasses',
+              'priorityIndex',
+              'priorityPlayerId',
+              'phase',
+              'activePlayerIndex',
+              'turnPlayerId',
+              'turnNumber',
+              'stack',
+              'cards',
+              'log',
+              'autopass'
+            ])
+          && request.resource.data.log.size() >= resource.data.log.size() + 1
+          && request.resource.data.log[request.resource.data.log.size() - 1].desc.matches('^AutoPass \\(proxy\\): .*')
+          && request.resource.data.log[request.resource.data.log.size() - 1].playerId == oldPriority
+          && request.resource.data.log[request.resource.data.log.size() - 1].actorId == actorId;
+      }
+
       allow read: if isPlayer() || isSpectator();
       allow create: if isSignedIn();
-      allow update: if isPlayer() || (isSpectator() && isChatOnlyUpdate());
+      allow update: if isPlayer()
+                    || isProxyAutopassUpdate()
+                    || (isSpectator() && isChatOnlyUpdate());
       allow delete: if false;
     }
 
@@ -44,3 +78,4 @@ service cloud.firestore {
 Notes:
 - The `users/{uid}/games/{gameId}` rule enables each signed-in user to manage only their own “My Games” index.
 - Spectator users remain restricted to chat-only updates in active games.
+- Proxy AutoPass updates are restricted to pass/phase/step/log/autopass style fields, and logs must record both `playerId` (autopassing user) and `actorId` (proxy executor).

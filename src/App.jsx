@@ -125,6 +125,200 @@ const getAutoPassLogKey = (entry, entryIndex) => {
   return `${safeIndex}:${timestamp}:${playerId}:${type}:${desc}`;
 };
 
+const MAX_PROXY_AUTOPASS_ADVANCES = 10;
+
+const normalizeAutoPassConfig = (config) => {
+  if (!config || config.mode === AUTO_PASS_MODE.OFF) return { mode: AUTO_PASS_MODE.OFF, phaseId: null };
+  if (config.mode === AUTO_PASS_MODE.END_OF_TURN) return { mode: AUTO_PASS_MODE.END_OF_TURN, phaseId: null };
+  if (config.mode === AUTO_PASS_MODE.PHASE && config.phaseId) return { mode: AUTO_PASS_MODE.PHASE, phaseId: config.phaseId };
+  return { mode: AUTO_PASS_MODE.OFF, phaseId: null };
+};
+
+const hasReachedAutoPassTarget = (currentGame, config) => {
+  if (!currentGame || !config || config.mode === AUTO_PASS_MODE.OFF) return false;
+  if (config.mode === AUTO_PASS_MODE.END_OF_TURN) {
+    return currentGame.phase === 'end' || currentGame.phase === 'cleanup';
+  }
+  if (config.mode === AUTO_PASS_MODE.PHASE) {
+    return currentGame.phase === config.phaseId;
+  }
+  return false;
+};
+
+const getPlayerAutoPassConfig = (currentGame, playerId) => {
+  const autopassMap = currentGame?.autopass || {};
+  return normalizeAutoPassConfig(autopassMap[playerId]);
+};
+
+const advancePassPriorityState = (currentGame, logEntry) => {
+  const players = currentGame.players || [];
+  const updatedGame = {
+    ...currentGame,
+    cards: [...(currentGame.cards || [])],
+    stack: [...(currentGame.stack || [])],
+    log: [...(currentGame.log || [])]
+  };
+
+  if (players.length < 2) {
+    const currentPhaseIdx = PHASES.findIndex(p => p.id === currentGame.phase);
+    const nextPhaseIdx = (currentPhaseIdx + 1) % PHASES.length;
+    const nextPhase = PHASES[nextPhaseIdx];
+
+    let nextTurnNum = currentGame.turnNumber;
+    if (nextPhase.id === 'untap') nextTurnNum++;
+
+    updatedGame.phase = nextPhase.id;
+    updatedGame.turnNumber = nextTurnNum;
+    updatedGame.log.push({ ...logEntry, type: 'PHASE_ADVANCE', desc: `${logEntry.actorId ? 'AutoPass (proxy): ' : ''}Phase: ${nextPhase.label}` });
+
+    if (nextPhase.id === 'untap') {
+      updatedGame.cards = updatedGame.cards.map(c => {
+        if (c.controllerId === logEntry.playerId && c.zone === ZONES.BATTLEFIELD) return { ...c, tapped: false };
+        return c;
+      });
+    }
+
+    return updatedGame;
+  }
+
+  const nextPriorityIdx = (currentGame.priorityIndex + 1) % players.length;
+  const allPassed = (currentGame.consecutivePasses + 1) >= players.length;
+
+  if (allPassed) {
+    if (updatedGame.stack.length > 0) {
+      const item = updatedGame.stack[updatedGame.stack.length - 1];
+      updatedGame.stack.pop();
+
+      const cardIndex = updatedGame.cards.findIndex(c => c.instanceId === item.sourceId);
+      if (cardIndex >= 0) {
+        const card = { ...updatedGame.cards[cardIndex] };
+        const typeLine = card.type_line || '';
+        const isPerm = !typeLine.includes('Instant') && !typeLine.includes('Sorcery');
+        card.zone = isPerm ? ZONES.BATTLEFIELD : ZONES.GRAVEYARD;
+        card.tapped = false;
+
+        if (isPerm) {
+          const isLand = typeLine.toLowerCase().includes('land');
+          const existingBf = updatedGame.cards.filter(c => c.controllerId === card.controllerId && c.zone === ZONES.BATTLEFIELD && c.instanceId !== card.instanceId);
+          const existingLands = existingBf.filter(c => (c.type_line || '').toLowerCase().includes('land'));
+          const existingNonLands = existingBf.filter(c => !(c.type_line || '').toLowerCase().includes('land'));
+          if (isLand) {
+            const i = existingLands.length;
+            card.x = (i % 6) * 15 + 5;
+            card.y = 60 + Math.floor(i / 6) * 15;
+          } else {
+            const i = existingNonLands.length;
+            card.x = (i % 5) * 18 + 5;
+            card.y = 10 + Math.floor(i / 5) * 20;
+          }
+        }
+
+        updatedGame.cards[cardIndex] = card;
+      }
+
+      updatedGame.consecutivePasses = 0;
+      updatedGame.priorityIndex = currentGame.activePlayerIndex;
+      updatedGame.priorityPlayerId = players[currentGame.activePlayerIndex]?.id || currentGame.priorityPlayerId;
+      updatedGame.log.push({ ...logEntry, type: 'PASS_PRIORITY', desc: `${logEntry.actorId ? 'AutoPass (proxy): ' : ''}Resolved: ${item.name}` });
+      return updatedGame;
+    }
+
+    const currentPhaseIdx = PHASES.findIndex(p => p.id === currentGame.phase);
+    const nextPhaseIdx = (currentPhaseIdx + 1) % PHASES.length;
+    const nextPhase = PHASES[nextPhaseIdx];
+
+    let nextTurnNum = currentGame.turnNumber;
+    let nextActivePlayerIdx = currentGame.activePlayerIndex;
+    let nextTurnPlayerId = currentGame.turnPlayerId;
+
+    if (nextPhase.id === 'untap') {
+      nextTurnNum++;
+      nextActivePlayerIdx = (currentGame.activePlayerIndex + 1) % players.length;
+      nextTurnPlayerId = players[nextActivePlayerIdx].id;
+    }
+
+    updatedGame.phase = nextPhase.id;
+    updatedGame.consecutivePasses = 0;
+    updatedGame.priorityIndex = nextActivePlayerIdx;
+    updatedGame.priorityPlayerId = players[nextActivePlayerIdx].id;
+    updatedGame.activePlayerIndex = nextActivePlayerIdx;
+    updatedGame.turnPlayerId = nextTurnPlayerId;
+    updatedGame.turnNumber = nextTurnNum;
+    updatedGame.log.push({ ...logEntry, type: 'PHASE_ADVANCE', desc: `${logEntry.actorId ? 'AutoPass (proxy): ' : ''}Phase: ${nextPhase.label}` });
+
+    if (nextPhase.id === 'untap') {
+      updatedGame.cards = updatedGame.cards.map(c => {
+        if (c.controllerId === nextTurnPlayerId && c.zone === ZONES.BATTLEFIELD) return { ...c, tapped: false };
+        return c;
+      });
+    }
+
+    return updatedGame;
+  }
+
+  const nextPlayerId = players[nextPriorityIdx].id;
+  updatedGame.consecutivePasses = currentGame.consecutivePasses + 1;
+  updatedGame.priorityIndex = nextPriorityIdx;
+  updatedGame.priorityPlayerId = nextPlayerId;
+  updatedGame.log.push({ ...logEntry, type: 'PASS_PRIORITY', desc: logEntry.actorId ? 'AutoPass (proxy): PASS_PRIORITY' : (logEntry.desc || 'PASS_PRIORITY') });
+  return updatedGame;
+};
+
+
+const runProxyAutoPassAdvances = (startingGame, actorId, actorName) => {
+  let workingGame = {
+    ...startingGame,
+    cards: [...(startingGame.cards || [])],
+    stack: [...(startingGame.stack || [])],
+    log: [...(startingGame.log || [])],
+    autopass: { ...(startingGame.autopass || {}) }
+  };
+
+  let advances = 0;
+  while (advances < MAX_PROXY_AUTOPASS_ADVANCES) {
+    const autoPassPlayerId = workingGame.priorityPlayerId;
+    if (!autoPassPlayerId) break;
+
+    const players = workingGame.players || [];
+    const autoPassPlayer = players.find(p => p.id === autoPassPlayerId);
+    if (!autoPassPlayer) break;
+
+    const config = getPlayerAutoPassConfig(workingGame, autoPassPlayerId);
+    if (config.mode === AUTO_PASS_MODE.OFF) break;
+    if ((workingGame.stack || []).length > 0) break;
+    if (hasReachedAutoPassTarget(workingGame, config)) {
+      workingGame.autopass[autoPassPlayerId] = { mode: AUTO_PASS_MODE.OFF, phaseId: null };
+      break;
+    }
+
+    const latestLog = (workingGame.log || [])[workingGame.log.length - 1];
+    if (isMeaningfulOpponentAction(latestLog, autoPassPlayerId)) {
+      workingGame.autopass[autoPassPlayerId] = { mode: AUTO_PASS_MODE.OFF, phaseId: null };
+      break;
+    }
+
+    const proxyLogEntry = {
+      timestamp: Date.now() + advances + 1,
+      playerId: autoPassPlayerId,
+      actorId,
+      playerName: autoPassPlayer.name || 'Unknown',
+      actorName: actorName || 'Proxy',
+      type: 'PASS_PRIORITY',
+      desc: 'AutoPass (proxy)'
+    };
+
+    workingGame = advancePassPriorityState(workingGame, proxyLogEntry);
+    advances += 1;
+
+    const nextConfig = getPlayerAutoPassConfig(workingGame, autoPassPlayerId);
+    if (hasReachedAutoPassTarget(workingGame, nextConfig)) {
+      workingGame.autopass[autoPassPlayerId] = { mode: AUTO_PASS_MODE.OFF, phaseId: null };
+      break;
+    }
+  }
+
+  return { game: workingGame, advances };
+};
 // --- Components ---
 const Lobby = ({
   onCreate,
@@ -639,30 +833,27 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const waitingForPlayers = game?.players.length < 2;
   const isAutoPassEnabled = autoPassConfig.mode !== AUTO_PASS_MODE.OFF;
 
-  const hasReachedAutoPassTarget = (currentGame, config) => {
-    if (!currentGame || !config || config.mode === AUTO_PASS_MODE.OFF) return false;
-    if (config.mode === AUTO_PASS_MODE.END_OF_TURN) {
-      return currentGame.phase === 'end' || currentGame.phase === 'cleanup';
-    }
-    if (config.mode === AUTO_PASS_MODE.PHASE) {
-      return currentGame.phase === config.phaseId;
-    }
-    return false;
-  };
-
-  const disableAutoPass = (showNote = false, note = 'AutoPass turned off.') => {
-    setAutoPassConfig({ mode: AUTO_PASS_MODE.OFF, phaseId: null });
+  const disableAutoPass = async (showNote = false, note = 'AutoPass turned off.') => {
+    const nextConfig = { mode: AUTO_PASS_MODE.OFF, phaseId: null };
+    setAutoPassConfig(nextConfig);
     setAutoPassMenuOpen(false);
+    if (gameId && userId && isPlayer) {
+      await updateDoc(doc(db, 'games_v3', gameId), { [`autopass.${userId}`]: nextConfig });
+    }
     if (showNote) {
       setNotification(note);
       setTimeout(() => setNotification(null), 2000);
     }
   };
 
-  const enableAutoPass = (mode, phaseId = null) => {
-    setAutoPassConfig({ mode, phaseId });
+  const enableAutoPass = async (mode, phaseId = null) => {
+    const nextConfig = normalizeAutoPassConfig({ mode, phaseId });
+    setAutoPassConfig(nextConfig);
     lastAutoPassSignatureRef.current = null;
     setAutoPassMenuOpen(false);
+    if (gameId && userId && isPlayer) {
+      await updateDoc(doc(db, 'games_v3', gameId), { [`autopass.${userId}`]: nextConfig });
+    }
   };
 
   const autoPassLabel = autoPassConfig.mode === AUTO_PASS_MODE.END_OF_TURN
@@ -692,7 +883,47 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
     let updates = { log: arrayUnion(logEntry) };
 
+    if (actionType === 'PASS' || actionType === 'PASS_PRIORITY') {
+      await runTransaction(db, async (transaction) => {
+        const snap = await transaction.get(gameRef);
+        if (!snap.exists()) return;
+        const currentGame = snap.data();
+
+        const currentPlayers = currentGame.players || [];
+        const isCurrentPlayer = currentPlayers.some(p => p.id === userId);
+        if (!isCurrentPlayer) return;
+
+        const actorName = currentPlayers.find(p => p.id === userId)?.name || myPlayer?.name || 'Unknown';
+        const passLogEntry = {
+          timestamp: Date.now(),
+          playerId: userId,
+          playerName: actorName,
+          type: 'PASS_PRIORITY',
+          desc: payload.desc || 'PASS_PRIORITY'
+        };
+
+        const passedGame = advancePassPriorityState(currentGame, passLogEntry);
+        const { game: proxyGame } = runProxyAutoPassAdvances(passedGame, userId, actorName);
+
+        transaction.update(gameRef, {
+          phase: proxyGame.phase,
+          turnNumber: proxyGame.turnNumber,
+          activePlayerIndex: proxyGame.activePlayerIndex,
+          turnPlayerId: proxyGame.turnPlayerId,
+          priorityIndex: proxyGame.priorityIndex,
+          priorityPlayerId: proxyGame.priorityPlayerId,
+          consecutivePasses: proxyGame.consecutivePasses,
+          stack: proxyGame.stack,
+          cards: proxyGame.cards,
+          log: proxyGame.log,
+          autopass: proxyGame.autopass || {}
+        });
+      });
+      return;
+    }
+
     if (actionType === 'ROLL_DICE') {
+
       const { diceType } = payload;
       let result = 0, msg = '';
       if (diceType === 'coin') {
@@ -1190,29 +1421,14 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   };
 
   useEffect(() => {
-    if (!gameId || !userId || !isPlayer) return;
-    try {
-      const raw = localStorage.getItem(`autopass:${gameId}:${userId}`);
-      if (!raw) return;
-      const parsed = JSON.parse(raw);
-      if (!parsed || parsed.mode === AUTO_PASS_MODE.OFF) return;
-      if (parsed.mode === AUTO_PASS_MODE.END_OF_TURN || (parsed.mode === AUTO_PASS_MODE.PHASE && parsed.phaseId)) {
-        setAutoPassConfig(parsed);
-      }
-    } catch (_err) {
-      // ignore invalid local storage values
-    }
-  }, [gameId, userId, isPlayer]);
+    if (!game || !userId || !isPlayer) return;
+    const remoteConfig = getPlayerAutoPassConfig(game, userId);
+    setAutoPassConfig((prev) => {
+      if (prev.mode === remoteConfig.mode && prev.phaseId === remoteConfig.phaseId) return prev;
+      return remoteConfig;
+    });
+  }, [game, userId, isPlayer]);
 
-  useEffect(() => {
-    if (!gameId || !userId || !isPlayer) return;
-    const key = `autopass:${gameId}:${userId}`;
-    if (autoPassConfig.mode === AUTO_PASS_MODE.OFF) {
-      localStorage.removeItem(key);
-      return;
-    }
-    localStorage.setItem(key, JSON.stringify(autoPassConfig));
-  }, [autoPassConfig, gameId, userId, isPlayer]);
 
   useEffect(() => {
     if (!isAutoPassEnabled || !game) return;
@@ -2569,6 +2785,7 @@ export default function App() {
         cards: [],
         targets: [],
         reveals: [],
+        autopass: {},
         log: []
       };
 

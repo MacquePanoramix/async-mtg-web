@@ -120,8 +120,21 @@ service cloud.firestore {
 
 
       match /events/{eventId} {
+        function gameData() {
+          return get(/databases/$(database)/documents/games_v3/$(gameId)).data;
+        }
+
+        function isPlayerOnThisGame() {
+          return request.auth != null
+            && (
+              (gameData().players.size() > 0 && gameData().players[0].id == request.auth.uid)
+              ||
+              (gameData().players.size() > 1 && gameData().players[1].id == request.auth.uid)
+            );
+        }
+
         allow read: if request.auth != null;
-        allow create: if isPlayer();
+        allow create: if isPlayerOnThisGame();
         allow update, delete: if false;
       }
     }

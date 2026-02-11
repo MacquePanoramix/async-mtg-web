@@ -117,6 +117,13 @@ service cloud.firestore {
           || isProxyAutopassUpdate();
 
       allow delete: if false;
+
+
+      match /events/{eventId} {
+        allow read: if request.auth != null;
+        allow create: if isPlayer();
+        allow update, delete: if false;
+      }
     }
   }
 }
@@ -127,3 +134,5 @@ Notes:
 - The `users/{uid}/games/{gameId}` rule enables each signed-in user to manage only their own “My Games” index.
 - Spectator users remain restricted to chat-only updates in active games.
 - Proxy AutoPass updates are restricted to pass/phase/step/log/autopass style fields, and logs must record both `playerId` (autopassing user) and `actorId` (proxy executor).
+
+- `/games_v3/{gameId}/events/{eventId}` stores recap-only immutable game events.

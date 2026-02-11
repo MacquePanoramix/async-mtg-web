@@ -2,7 +2,7 @@ import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged, GoogleAuthProvider, linkWithPopup, signInWithPopup } from 'firebase/auth';
-import { getFirestore, doc, setDoc, collection, onSnapshot, updateDoc, arrayUnion, serverTimestamp, runTransaction, query, orderBy, deleteDoc, getDoc } from 'firebase/firestore';
+import { getFirestore, doc, setDoc, collection, onSnapshot, updateDoc, arrayUnion, serverTimestamp, runTransaction, query, orderBy, deleteDoc, getDoc, addDoc, limit } from 'firebase/firestore';
 import { X, ArrowRight, Clock, Shield, Skull, Layers, Eye, ChevronDown, ChevronUp, BookOpen, Shuffle, Plus, Copy, UserCheck, EyeOff, RotateCw, Search, Hexagon, Unlock, Lock, Move, Dices, Coins, LayoutGrid, LogOut, Users, User, Bug, Loader2, RefreshCw, AlertTriangle, Repeat, Check, ArrowUp, ArrowDown, MessageSquare, Trash2 } from 'lucide-react';
 
 // --- Firebase Configuration ---
@@ -160,7 +160,28 @@ const getPlayerAutoPassConfig = (currentGame, playerId) => {
   return normalizeAutoPassConfig(autopassMap[playerId]);
 };
 
-const advancePassPriorityState = (currentGame, logEntry) => {
+const appendEvent = async (gameId, event) => {
+  if (!gameId) return;
+  await addDoc(collection(db, 'games_v3', gameId, 'events'), {
+    createdAt: serverTimestamp(),
+    ...event
+  });
+};
+
+const buildTurnStartEvent = (currentGame) => {
+  const players = currentGame.players || [];
+  const activePlayer = players[currentGame.activePlayerIndex] || players.find(p => p.id === currentGame.turnPlayerId);
+  return {
+    type: 'TURN_START',
+    turnNumber: currentGame.turnNumber,
+    phase: currentGame.phase,
+    actorId: activePlayer?.id || currentGame.turnPlayerId || null,
+    actorName: activePlayer?.name || 'Unknown',
+    text: `Turn ${currentGame.turnNumber} start: ${activePlayer?.name || 'Unknown'}`
+  };
+};
+
+const advancePassPriorityState = (currentGame, logEntry, onTurnStart) => {
   const players = currentGame.players || [];
   const updatedGame = {
     ...currentGame,
@@ -182,6 +203,7 @@ const advancePassPriorityState = (currentGame, logEntry) => {
     updatedGame.log.push({ ...logEntry, type: 'PHASE_ADVANCE', desc: `${logEntry.actorId ? 'AutoPass (proxy): ' : ''}Phase: ${nextPhase.label}` });
 
     if (nextPhase.id === 'untap') {
+      if (onTurnStart) onTurnStart(buildTurnStartEvent(updatedGame));
       updatedGame.cards = updatedGame.cards.map(c => {
         if (c.controllerId === logEntry.playerId && c.zone === ZONES.BATTLEFIELD) return { ...c, tapped: false };
         return c;
@@ -257,6 +279,7 @@ const advancePassPriorityState = (currentGame, logEntry) => {
     updatedGame.log.push({ ...logEntry, type: 'PHASE_ADVANCE', desc: `${logEntry.actorId ? 'AutoPass (proxy): ' : ''}Phase: ${nextPhase.label}` });
 
     if (nextPhase.id === 'untap') {
+      if (onTurnStart) onTurnStart(buildTurnStartEvent(updatedGame));
       updatedGame.cards = updatedGame.cards.map(c => {
         if (c.controllerId === nextTurnPlayerId && c.zone === ZONES.BATTLEFIELD) return { ...c, tapped: false };
         return c;
@@ -275,7 +298,7 @@ const advancePassPriorityState = (currentGame, logEntry) => {
 };
 
 
-const runProxyAutoPassAdvances = (startingGame, actorId, actorName) => {
+const runProxyAutoPassAdvances = (startingGame, actorId, actorName, onTurnStart) => {
   let workingGame = {
     ...startingGame,
     cards: [...(startingGame.cards || [])],
@@ -317,7 +340,7 @@ const runProxyAutoPassAdvances = (startingGame, actorId, actorName) => {
       desc: 'AutoPass (proxy)'
     };
 
-    workingGame = advancePassPriorityState(workingGame, proxyLogEntry);
+    workingGame = advancePassPriorityState(workingGame, proxyLogEntry, onTurnStart);
     advances += 1;
 
     const nextConfig = getPlayerAutoPassConfig(workingGame, autoPassPlayerId);
@@ -729,6 +752,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   // Chat State
   const [chatOpen, setChatOpen] = useState(false);
   const [chatInput, setChatInput] = useState('');
+  const [recapOpen, setRecapOpen] = useState(false);
+  const [recapEvents, setRecapEvents] = useState([]);
   const chatEndRef = useRef(null);
 
   // Use the viewAsId to determine which player is "Active" on this screen
@@ -825,12 +850,36 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     return () => unsub();
   }, [gameId]);
 
+
+  useEffect(() => {
+    if (!gameId) return;
+    const eventsQuery = query(
+      collection(db, 'games_v3', gameId, 'events'),
+      orderBy('createdAt', 'desc'),
+      limit(50)
+    );
+
+    const unsub = onSnapshot(eventsQuery, (snap) => {
+      const items = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      setRecapEvents(items);
+    }, (err) => console.error(err));
+
+    return () => unsub();
+  }, [gameId]);
+
   // Chat Helpers
   const chatMessages = (game?.log || []).filter(e => e.type === 'CHAT');
   // FIX: Safety check for players array
   const myPlayer = viewAsPlayer;
   const lastSeen = isSpectator ? spectatorLastSeenChatAt : (myPlayer?.lastSeenChatAt || 0);
   const unreadCount = chatMessages.filter(m => m.timestamp > lastSeen && m.playerId !== userId).length;
+  const recapByTurn = recapEvents.reduce((acc, event) => {
+    const key = event.turnNumber || '?';
+    if (!acc[key]) acc[key] = [];
+    acc[key].push(event);
+    return acc;
+  }, {});
+  const recapTurnKeys = Object.keys(recapByTurn).sort((a, b) => Number(b) - Number(a));
 
   useEffect(() => {
     if (chatOpen) {
@@ -852,6 +901,10 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     } else {
       handleAction('SET_CHAT_SEEN', { timestamp: Date.now() });
     }
+  };
+
+  const openRecap = () => {
+    setRecapOpen(true);
   };
 
   const handleDragStart = (e, card) => {
@@ -962,8 +1015,10 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     };
 
     let updates = { log: arrayUnion(logEntry) };
+    const pendingRecapEvents = [];
 
     if (actionType === 'PASS' || actionType === 'PASS_PRIORITY') {
+      const turnStartEvents = [];
       await runTransaction(db, async (transaction) => {
         const snap = await transaction.get(gameRef);
         if (!snap.exists()) return;
@@ -982,8 +1037,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           desc: payload.desc || 'PASS_PRIORITY'
         };
 
-        const passedGame = advancePassPriorityState(currentGame, passLogEntry);
-        const { game: proxyGame } = runProxyAutoPassAdvances(passedGame, userId, actorName);
+        const passedGame = advancePassPriorityState(currentGame, passLogEntry, (event) => turnStartEvents.push(event));
+        const { game: proxyGame } = runProxyAutoPassAdvances(passedGame, userId, actorName, (event) => turnStartEvents.push(event));
 
         transaction.update(gameRef, {
           phase: proxyGame.phase,
@@ -999,6 +1054,9 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           autopass: proxyGame.autopass || {}
         });
       });
+      if (turnStartEvents.length > 0) {
+        await Promise.all(turnStartEvents.map((event) => appendEvent(gameId, event)));
+      }
       return;
     }
 
@@ -1310,8 +1368,19 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       }
 
     } else if (actionType === 'PLAY_LAND') {
+      const playedCard = game.cards.find(c => c.instanceId === payload.cardId);
       const newCards = game.cards.map(c => c.instanceId === payload.cardId ? { ...c, zone: ZONES.BATTLEFIELD, x: 10, y: 70 } : c);
       updates.cards = newCards;
+      pendingRecapEvents.push({
+        type: 'PLAY_LAND',
+        turnNumber: game.turnNumber,
+        phase: game.phase,
+        actorId: userId,
+        actorName: myPlayer?.name || 'Unknown',
+        cardId: playedCard?.instanceId || payload.cardId,
+        cardName: playedCard?.name || payload.cardName || 'Unknown card',
+        text: `${myPlayer?.name || 'Unknown'} played land: ${playedCard?.name || payload.cardName || 'Unknown card'}`
+      });
 
     } else if (actionType === 'CAST_SPELL') {
       // Priority Guard
@@ -1322,6 +1391,16 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       }
 
       const card = game.cards.find(c => c.instanceId === payload.cardId);
+      pendingRecapEvents.push({
+        type: 'CAST',
+        turnNumber: game.turnNumber,
+        phase: game.phase,
+        actorId: userId,
+        actorName: myPlayer?.name || 'Unknown',
+        cardId: card?.instanceId || payload.cardId,
+        cardName: card?.name || payload.cardName || 'Unknown card',
+        text: `${myPlayer?.name || 'Unknown'} cast ${card?.name || payload.cardName || 'Unknown card'}`
+      });
       const stackItem = {
         id: generateCardId(),
         sourceId: card.instanceId,
@@ -1353,6 +1432,18 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         return;
       }
       const sourceCard = game.cards.find(c => c.instanceId === payload.sourceId);
+      pendingRecapEvents.push({
+        type: 'ACTIVATE',
+        turnNumber: game.turnNumber,
+        phase: game.phase,
+        actorId: userId,
+        actorName: myPlayer?.name || 'Unknown',
+        cardId: sourceCard?.instanceId || payload.sourceId,
+        cardName: sourceCard?.name || null,
+        text: sourceCard?.name
+          ? `${myPlayer?.name || 'Unknown'} activated ${sourceCard.name}`
+          : `${myPlayer?.name || 'Unknown'} activated an ability`
+      });
       const stackItem = {
         id: generateCardId(),
         sourceId: payload.sourceId,
@@ -1435,10 +1526,21 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       updates.log = arrayUnion({ ...logEntry, desc: `Reordered top ${orderedIds.length} cards of ${ownerId === userId ? 'their' : "opponent's"} library` });
 
     } else if (actionType === 'LIFE_CHANGE') {
+      const targetPlayer = game.players.find(p => p.id === payload.targetPlayerId);
+      const oldLife = targetPlayer?.life ?? 0;
+      const newLife = oldLife + payload.amount;
       const newPlayers = game.players.map(p =>
-        p.id === payload.targetPlayerId ? { ...p, life: p.life + payload.amount } : p
+        p.id === payload.targetPlayerId ? { ...p, life: newLife } : p
       );
       updates.players = newPlayers;
+      pendingRecapEvents.push({
+        type: 'LIFE_CHANGE',
+        turnNumber: game.turnNumber,
+        phase: game.phase,
+        actorId: userId,
+        actorName: myPlayer?.name || 'Unknown',
+        text: `${targetPlayer?.name || 'Unknown'} life: ${oldLife} → ${newLife}`
+      });
 
     } else if (actionType === 'REVEAL_CARD') {
       const card = game.cards.find(c => c.instanceId === payload.cardId);
@@ -1498,6 +1600,9 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     }
 
     await updateDoc(gameRef, updates);
+    if (pendingRecapEvents.length > 0) {
+      await Promise.all(pendingRecapEvents.map((event) => appendEvent(gameId, event)));
+    }
   };
 
   useEffect(() => {
@@ -1964,6 +2069,13 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             )}
           </button>
           <button
+            onClick={openRecap}
+            className="p-2 rounded hover:bg-slate-700 text-slate-400 hover:text-white"
+            title="Recap"
+          >
+            <BookOpen size={20} />
+          </button>
+          <button
             onClick={() => setRevealsOpen(true)}
             className="flex flex-col items-center justify-center px-2 py-1 rounded hover:bg-slate-700 relative"
           >
@@ -2427,6 +2539,38 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             <div className="flex justify-center gap-4 text-xs mt-1">
               <button onClick={finishTargeting} className="bg-white text-blue-600 px-4 py-1.5 rounded-full font-bold shadow hover:bg-blue-50 flex items-center gap-1"><Check size={14}/> Done</button>
               <button onClick={() => setTargetingState(null)} className="text-blue-200 underline hover:text-white">Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+
+      {/* RECAP MODAL */}
+      {recapOpen && (
+        <div className="fixed inset-0 z-[149] pointer-events-none flex justify-end items-end sm:items-start sm:top-16 sm:right-4">
+          <div className="pointer-events-auto w-full sm:w-96 h-[80vh] sm:h-[600px] bg-slate-900 border border-slate-700 shadow-2xl flex flex-col rounded-t-xl sm:rounded-xl">
+            <div className="flex justify-between items-center p-3 border-b border-slate-700 bg-slate-800 rounded-t-xl">
+              <h3 className="font-bold text-white flex items-center gap-2"><BookOpen size={16}/> Action Recap</h3>
+              <button onClick={() => setRecapOpen(false)} className="text-slate-400 hover:text-white"><X size={18}/></button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-3 space-y-3 bg-slate-900/95">
+              {recapTurnKeys.length === 0 && (
+                <div className="text-sm text-slate-400">No recap events yet.</div>
+              )}
+              {recapTurnKeys.map((turnKey) => (
+                <div key={turnKey} className="bg-slate-800/70 border border-slate-700 rounded-lg">
+                  <div className="px-3 py-2 text-xs font-bold uppercase tracking-wider text-purple-300 border-b border-slate-700">
+                    Turn {turnKey}
+                  </div>
+                  <div className="px-3 py-2 space-y-1">
+                    {recapByTurn[turnKey].map((event) => (
+                      <div key={event.id} className="text-sm text-slate-200 break-words">
+                        • {event.text}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         </div>

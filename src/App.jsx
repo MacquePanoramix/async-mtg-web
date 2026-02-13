@@ -132,21 +132,36 @@ const getAutoPassLogKey = (entry, entryIndex) => {
 
 const MAX_PROXY_AUTOPASS_ADVANCES = 10;
 
-const getDefaultAutoPassConfig = () => ({ mode: AUTO_PASS_MODE.OFF, phaseId: null, stopOnOpponentAction: false });
+const getDefaultAutoPassConfig = () => ({
+  mode: AUTO_PASS_MODE.OFF,
+  phaseId: null,
+  stopOnOpponentAction: false,
+  startTurnNumber: null,
+  startActivePlayerIndex: null
+});
 
 const normalizeAutoPassConfig = (config) => {
   const stopOnOpponentAction = config?.stopOnOpponentAction === true;
-  if (!config || config.mode === AUTO_PASS_MODE.OFF) return { mode: AUTO_PASS_MODE.OFF, phaseId: null, stopOnOpponentAction };
-  if (config.mode === AUTO_PASS_MODE.END_OF_TURN) return { mode: AUTO_PASS_MODE.END_OF_TURN, phaseId: null, stopOnOpponentAction };
-  if (config.mode === AUTO_PASS_MODE.PHASE && config.phaseId) return { mode: AUTO_PASS_MODE.PHASE, phaseId: config.phaseId, stopOnOpponentAction };
-  return { mode: AUTO_PASS_MODE.OFF, phaseId: null, stopOnOpponentAction };
+  const startTurnNumber = Number.isFinite(config?.startTurnNumber) ? config.startTurnNumber : null;
+  const startActivePlayerIndex = Number.isFinite(config?.startActivePlayerIndex) ? config.startActivePlayerIndex : null;
+
+  if (!config || config.mode === AUTO_PASS_MODE.OFF) {
+    return { mode: AUTO_PASS_MODE.OFF, phaseId: null, stopOnOpponentAction, startTurnNumber: null, startActivePlayerIndex: null };
+  }
+  if (config.mode === AUTO_PASS_MODE.END_OF_TURN) {
+    return { mode: AUTO_PASS_MODE.END_OF_TURN, phaseId: null, stopOnOpponentAction, startTurnNumber, startActivePlayerIndex };
+  }
+  if (config.mode === AUTO_PASS_MODE.PHASE && config.phaseId) {
+    return { mode: AUTO_PASS_MODE.PHASE, phaseId: config.phaseId, stopOnOpponentAction, startTurnNumber: null, startActivePlayerIndex: null };
+  }
+  return { mode: AUTO_PASS_MODE.OFF, phaseId: null, stopOnOpponentAction, startTurnNumber: null, startActivePlayerIndex: null };
 };
 
-const hasReachedAutoPassTarget = (currentGame, config, autoPassPlayerId) => {
+const hasReachedAutoPassTarget = (currentGame, config) => {
   if (!currentGame || !config || config.mode === AUTO_PASS_MODE.OFF) return false;
   if (config.mode === AUTO_PASS_MODE.END_OF_TURN) {
-    // "Until End of Turn" now means "until it is my turn again".
-    return !!autoPassPlayerId && currentGame.turnPlayerId === autoPassPlayerId;
+    if (!Number.isFinite(config.startTurnNumber) || !Number.isFinite(config.startActivePlayerIndex)) return false;
+    return currentGame.turnNumber !== config.startTurnNumber || currentGame.activePlayerIndex !== config.startActivePlayerIndex;
   }
   if (config.mode === AUTO_PASS_MODE.PHASE) {
     return currentGame.phase === config.phaseId;
@@ -318,7 +333,7 @@ const runProxyAutoPassAdvances = (startingGame, actorId, actorName, onTurnStart)
     const config = getPlayerAutoPassConfig(workingGame, autoPassPlayerId);
     if (config.mode === AUTO_PASS_MODE.OFF) break;
     if ((workingGame.stack || []).length > 0) break;
-    if (hasReachedAutoPassTarget(workingGame, config, autoPassPlayerId)) {
+    if (hasReachedAutoPassTarget(workingGame, config)) {
       workingGame.autopass[autoPassPlayerId] = getDefaultAutoPassConfig();
       break;
     }
@@ -343,7 +358,7 @@ const runProxyAutoPassAdvances = (startingGame, actorId, actorName, onTurnStart)
     advances += 1;
 
     const nextConfig = getPlayerAutoPassConfig(workingGame, autoPassPlayerId);
-    if (hasReachedAutoPassTarget(workingGame, nextConfig, autoPassPlayerId)) {
+    if (hasReachedAutoPassTarget(workingGame, nextConfig)) {
       workingGame.autopass[autoPassPlayerId] = getDefaultAutoPassConfig();
       break;
     }
@@ -974,7 +989,13 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   };
 
   const enableAutoPass = async (mode, phaseId = null, stopOnOpponentAction = autoPassConfig.stopOnOpponentAction) => {
-    const nextConfig = normalizeAutoPassConfig({ mode, phaseId, stopOnOpponentAction });
+    const nextConfig = normalizeAutoPassConfig({
+      mode,
+      phaseId,
+      stopOnOpponentAction,
+      startTurnNumber: mode === AUTO_PASS_MODE.END_OF_TURN ? game?.turnNumber : null,
+      startActivePlayerIndex: mode === AUTO_PASS_MODE.END_OF_TURN ? game?.activePlayerIndex : null
+    });
     setAutoPassConfig(nextConfig);
     lastAutoPassSignatureRef.current = null;
     setAutoPassMenuOpen(false);
@@ -1623,12 +1644,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
   useEffect(() => {
     if (!isAutoPassEnabled || !game) return;
-    if (hasReachedAutoPassTarget(game, autoPassConfig, userId)) {
+    if (hasReachedAutoPassTarget(game, autoPassConfig)) {
       disableAutoPass(true, 'AutoPass reached stop target.');
-      return;
-    }
-    if ((game.stack || []).length > 0) {
-      disableAutoPass(true, 'AutoPass stopped: stack needs attention.');
     }
   }, [isAutoPassEnabled, game, autoPassConfig, userId]);
 
@@ -1717,7 +1734,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   useEffect(() => {
     if (!isAutoPassEnabled || !game || autoPassInFlightRef.current) return;
     if (!canAct || waitingForPlayers || !hasPriority) return;
-    if ((game.stack || []).length > 0 || hasReachedAutoPassTarget(game, autoPassConfig, userId)) return;
+    if ((game.stack || []).length > 0 || hasReachedAutoPassTarget(game, autoPassConfig)) return;
 
     const latestLogIndex = (game.log?.length || 0) - 1;
     const latestLogEntry = latestLogIndex >= 0 ? game.log[latestLogIndex] : null;

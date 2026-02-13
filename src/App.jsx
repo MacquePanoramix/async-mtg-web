@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged, GoogleAuthProvider, linkWithPopup, signInWithPopup } from 'firebase/auth';
@@ -198,6 +198,7 @@ const buildTurnStartEvent = (currentGame) => {
 const getEmptyCombatState = () => ({ attackers: {}, blockers: {} });
 
 const shouldClearCombatState = (fromPhase, toPhase) => fromPhase?.startsWith('combat_') && !toPhase?.startsWith('combat_');
+const resetTemporaryDamage = (cards = []) => cards.map((card) => (card.tempDamage ? { ...card, tempDamage: 0 } : card));
 
 const advancePassPriorityState = (currentGame, logEntry, onTurnStart) => {
   const players = currentGame.players || [];
@@ -224,7 +225,7 @@ const advancePassPriorityState = (currentGame, logEntry, onTurnStart) => {
 
     if (nextPhase.id === 'untap') {
       if (onTurnStart) onTurnStart(buildTurnStartEvent(updatedGame));
-      updatedGame.cards = updatedGame.cards.map(c => {
+      updatedGame.cards = resetTemporaryDamage(updatedGame.cards).map(c => {
         if (c.controllerId === logEntry.playerId && c.zone === ZONES.BATTLEFIELD) return { ...c, tapped: false };
         return c;
       });
@@ -302,7 +303,7 @@ const advancePassPriorityState = (currentGame, logEntry, onTurnStart) => {
 
     if (nextPhase.id === 'untap') {
       if (onTurnStart) onTurnStart(buildTurnStartEvent(updatedGame));
-      updatedGame.cards = updatedGame.cards.map(c => {
+      updatedGame.cards = resetTemporaryDamage(updatedGame.cards).map(c => {
         if (c.controllerId === nextTurnPlayerId && c.zone === ZONES.BATTLEFIELD) return { ...c, tapped: false };
         return c;
       });
@@ -624,10 +625,11 @@ const Lobby = ({
   );
 };
 
-const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isDraggable, targets = [], stack = [], isSelected = false, attackBadgeLabel = null, blockedCount = 0, firstBlockedName = null }) => {
+const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isDraggable, targets = [], stack = [], isSelected = false, attackBadgeLabel = null, blockedCount = 0, firstBlockedName = null, displayName = null }) => {
   const isTapped = card.tapped;
   const isFaceDown = card.faceDown;
   const counters = card.counters || {};
+  const tempDamage = Math.max(0, card.tempDamage || 0);
 
   // Calculate Target/Source status from BOTH persistent targets AND stack items
   const persistentSource = targets.some(t => t.sourceId === card.instanceId);
@@ -713,6 +715,11 @@ const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isD
         </div>
 
         <div className="absolute top-1 left-1 flex flex-col gap-1 pointer-events-none">
+          {tempDamage > 0 && (
+            <div className="bg-red-900/80 text-red-100 text-[9px] px-1.5 py-0.5 rounded border border-red-400/40 shadow-sm whitespace-nowrap z-10 font-bold">
+              DMG: {tempDamage}
+            </div>
+          )}
           {Object.entries(counters).map(([label, count]) => (
             count > 0 && (
               <div key={label} className="bg-black/70 text-white text-[9px] px-1.5 py-0.5 rounded border border-white/30 shadow-sm whitespace-nowrap z-10">
@@ -738,6 +745,13 @@ const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isD
         >
           <EyeOff size={12} />
         </button>
+      )}
+      {zone === ZONES.BATTLEFIELD && displayName && (
+        <div className="absolute -bottom-5 left-0 right-0 text-center pointer-events-none">
+          <span className="bg-black/75 text-[9px] text-slate-100 px-1.5 py-0.5 rounded border border-slate-500/40 truncate inline-block max-w-full">
+            {displayName}
+          </span>
+        </div>
       )}
     </div>
   );
@@ -769,8 +783,9 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const boardRef = useRef(null);
   const diceButtonRef = useRef(null);
   const libraryButtonRef = useRef(null);
+  const battlefieldScrollRef = useRef(null);
+  const opponentSectionRef = useRef(null);
   const [draggingCard, setDraggingCard] = useState(null);
-  const [oppBoardOpen, setOppBoardOpen] = useState(false);
   const [autoPassConfig, setAutoPassConfig] = useState(getDefaultAutoPassConfig());
   const [autoPassMenuOpen, setAutoPassMenuOpen] = useState(false);
   const autoPassInFlightRef = useRef(false);
@@ -781,11 +796,13 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
   // New state for multi-targeting
   const [targetingState, setTargetingState] = useState(null); // { source, mode: 'CAST'|'ABILITY'|'MANUAL', selectedIds: [] }
+  const [opponentSectionHighlighted, setOpponentSectionHighlighted] = useState(false);
   const [attackTargetPickerCard, setAttackTargetPickerCard] = useState(null);
   const [blockPickerCard, setBlockPickerCard] = useState(null);
 
   const [reorderModal, setReorderModal] = useState(null); // { ownerId, n, orderedIds }
   const [customCounterModal, setCustomCounterModal] = useState(null); // { cardId, label, amount }
+  const [damageModal, setDamageModal] = useState(null); // { cardId, amount }
   const [tokenModal, setTokenModal] = useState(null); // { name, power, toughness }
   const [revealsOpen, setRevealsOpen] = useState(false);
 
@@ -1219,6 +1236,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         zone: ZONES.BATTLEFIELD,
         tapped: false,
         counters: {},
+        tempDamage: 0,
         isToken: true,
         x: 10 + (Math.random() * 10 - 5),
         y: 10 + (Math.random() * 10 - 5)
@@ -1342,7 +1360,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
         // Untap logic
         if (nextPhase.id === 'untap') {
-          const newCards = game.cards.map(c => {
+          const newCards = resetTemporaryDamage(game.cards).map(c => {
             if (c.controllerId === userId && c.zone === ZONES.BATTLEFIELD) {
               return { ...c, tapped: false };
             }
@@ -1430,7 +1448,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             };
 
             if (nextPhase.id === 'untap') {
-              const newCards = game.cards.map(c => {
+              const newCards = resetTemporaryDamage(game.cards).map(c => {
                 if (c.controllerId === nextTurnPlayerId && c.zone === ZONES.BATTLEFIELD) {
                   return { ...c, tapped: false };
                 }
@@ -1550,6 +1568,14 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       const newCards = game.cards.map(c => c.instanceId === payload.cardId ? { ...c, tapped: !c.tapped } : c);
       updates.cards = newCards;
 
+    } else if (actionType === 'TEMP_DAMAGE') {
+      const card = game.cards.find(c => c.instanceId === payload.cardId);
+      if (!card) return;
+      const current = Math.max(0, card.tempDamage || 0);
+      const nextDamage = payload.clear ? 0 : Math.max(0, current + (payload.amount || 0));
+      updates.cards = game.cards.map(c => c.instanceId === payload.cardId ? { ...c, tempDamage: nextDamage } : c);
+      updates.log = arrayUnion({ ...logEntry, desc: `${card.name}: temporary damage ${nextDamage}` });
+
     } else if (actionType === 'DRAW_CARD') {
       const libCards = game.cards.filter(c => c.ownerId === userId && c.zone === ZONES.LIBRARY);
       if (libCards.length > 0) {
@@ -1560,14 +1586,14 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
     } else if (actionType === 'MOVE_ZONE') {
       const newCards = game.cards.map(c =>
-        c.instanceId === payload.cardId ? { ...c, zone: payload.targetZone, tapped: false, controllerId: c.ownerId, x: 10, y: 10 } : c
+        c.instanceId === payload.cardId ? { ...c, zone: payload.targetZone, tapped: false, tempDamage: 0, controllerId: c.ownerId, x: 10, y: 10 } : c
       );
       updates.cards = newCards;
 
     } else if (actionType === 'MOVE_TO_LIBRARY') {
       const cardToMove = game.cards.find(c => c.instanceId === payload.cardId);
       const otherCards = game.cards.filter(c => c.instanceId !== payload.cardId);
-      const updatedCard = { ...cardToMove, zone: ZONES.LIBRARY, tapped: false, faceDown: false, counters: {}, x: 5, y: 5 };
+      const updatedCard = { ...cardToMove, zone: ZONES.LIBRARY, tapped: false, tempDamage: 0, faceDown: false, counters: {}, x: 5, y: 5 };
 
       if (payload.position === 'TOP') {
         updates.cards = [updatedCard, ...otherCards];
@@ -1846,6 +1872,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               zone: ZONES.LIBRARY,
               tapped: false,
               counters: {},
+              tempDamage: 0,
               faceDown: false,
               x: xOffset,
               y: yOffset
@@ -2093,6 +2120,43 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const myBattlefield = (game.cards || []).filter(c => c.controllerId === viewAsPlayerId && c.zone === ZONES.BATTLEFIELD);
   const oppBattlefield = (game.cards || []).filter(c => c.controllerId !== viewAsPlayerId && c.zone === ZONES.BATTLEFIELD);
   const oppHand = (game.cards || []).filter(c => c.controllerId !== viewAsPlayerId && c.zone === ZONES.HAND);
+
+  const buildSectionDisplayNameMap = (cards) => {
+    const grouped = new Map();
+    cards.forEach((card) => {
+      const key = (card.name || '').trim() || 'Unknown';
+      if (!grouped.has(key)) grouped.set(key, []);
+      grouped.get(key).push(card.instanceId);
+    });
+
+    const labels = new Map();
+    grouped.forEach((ids, name) => {
+      const total = ids.length;
+      ids.forEach((id, index) => {
+        labels.set(id, total > 1 ? `${name} (${index + 1}/${total})` : name);
+      });
+    });
+    return labels;
+  };
+
+  const myBattlefieldDisplayNames = useMemo(() => buildSectionDisplayNameMap(myBattlefield), [myBattlefield]);
+  const oppBattlefieldDisplayNames = useMemo(() => buildSectionDisplayNameMap(oppBattlefield), [oppBattlefield]);
+  const allBattlefieldDisplayNames = useMemo(() => new Map([
+    ...oppBattlefieldDisplayNames.entries(),
+    ...myBattlefieldDisplayNames.entries()
+  ]), [oppBattlefieldDisplayNames, myBattlefieldDisplayNames]);
+
+  const getDisplayCardName = (cardOrId) => {
+    const card = typeof cardOrId === 'string' ? cardsMap.get(cardOrId) : cardOrId;
+    if (!card) return 'Unknown';
+    return allBattlefieldDisplayNames.get(card.instanceId) || card.name || 'Unknown';
+  };
+
+  const getDisplayCardNameOrNull = (cardOrId) => {
+    const card = typeof cardOrId === 'string' ? cardsMap.get(cardOrId) : cardOrId;
+    if (!card) return null;
+    return getDisplayCardName(card);
+  };
   const opponentIsRevealing = (game.players || []).find(p => p.id !== viewAsPlayerId)?.handRevealed;
 
   const getZoneCount = (pid, zone) => (game.cards || []).filter(c => c.ownerId === pid && c.zone === zone).length;
@@ -2126,7 +2190,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       const playerName = (game.players || []).find((p) => p.id === attackTarget.targetId)?.name || 'Player';
       return playerName;
     }
-    if (attackTarget.type === 'planeswalker') return `PW: ${cardsMap.get(attackTarget.targetId)?.name || 'Planeswalker'}`;
+    if (attackTarget.type === 'planeswalker') return `PW: ${getDisplayCardName(attackTarget.targetId)}`;
     return 'Defender';
   };
   const getCardAttackTargetLabel = (cardId) => getAttackTargetLabel(combatAttackers[cardId]);
@@ -2150,6 +2214,17 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
   const isOpponentTargeted = (opponent && targetingState?.selectedIds.includes(getPlayerTargetId(opponent.id))) || (opponent && stackPlayerTargets.has(opponent.id));
   const isSelfTargeted = targetingState?.selectedIds.includes(getPlayerTargetId(viewAsPlayerId)) || stackPlayerTargets.has(viewAsPlayerId);
+
+  const scrollToOpponentBattlefield = () => {
+    const container = battlefieldScrollRef.current;
+    const target = opponentSectionRef.current;
+    if (!container || !target) return;
+
+    const targetTop = Math.max(0, target.offsetTop - 8);
+    container.scrollTo({ top: targetTop, behavior: 'smooth' });
+    setOpponentSectionHighlighted(true);
+    window.setTimeout(() => setOpponentSectionHighlighted(false), 1200);
+  };
 
   return (
     <div
@@ -2320,6 +2395,15 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           )}
 
           <div className="h-8 w-[1px] bg-slate-700 mx-1"></div>
+          {opponent && (
+            <button
+              onClick={scrollToOpponentBattlefield}
+              className="px-3 py-1 rounded-full bg-slate-700/70 hover:bg-slate-600 text-xs font-semibold text-slate-100 border border-slate-600"
+              title="Scroll to Opponent Battlefield"
+            >
+              View
+            </button>
+          )}
           <button
             onClick={onExit}
             className="p-1 text-slate-400 hover:text-white"
@@ -2332,192 +2416,177 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
       {/* 2. Board */}
       <div className="flex-1 overflow-hidden relative bg-slate-900/95" style={{ backgroundImage: 'radial-gradient(circle at center, #1e293b 0%, #0f172a 100%)' }}>
-        {/* Opponent Area */}
-        <div className="absolute top-0 left-0 right-0 h-[25%] border-b border-slate-700/50 bg-slate-800/30 overflow-y-auto z-0 p-4">
-          <div
-            className={`flex justify-between items-start mb-2 opacity-70 sticky top-0 bg-slate-900/50 p-1 rounded z-10 backdrop-blur-sm transition-all ${isOpponentTargeted ? 'ring-2 ring-blue-500 bg-blue-900/40 opacity-100' : ''} ${targetingState ? 'cursor-crosshair hover:bg-slate-800' : ''}`}
-            onClick={() => targetingState && opponent ? toggleTargetPlayer(opponent.id) : null}
+        <div ref={battlefieldScrollRef} className="h-full overflow-y-auto overflow-x-hidden px-3 pb-4 pt-2 sm:px-4">
+          <section
+            ref={opponentSectionRef}
+            className={`rounded-xl border p-3 mb-3 transition-all duration-300 ${opponentSectionHighlighted ? 'border-blue-400 bg-blue-900/20 ring-2 ring-blue-400/60' : 'border-slate-700 bg-slate-800/30'}`}
           >
-            <div className="flex items-center gap-2">
-              <Shield size={16} className="text-red-400"/>
+            <div className="flex justify-between items-start mb-2">
               <div className="flex items-center gap-2">
-                <span className="font-bold">{opponent?.name || 'Waiting...'}</span>
+                <Shield size={16} className="text-red-400"/>
+                <div>
+                  <div className="text-[10px] uppercase tracking-widest text-slate-400 font-bold">Opponent Battlefield</div>
+                  <div className="font-bold text-slate-100">{opponent?.name || 'Waiting...'}</div>
+                </div>
                 {isOppTurn && (
                   <span className="text-[10px] font-extrabold uppercase tracking-widest px-2 py-0.5 rounded-full bg-amber-600/30 text-amber-200 border border-amber-500/40">
                     TURN
                   </span>
                 )}
-                {isOpponentTargeted && (
-                  <div className="text-xs bg-blue-600 text-white rounded-full px-2 py-0.5 font-bold shadow animate-in zoom-in">🎯 Target</div>
-                )}
               </div>
-              <span className="bg-slate-700 px-2 py-0.5 rounded text-xs flex gap-2">
-                <span>Life: {opponent?.life}</span>
-                {opponent?.counters?.poison > 0 && <span className="text-green-400">P:{opponent.counters.poison}</span>}
-              </span>
               {opponent && (
-                <div className="flex gap-2 text-xs text-slate-300 ml-2 border-l border-slate-600 pl-2">
-                  <span className="font-mono" title="Cards in Hand">H:{oppHand.length}</span>
-                  <button className="flex items-center gap-1 hover:text-white" onClick={(e) => { e.stopPropagation(); setViewZone({ zone: ZONES.GRAVEYARD, ownerId: opponent.id }); }} title="Opponent Graveyard">
-                    <Skull size={12} /> {oppGYCount}
-                  </button>
-                  <button className="flex items-center gap-1 hover:text-white" onClick={(e) => { e.stopPropagation(); setViewZone({ zone: ZONES.EXILE, ownerId: opponent.id }); }} title="Opponent Exile">
-                    <RotateCw size={12} /> {oppExileCount}
-                  </button>
-                </div>
+                <span className="bg-slate-700 px-2 py-0.5 rounded text-xs flex gap-2 h-fit">
+                  <span>Life: {opponent?.life}</span>
+                  {opponent?.counters?.poison > 0 && <span className="text-green-400">P:{opponent.counters.poison}</span>}
+                </span>
               )}
             </div>
-            {opponent && (
-              <button
-                onClick={(e) => { e.stopPropagation(); setOppBoardOpen(true); }}
-                className="text-xs px-3 py-1 rounded-full bg-slate-700/60 hover:bg-slate-600 text-slate-200 border border-slate-600"
-                title="View Opponent Battlefield"
-              >
-                View
-              </button>
-            )}
-          </div>
 
-          {opponentIsRevealing && (
-            <div className="mb-2 p-2 bg-purple-900/20 rounded border border-purple-500/30 flex gap-2 overflow-x-auto">
-              <span className="text-[10px] text-purple-300 uppercase vertical-text">Revealed</span>
-              {oppHand.map(c => (
-                <div key={c.instanceId} className="w-12 h-16 shrink-0 relative">
-                  <img src={c.image_uri} className="w-full h-full rounded object-cover opacity-80" />
-                </div>
+            {opponentIsRevealing && (
+              <div className="mb-2 p-2 bg-purple-900/20 rounded border border-purple-500/30 flex gap-2 overflow-x-auto">
+                <span className="text-[10px] text-purple-300 uppercase vertical-text">Revealed</span>
+                {oppHand.map(c => (
+                  <div key={c.instanceId} className="w-12 h-16 shrink-0 relative">
+                    <img src={c.image_uri} className="w-full h-full rounded object-cover opacity-80" />
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="flex flex-wrap gap-3 justify-center opacity-90 rotate-180 pt-6">
+              {oppBattlefield.map(card => (
+                <Card
+                  key={card.instanceId}
+                  card={card}
+                  zone={ZONES.BATTLEFIELD}
+                  targets={game.targets || []}
+                  stack={stackCards}
+                  isSelected={false}
+                  onMove={() => setZoomedCard(card)}
+                  onZoom={setZoomedCard}
+                  displayName={getDisplayCardName(card)}
+                  attackBadgeLabel={getCardAttackTargetLabel(card.instanceId)}
+                  blockedCount={(combatBlockers[card.instanceId] || []).length}
+                  firstBlockedName={getDisplayCardNameOrNull((combatBlockers[card.instanceId] || [])[0])}
+                />
               ))}
             </div>
-          )}
+          </section>
 
-          <div className="flex flex-wrap gap-2 justify-center opacity-80 rotate-180">
-            {oppBattlefield.map(card => (
-              <Card
-                key={card.instanceId}
-                card={card}
-                zone={ZONES.BATTLEFIELD}
-                targets={game.targets || []}
-                stack={stackCards}
-                isSelected={targetingState?.selectedIds.includes(card.instanceId)}
-                onMove={() => targetingState ? toggleTarget(card) : setSelectedCard(card)}
-                onZoom={setZoomedCard}
-                attackBadgeLabel={getCardAttackTargetLabel(card.instanceId)}
-                blockedCount={(combatBlockers[card.instanceId] || []).length}
-                firstBlockedName={cardsMap.get((combatBlockers[card.instanceId] || [])[0])?.name || null}
-              />
-            ))}
-          </div>
-        </div>
-
-        {/* Stack Overlay */}
-        {stackCards.length > 0 && (
-          <div className="absolute top-[25%] left-0 right-0 z-20 flex justify-center pointer-events-none">
-            <div className="my-2 mx-4 p-3 bg-yellow-900/80 border border-yellow-700/50 rounded-lg flex flex-col gap-2 pointer-events-auto backdrop-blur">
-              <div className="text-xs text-yellow-500 font-bold uppercase tracking-wider flex items-center gap-2">
-                <Layers size={12} /> The Stack
+          <div className="grid grid-cols-1 lg:grid-cols-[1fr_18rem] gap-3 mb-3">
+            {stackCards.length > 0 ? (
+              <div className="p-3 bg-yellow-900/80 border border-yellow-700/50 rounded-lg flex flex-col gap-2 backdrop-blur">
+                <div className="text-xs text-yellow-500 font-bold uppercase tracking-wider flex items-center gap-2">
+                  <Layers size={12} /> The Stack
+                </div>
+                <div className="space-y-1">
+                  {[...stackCards].reverse().map((item) => (
+                    <div
+                      key={item.id}
+                      onClick={() => openStackItem(item)}
+                      className="bg-black/60 p-2 rounded border-l-2 border-yellow-500 flex justify-between items-center gap-4 cursor-pointer hover:bg-black/80 transition-colors"
+                    >
+                      <span className="text-sm font-medium text-yellow-100">{item.name}</span>
+                      <span className="text-[10px] text-slate-400">
+                        {game.players.find(p => p.id === item.controllerId)?.name}
+                      </span>
+                    </div>
+                  ))}
+                </div>
               </div>
-              <div className="space-y-1">
-                {[...stackCards].reverse().map((item, idx) => (
-                  <div
-                    key={item.id}
-                    onClick={() => openStackItem(item)}
-                    className="bg-black/60 p-2 rounded border-l-2 border-yellow-500 flex justify-between items-center gap-4 cursor-pointer hover:bg-black/80 transition-colors"
-                  >
-                    <span className="text-sm font-medium text-yellow-100">{item.name}</span>
-                    <span className="text-[10px] text-slate-400">
-                      {game.players.find(p => p.id === item.controllerId)?.name}
-                    </span>
+            ) : <div />}
+
+            <div className="bg-slate-900/90 border border-slate-700 rounded-lg p-3 text-xs space-y-2">
+              <div className="font-bold text-slate-200 uppercase tracking-wider">Combat Summary</div>
+              <div>
+                <div className="text-red-300 font-semibold">Attackers</div>
+                {attackingCards.length === 0 ? <div className="text-slate-400">None</div> : attackingCards.map((attacker) => (
+                  <div key={attacker.instanceId} className="text-slate-200">{getDisplayCardName(attacker)}: {getCardAttackTargetLabel(attacker.instanceId)}</div>
+                ))}
+              </div>
+              <div>
+                <div className="text-blue-300 font-semibold">Blockers</div>
+                {Object.keys(combatBlockers).length === 0 ? <div className="text-slate-400">None</div> : Object.entries(combatBlockers).map(([blockerId, blockedIds]) => (
+                  <div key={blockerId} className="text-slate-200">
+                    {(getDisplayCardName(blockerId) || 'Blocker')} → {(blockedIds || []).map((id) => getDisplayCardName(id) || 'Attacker').join(', ')}
                   </div>
                 ))}
               </div>
             </div>
           </div>
-        )}
 
-        <div className="absolute top-[25%] right-2 z-20 w-72 max-w-[45vw] bg-slate-900/90 border border-slate-700 rounded-lg p-3 text-xs space-y-2">
-          <div className="font-bold text-slate-200 uppercase tracking-wider">Combat Summary</div>
-          <div>
-            <div className="text-red-300 font-semibold">Attackers</div>
-            {attackingCards.length === 0 ? <div className="text-slate-400">None</div> : attackingCards.map((attacker) => (
-              <div key={attacker.instanceId} className="text-slate-200">{attacker.name}: {getCardAttackTargetLabel(attacker.instanceId)}</div>
-            ))}
-          </div>
-          <div>
-            <div className="text-blue-300 font-semibold">Blockers</div>
-            {Object.keys(combatBlockers).length === 0 ? <div className="text-slate-400">None</div> : Object.entries(combatBlockers).map(([blockerId, blockedIds]) => (
-              <div key={blockerId} className="text-slate-200">
-                {(cardsMap.get(blockerId)?.name || 'Blocker')} → {(blockedIds || []).map((id) => cardsMap.get(id)?.name || 'Attacker').join(', ')}
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* My Battlefield (Draggable Canvas) */}
-        <div
-          ref={boardRef}
-          className="absolute top-[25%] bottom-0 left-0 right-0 overflow-y-auto overflow-x-hidden p-4"
-        >
-          {/* Unlock Controls */}
-          <div className="sticky top-0 z-30 flex justify-end gap-2 pointer-events-none">
-            <button
-              onClick={canAct ? () => handleAction('TIDY_BOARD') : undefined}
-              className={`pointer-events-auto p-2 rounded-full shadow-xl bg-slate-700/50 text-slate-400 hover:text-white hover:bg-slate-600 ${canAct ? '' : 'opacity-40 cursor-not-allowed'}`}
-              title="Tidy Board (Reset to Grid)"
-            >
-              <LayoutGrid size={20} />
-            </button>
-            <button
-              onClick={canAct ? () => setBoardUnlocked(!boardUnlocked) : undefined}
-              className={`pointer-events-auto p-2 rounded-full shadow-xl transition-all ${boardUnlocked ? 'bg-orange-500 text-white animate-pulse' : 'bg-slate-700/50 text-slate-400'} ${canAct ? '' : 'opacity-40 cursor-not-allowed'}`}
-              title={boardUnlocked ? "Lock Board (Disable Drag)" : "Unlock Board (Enable Drag)"}
-            >
-              {boardUnlocked ? <Unlock size={20} /> : <Lock size={20} />}
-            </button>
-          </div>
-
-          {/* Board Content */}
-          <div className={`w-full min-h-[600px] relative`}>
-            {myBattlefield.map(card => {
-              const isDragging = draggingCard?.card.instanceId === card.instanceId;
-              const x = isDragging ? draggingCard.currentX : (card.x !== undefined ? card.x : 10);
-              const y = isDragging ? draggingCard.currentY : (card.y !== undefined ? card.y : 10);
-              const blockersForThisAttacker = getBlockersForAttacker(card.instanceId);
-              return (
-                <div key={card.instanceId} className="absolute" style={{ left: `${x}%`, top: `${y}%`, zIndex: isDragging ? 50 : 10 }}>
-                  <Card
-                    card={card}
-                    zone={ZONES.BATTLEFIELD}
-                    isDraggable={boardUnlocked && !targetingState}
-                    targets={game.targets || []}
-                    stack={stackCards}
-                    isSelected={targetingState?.selectedIds.includes(card.instanceId)}
-                    style={{ left: `0%`, top: `0%`, zIndex: isDragging ? 50 : 10 }}
-                    onMouseDown={(e) => handleDragStart(e, card)}
-                    onMove={() => targetingState ? toggleTarget(card) : setSelectedCard(card)}
-                    onZoom={setZoomedCard}
-                    onPeek={(c) => setPeekCard(c)}
-                    attackBadgeLabel={getCardAttackTargetLabel(card.instanceId)}
-                    blockedCount={(combatBlockers[card.instanceId] || []).length}
-                    firstBlockedName={cardsMap.get((combatBlockers[card.instanceId] || [])[0])?.name || null}
-                  />
-                  {combatAttackers[card.instanceId] && (
-                    <div className="mt-1 text-[10px] px-1.5 py-0.5 rounded bg-red-900/80 text-red-100 border border-red-500/40 whitespace-nowrap">
-                      ATK → {getCardAttackTargetLabel(card.instanceId)}
-                    </div>
-                  )}
-                  {blockersForThisAttacker.length > 0 && (
-                    <div className="mt-1 text-[10px] px-1.5 py-0.5 rounded bg-blue-900/80 text-blue-100 border border-blue-500/40 whitespace-nowrap">
-                      Blockers: {blockersForThisAttacker.length}
-                    </div>
-                  )}
-                  {(combatBlockers[card.instanceId] || []).length > 0 && (
-                    <div className="mt-1 text-[10px] px-1.5 py-0.5 rounded bg-slate-800/90 text-slate-100 border border-slate-500/40 whitespace-nowrap max-w-40 overflow-hidden text-ellipsis">
-                      Blocking: {getBlockedAttackersForBlocker(card.instanceId).map(c => c.name || 'Attacker').join(', ')}
-                    </div>
-                  )}
+          <section className="rounded-xl border border-slate-700 bg-slate-900/30 p-3">
+            <div className="flex items-center justify-between mb-3 gap-2">
+              <div className="flex items-center gap-2">
+                <User size={16} className="text-green-400"/>
+                <div>
+                  <div className="text-[10px] uppercase tracking-widest text-slate-400 font-bold">Your Battlefield</div>
+                  <div className="font-bold text-slate-100">{myPlayer?.name || 'You'}</div>
                 </div>
-              );
-            })}
-          </div>
+              </div>
+              <div className="sticky top-0 z-30 flex justify-end gap-2 pointer-events-none">
+                <button
+                  onClick={canAct ? () => handleAction('TIDY_BOARD') : undefined}
+                  className={`pointer-events-auto p-2 rounded-full shadow-xl bg-slate-700/50 text-slate-400 hover:text-white hover:bg-slate-600 ${canAct ? '' : 'opacity-40 cursor-not-allowed'}`}
+                  title="Tidy Board (Reset to Grid)"
+                >
+                  <LayoutGrid size={20} />
+                </button>
+                <button
+                  onClick={canAct ? () => setBoardUnlocked(!boardUnlocked) : undefined}
+                  className={`pointer-events-auto p-2 rounded-full shadow-xl transition-all ${boardUnlocked ? 'bg-orange-500 text-white animate-pulse' : 'bg-slate-700/50 text-slate-400'} ${canAct ? '' : 'opacity-40 cursor-not-allowed'}`}
+                  title={boardUnlocked ? "Lock Board (Disable Drag)" : "Unlock Board (Enable Drag)"}
+                >
+                  {boardUnlocked ? <Unlock size={20} /> : <Lock size={20} />}
+                </button>
+              </div>
+            </div>
+
+            <div ref={boardRef} className={`w-full min-h-[420px] relative pt-2`}>
+              {myBattlefield.map(card => {
+                const isDragging = draggingCard?.card.instanceId === card.instanceId;
+                const x = isDragging ? draggingCard.currentX : (card.x !== undefined ? card.x : 10);
+                const y = isDragging ? draggingCard.currentY : (card.y !== undefined ? card.y : 10);
+                const blockersForThisAttacker = getBlockersForAttacker(card.instanceId);
+                return (
+                  <div key={card.instanceId} className="absolute" style={{ left: `${x}%`, top: `${y}%`, zIndex: isDragging ? 50 : 10 }}>
+                    <Card
+                      card={card}
+                      zone={ZONES.BATTLEFIELD}
+                      isDraggable={boardUnlocked && !targetingState}
+                      targets={game.targets || []}
+                      stack={stackCards}
+                      isSelected={targetingState?.selectedIds.includes(card.instanceId)}
+                      style={{ left: `0%`, top: `0%`, zIndex: isDragging ? 50 : 10 }}
+                      onMouseDown={(e) => handleDragStart(e, card)}
+                      onMove={() => targetingState ? toggleTarget(card) : setSelectedCard(card)}
+                      onZoom={setZoomedCard}
+                      onPeek={(c) => setPeekCard(c)}
+                      displayName={getDisplayCardName(card)}
+                      attackBadgeLabel={getCardAttackTargetLabel(card.instanceId)}
+                      blockedCount={(combatBlockers[card.instanceId] || []).length}
+                      firstBlockedName={getDisplayCardNameOrNull((combatBlockers[card.instanceId] || [])[0])}
+                    />
+                    {combatAttackers[card.instanceId] && (
+                      <div className="mt-1 text-[10px] px-1.5 py-0.5 rounded bg-red-900/80 text-red-100 border border-red-500/40 whitespace-nowrap">
+                        ATK → {getCardAttackTargetLabel(card.instanceId)}
+                      </div>
+                    )}
+                    {blockersForThisAttacker.length > 0 && (
+                      <div className="mt-1 text-[10px] px-1.5 py-0.5 rounded bg-blue-900/80 text-blue-100 border border-blue-500/40 whitespace-nowrap">
+                        Blockers: {blockersForThisAttacker.length}
+                      </div>
+                    )}
+                    {(combatBlockers[card.instanceId] || []).length > 0 && (
+                      <div className="mt-1 text-[10px] px-1.5 py-0.5 rounded bg-slate-800/90 text-slate-100 border border-slate-500/40 whitespace-nowrap max-w-40 overflow-hidden text-ellipsis">
+                        Blocking: {getBlockedAttackersForBlocker(card.instanceId).map(c => getDisplayCardName(c)).join(', ')}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </section>
         </div>
       </div>
 
@@ -2846,52 +2915,6 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         </div>
       )}
 
-      {/* Opponent Battlefield Modal */}
-      {oppBoardOpen && opponent && (
-        <div className="fixed inset-0 bg-black/90 z-[80] flex flex-col p-4" onClick={() => setOppBoardOpen(false)}>
-          <div className="flex justify-between items-center mb-4" onClick={(e) => e.stopPropagation()}>
-            <div className="text-white">
-              <div className="text-sm text-slate-400">Opponent Battlefield</div>
-              <div className="text-lg font-bold">{opponent.name}</div>
-            </div>
-            <button className="text-white" onClick={() => setOppBoardOpen(false)}>
-              <X />
-            </button>
-          </div>
-          <div className="flex-1 overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-            <div className="relative w-full h-[70vh] bg-slate-950/30 border border-slate-700 rounded-xl overflow-hidden">
-              {oppBattlefield.map((c, i) => {
-                const pos = (c.x !== undefined && c.y !== undefined) ? { x: c.x, y: c.y } : getFallbackPos(i);
-                return (
-                  <Card
-                    key={c.instanceId}
-                    card={c}
-                    zone={ZONES.BATTLEFIELD}
-                    isDraggable={false}
-                    targets={game.targets || []}
-                    stack={stackCards}
-                    isSelected={targetingState?.selectedIds.includes(c.instanceId)}
-                    style={{ left: `${pos.x}%`, top: `${pos.y}%`, zIndex: 10 + i }}
-                    onMove={() => {
-                      if (targetingState) {
-                        toggleTarget(c);
-                      } else {
-                        setOppBoardOpen(false);
-                        setZoomedCard(c);
-                      }
-                    }}
-                    onZoom={setZoomedCard}
-                  />
-                );
-              })}
-            </div>
-            <div className="text-xs text-slate-500 mt-3 text-center">
-              Tap a card to zoom (or target)
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Reorder Library Modal */}
       {reorderModal && (
         <div className="fixed inset-0 bg-black/90 z-[200] flex items-center justify-center p-4 pointer-events-auto">
@@ -2936,6 +2959,39 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               })}
             </div>
             <button onClick={submitReorder} className="w-full bg-green-600 py-3 rounded-lg font-bold text-white hover:bg-green-500">Done</button>
+          </div>
+        </div>
+      )}
+
+      {damageModal && (
+        <div className="fixed inset-0 bg-black/80 z-[70] flex items-center justify-center p-4" onClick={() => setDamageModal(null)}>
+          <div className="bg-slate-800 p-4 rounded-xl border border-slate-600 max-w-xs w-full space-y-3" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-bold text-white">Temporary Damage</h3>
+            <div className="text-sm text-slate-300">{getDisplayCardName(damageModal.cardId)}</div>
+            <div className="text-xs text-slate-400">Current: {damageModal.amount}</div>
+            <div className="grid grid-cols-3 gap-2">
+              <button onClick={() => setDamageModal(prev => ({ ...prev, amount: Math.max(0, prev.amount - 1) }))} className="bg-slate-700 hover:bg-slate-600 rounded py-2 text-white">-1</button>
+              <button onClick={() => setDamageModal(prev => ({ ...prev, amount: prev.amount + 1 }))} className="bg-slate-700 hover:bg-slate-600 rounded py-2 text-white">+1</button>
+              <button onClick={() => setDamageModal(prev => ({ ...prev, amount: 0 }))} className="bg-red-900/40 hover:bg-red-800/40 rounded py-2 text-red-100 border border-red-700">Clear</button>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => setDamageModal(null)} className="flex-1 bg-slate-700 py-2 rounded text-white hover:bg-slate-600">Cancel</button>
+              <button
+                onClick={async () => {
+                  const currentCard = game.cards.find(c => c.instanceId === damageModal.cardId);
+                  const current = Math.max(0, currentCard?.tempDamage || 0);
+                  const delta = damageModal.amount - current;
+                  if (delta !== 0 || current !== 0) {
+                    await handleAction('TEMP_DAMAGE', { cardId: damageModal.cardId, amount: delta, clear: damageModal.amount === 0 });
+                  }
+                  setSelectedCard(null);
+                  setDamageModal(null);
+                }}
+                className="flex-1 bg-red-600 py-2 rounded text-white hover:bg-red-500"
+              >
+                Apply
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -3107,7 +3163,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         <div className="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-4 animate-in fade-in duration-200" onClick={() => setSelectedCard(null)}>
           <div className="bg-slate-800 w-full max-w-sm rounded-xl p-4 shadow-2xl border border-slate-600 space-y-3 max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             <div className="flex justify-between items-center border-b border-slate-700 pb-2 mb-2">
-              <span className="font-bold text-lg text-white truncate pr-2">{selectedCard.name}</span>
+              <span className="font-bold text-lg text-white truncate pr-2">{getDisplayCardName(selectedCard)}</span>
               <button onClick={() => setSelectedCard(null)}><X className="text-slate-400" /></button>
             </div>
             <div className="grid grid-cols-2 gap-2">
@@ -3129,6 +3185,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                 <>
                   <button onClick={() => { handleAction('TAP_TOGGLE', { cardId: selectedCard.instanceId }); setSelectedCard(null); }} className="bg-slate-700 text-white p-3 rounded-lg font-medium">{selectedCard.tapped ? 'Untap' : 'Tap'}</button>
                   <button onClick={() => { handleAction('TOGGLE_FACE', { cardId: selectedCard.instanceId }); setSelectedCard(null); }} className="bg-slate-700 text-white p-3 rounded-lg font-medium">{selectedCard.faceDown ? 'Turn Face Up' : 'Turn Face Down'}</button>
+                  {canAct && <button onClick={() => setDamageModal({ cardId: selectedCard.instanceId, amount: Math.max(0, selectedCard.tempDamage || 0) })} className="col-span-2 bg-red-900/40 hover:bg-red-800/50 text-red-100 p-2 rounded-lg text-sm border border-red-700">Damage...</button>}
                   {canAct && isAttackersStep && selectedCard.controllerId === viewAsPlayerId && (selectedCard.type_line || '').toLowerCase().includes('creature') && (
                     <button onClick={() => setAttackTargetPickerCard(selectedCard)} className="col-span-2 bg-red-900/50 hover:bg-red-800 text-red-100 p-2 rounded-lg text-sm border border-red-700">Attack...</button>
                   )}
@@ -3139,7 +3196,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                     <div className="col-span-2 text-xs px-2 py-1 rounded bg-red-900/30 border border-red-700/40 text-red-100">ATK → {getCardAttackTargetLabel(selectedCard.instanceId)}</div>
                   )}
                   {(combatBlockers[selectedCard.instanceId] || []).length > 0 && (
-                    <div className="col-span-2 text-xs px-2 py-1 rounded bg-blue-900/30 border border-blue-700/40 text-blue-100">Blocking: {getBlockedAttackersForBlocker(selectedCard.instanceId).map(c => c.name || 'Attacker').join(', ')}</div>
+                    <div className="col-span-2 text-xs px-2 py-1 rounded bg-blue-900/30 border border-blue-700/40 text-blue-100">Blocking: {getBlockedAttackersForBlocker(selectedCard.instanceId).map(c => getDisplayCardName(c)).join(', ')}</div>
                   )}
                   <div className="col-span-2 flex flex-col bg-slate-700 rounded-lg p-2 gap-2">
                     <div className="flex justify-between items-center border-b border-slate-600 pb-1">
@@ -3192,7 +3249,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                   }}
                   className="w-full text-left px-3 py-2 rounded bg-slate-700 hover:bg-slate-600 text-sm text-slate-100"
                 >
-                  {option.label}
+                  {option.type === 'planeswalker' ? `PW: ${getDisplayCardName(option.targetId)}` : option.label}
                 </button>
               ))}
             </div>
@@ -3218,7 +3275,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                     onClick={() => canAct && toggleBlockTarget(blockPickerCard.instanceId, attacker.instanceId)}
                     className={`w-full text-left px-3 py-2 rounded text-sm border ${active ? 'bg-blue-900/50 border-blue-500 text-blue-100' : 'bg-slate-700 border-slate-600 text-slate-100'}`}
                   >
-                    <div className="font-medium">{attacker.name}</div>
+                    <div className="font-medium">{getDisplayCardName(attacker)}</div>
                     <div className="text-[11px] text-slate-300">ATK → {getCardAttackTargetLabel(attacker.instanceId)}</div>
                   </button>
                 );
@@ -3284,7 +3341,10 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
       {zoomedCard && (
         <div className="fixed inset-0 bg-black/90 z-[60] flex items-center justify-center p-4" onClick={() => setZoomedCard(null)}>
+          <div className="flex flex-col items-center gap-3">
+          <div className="text-sm font-semibold text-slate-100">{getDisplayCardName(zoomedCard)}</div>
           <img src={zoomedCard.image_uri} alt={zoomedCard.name} className="max-w-full max-h-[80vh] rounded-xl shadow-2xl" />
+        </div>
         </div>
       )}
     </div>

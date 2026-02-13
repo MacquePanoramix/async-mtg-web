@@ -195,14 +195,7 @@ const buildTurnStartEvent = (currentGame) => {
   };
 };
 
-const clearCombatForCards = (cards = []) => cards.map((card) => {
-  if (!card.attacking && !card.attackTarget && (!card.blocking || card.blocking.length === 0)) return card;
-  const nextCard = { ...card };
-  delete nextCard.attacking;
-  delete nextCard.attackTarget;
-  delete nextCard.blocking;
-  return nextCard;
-});
+const getEmptyCombatState = () => ({ attackers: {}, blockers: {} });
 
 const shouldClearCombatState = (fromPhase, toPhase) => fromPhase?.startsWith('combat_') && !toPhase?.startsWith('combat_');
 
@@ -223,9 +216,7 @@ const advancePassPriorityState = (currentGame, logEntry, onTurnStart) => {
     let nextTurnNum = currentGame.turnNumber;
     if (nextPhase.id === 'untap') nextTurnNum++;
 
-    if (shouldClearCombatState(currentGame.phase, nextPhase.id)) {
-      updatedGame.cards = clearCombatForCards(updatedGame.cards);
-    }
+    if (shouldClearCombatState(currentGame.phase, nextPhase.id)) updatedGame.combat = getEmptyCombatState();
 
     updatedGame.phase = nextPhase.id;
     updatedGame.turnNumber = nextTurnNum;
@@ -298,9 +289,7 @@ const advancePassPriorityState = (currentGame, logEntry, onTurnStart) => {
       nextTurnPlayerId = players[nextActivePlayerIdx].id;
     }
 
-    if (shouldClearCombatState(currentGame.phase, nextPhase.id)) {
-      updatedGame.cards = clearCombatForCards(updatedGame.cards);
-    }
+    if (shouldClearCombatState(currentGame.phase, nextPhase.id)) updatedGame.combat = getEmptyCombatState();
 
     updatedGame.phase = nextPhase.id;
     updatedGame.consecutivePasses = 0;
@@ -635,7 +624,7 @@ const Lobby = ({
   );
 };
 
-const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isDraggable, targets = [], stack = [], isSelected = false }) => {
+const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isDraggable, targets = [], stack = [], isSelected = false, attackBadgeLabel = null, blockedCount = 0, firstBlockedName = null }) => {
   const isTapped = card.tapped;
   const isFaceDown = card.faceDown;
   const counters = card.counters || {};
@@ -710,14 +699,15 @@ const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isD
         )}
 
         <div className="absolute top-1 right-1 flex flex-col gap-1 pointer-events-none items-end">
-          {card.attacking && (
+          {attackBadgeLabel && (
             <div className="bg-red-900/80 text-red-100 text-[9px] px-1.5 py-0.5 rounded border border-red-400/40 shadow-sm whitespace-nowrap z-10">
-              ATTACKING
+              ATK → {attackBadgeLabel}
             </div>
           )}
-          {(card.blocking || []).length > 0 && (
+          {blockedCount > 0 && (
             <div className="bg-blue-900/80 text-blue-100 text-[9px] px-1.5 py-0.5 rounded border border-blue-400/40 shadow-sm whitespace-nowrap z-10">
-              BLOCKING {(card.blocking || []).length}
+              BLK ({blockedCount})
+              {firstBlockedName ? ` ${firstBlockedName}` : ''}
             </div>
           )}
         </div>
@@ -883,7 +873,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       (doc) => {
         if (doc.exists()) {
           const data = doc.data();
-          setGame(data);
+          setGame({ ...data, combat: data.combat || getEmptyCombatState() });
 
           if (data.log && data.log.length > 0) {
             const lastLog = data.log[data.log.length - 1];
@@ -1007,7 +997,6 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
   const isAttackersStep = game?.phase === 'combat_attackers';
   const isBlockersStep = game?.phase === 'combat_blockers';
-  const myAttackers = (game?.cards || []).filter(c => c.controllerId === viewAsPlayerId && c.zone === ZONES.BATTLEFIELD && c.attacking);
   const opponentPlaneswalkers = (game?.cards || []).filter(c => c.controllerId !== viewAsPlayerId && c.zone === ZONES.BATTLEFIELD && (c.type_line || '').toLowerCase().includes('planeswalker'));
   const attackTargetOptions = [
     opponent ? { type: 'player', targetId: opponent.id, label: `${opponent.name} (Player)` } : null,
@@ -1116,6 +1105,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           consecutivePasses: proxyGame.consecutivePasses,
           stack: proxyGame.stack,
           cards: proxyGame.cards,
+          combat: proxyGame.combat || getEmptyCombatState(),
           log: proxyGame.log,
           autopass: proxyGame.autopass || {}
         });
@@ -1297,23 +1287,26 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     } else if (actionType === 'SET_ATTACK_TARGET') {
       if (game.phase !== 'combat_attackers') return;
       const attackTarget = payload.attackTarget || { type: 'player', targetId: opponent?.id || null };
-      const newCards = game.cards.map(c => {
-        if (c.instanceId !== payload.cardId) return c;
-        return { ...c, attacking: true, attackTarget };
-      });
-      updates.cards = newCards;
+      const nextAttackers = { ...(game.combat?.attackers || {}) };
+      nextAttackers[payload.cardId] = attackTarget;
+      updates.combat = {
+        attackers: nextAttackers,
+        blockers: game.combat?.blockers || {}
+      };
       updates.log = arrayUnion({ ...logEntry, desc: `${myPlayer?.name || 'Player'} set ${payload.cardName || 'a creature'} attack target` });
 
     } else if (actionType === 'TOGGLE_BLOCK_TARGET') {
       if (game.phase !== 'combat_blockers') return;
-      const newCards = game.cards.map(c => {
-        if (c.instanceId !== payload.cardId) return c;
-        const existing = c.blocking || [];
-        const isBlocking = existing.includes(payload.attackerId);
-        const nextBlocking = isBlocking ? existing.filter(id => id !== payload.attackerId) : [...existing, payload.attackerId];
-        return { ...c, blocking: nextBlocking };
-      });
-      updates.cards = newCards;
+      const nextBlockers = { ...(game.combat?.blockers || {}) };
+      const existing = nextBlockers[payload.cardId] || [];
+      const isBlocking = existing.includes(payload.attackerId);
+      const nextBlocking = isBlocking ? existing.filter(id => id !== payload.attackerId) : [...existing, payload.attackerId];
+      if (nextBlocking.length === 0) delete nextBlockers[payload.cardId];
+      else nextBlockers[payload.cardId] = nextBlocking;
+      updates.combat = {
+        attackers: game.combat?.attackers || {},
+        blockers: nextBlockers
+      };
       updates.log = arrayUnion({ ...logEntry, desc: `${myPlayer?.name || 'Player'} updated blocks` });
 
     } else if (actionType === 'DISCARD_RANDOM') {
@@ -1344,8 +1337,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           // In solo, active player never changes index (always 0)
         }
 
-        const nextCardsForPhase = shouldClearCombatState(game.phase, nextPhase.id) ? clearCombatForCards(game.cards) : game.cards;
-        updates = { ...updates, phase: nextPhase.id, turnNumber: nextTurnNum, cards: nextCardsForPhase, log: arrayUnion({ ...logEntry, desc: `Phase: ${nextPhase.label}` }) };
+        const nextCombatState = shouldClearCombatState(game.phase, nextPhase.id) ? getEmptyCombatState() : (game.combat || getEmptyCombatState());
+        updates = { ...updates, phase: nextPhase.id, turnNumber: nextTurnNum, combat: nextCombatState, log: arrayUnion({ ...logEntry, desc: `Phase: ${nextPhase.label}` }) };
 
         // Untap logic
         if (nextPhase.id === 'untap') {
@@ -1422,7 +1415,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             }
 
             // Active player gets priority in new phase
-            const nextCardsForPhase = shouldClearCombatState(game.phase, nextPhase.id) ? clearCombatForCards(game.cards) : game.cards;
+            const nextCombatState = shouldClearCombatState(game.phase, nextPhase.id) ? getEmptyCombatState() : (game.combat || getEmptyCombatState());
             updates = {
               ...updates,
               phase: nextPhase.id,
@@ -1432,7 +1425,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               activePlayerIndex: nextActivePlayerIdx,
               turnPlayerId: nextTurnPlayerId,
               turnNumber: nextTurnNum,
-              cards: nextCardsForPhase,
+              combat: nextCombatState,
               log: arrayUnion({ ...logEntry, desc: `Phase: ${nextPhase.label}` })
             };
 
@@ -1787,6 +1780,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         consecutivePasses: proxyGame.consecutivePasses,
         stack: proxyGame.stack,
         cards: proxyGame.cards,
+        combat: proxyGame.combat || getEmptyCombatState(),
         log: proxyGame.log,
         autopass: proxyGame.autopass || {}
       });
@@ -2118,13 +2112,31 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
   const stackCards = game.stack || [];
   const cardsMap = new Map((game.cards || []).map(c => [c.instanceId, c]));
+  const combat = game.combat || getEmptyCombatState();
+  const combatAttackers = combat.attackers || {};
+  const combatBlockers = combat.blockers || {};
+  const activePlayerId = (game.players || [])[game.activePlayerIndex]?.id || game.turnPlayerId;
+  const attackingCards = Object.keys(combatAttackers)
+    .map((id) => cardsMap.get(id))
+    .filter((c) => c && c.zone === ZONES.BATTLEFIELD);
+  const activeAttackers = attackingCards.filter((c) => c.controllerId === activePlayerId);
   const getAttackTargetLabel = (attackTarget) => {
-    if (!attackTarget) return 'Attacking player';
-    if (attackTarget.type === 'player') return `Attacking ${opponent?.name || 'opponent'}`;
-    if (attackTarget.type === 'planeswalker') return `Attacking ${cardsMap.get(attackTarget.targetId)?.name || 'planeswalker'}`;
-    return 'Attacking';
+    if (!attackTarget) return 'Defender';
+    if (attackTarget.type === 'player') {
+      const playerName = (game.players || []).find((p) => p.id === attackTarget.targetId)?.name || 'Player';
+      return playerName;
+    }
+    if (attackTarget.type === 'planeswalker') return `PW: ${cardsMap.get(attackTarget.targetId)?.name || 'Planeswalker'}`;
+    return 'Defender';
   };
-  const getBlockersForAttacker = (attackerId) => (game.cards || []).filter(c => (c.blocking || []).includes(attackerId));
+  const getCardAttackTargetLabel = (cardId) => getAttackTargetLabel(combatAttackers[cardId]);
+  const getBlockersForAttacker = (attackerId) => Object.entries(combatBlockers)
+    .filter(([, blockedIds]) => (blockedIds || []).includes(attackerId))
+    .map(([blockerId]) => cardsMap.get(blockerId))
+    .filter(Boolean);
+  const getBlockedAttackersForBlocker = (blockerId) => (combatBlockers[blockerId] || [])
+    .map((id) => cardsMap.get(id))
+    .filter(Boolean);
   const playerOne = (game.players || [])[0];
   const playerTwo = (game.players || [])[1];
 
@@ -2388,6 +2400,9 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                 isSelected={targetingState?.selectedIds.includes(card.instanceId)}
                 onMove={() => targetingState ? toggleTarget(card) : setSelectedCard(card)}
                 onZoom={setZoomedCard}
+                attackBadgeLabel={getCardAttackTargetLabel(card.instanceId)}
+                blockedCount={(combatBlockers[card.instanceId] || []).length}
+                firstBlockedName={cardsMap.get((combatBlockers[card.instanceId] || [])[0])?.name || null}
               />
             ))}
           </div>
@@ -2417,6 +2432,24 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             </div>
           </div>
         )}
+
+        <div className="absolute top-[25%] right-2 z-20 w-72 max-w-[45vw] bg-slate-900/90 border border-slate-700 rounded-lg p-3 text-xs space-y-2">
+          <div className="font-bold text-slate-200 uppercase tracking-wider">Combat Summary</div>
+          <div>
+            <div className="text-red-300 font-semibold">Attackers</div>
+            {attackingCards.length === 0 ? <div className="text-slate-400">None</div> : attackingCards.map((attacker) => (
+              <div key={attacker.instanceId} className="text-slate-200">{attacker.name}: {getCardAttackTargetLabel(attacker.instanceId)}</div>
+            ))}
+          </div>
+          <div>
+            <div className="text-blue-300 font-semibold">Blockers</div>
+            {Object.keys(combatBlockers).length === 0 ? <div className="text-slate-400">None</div> : Object.entries(combatBlockers).map(([blockerId, blockedIds]) => (
+              <div key={blockerId} className="text-slate-200">
+                {(cardsMap.get(blockerId)?.name || 'Blocker')} → {(blockedIds || []).map((id) => cardsMap.get(id)?.name || 'Attacker').join(', ')}
+              </div>
+            ))}
+          </div>
+        </div>
 
         {/* My Battlefield (Draggable Canvas) */}
         <div
@@ -2462,10 +2495,13 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                     onMove={() => targetingState ? toggleTarget(card) : setSelectedCard(card)}
                     onZoom={setZoomedCard}
                     onPeek={(c) => setPeekCard(c)}
+                    attackBadgeLabel={getCardAttackTargetLabel(card.instanceId)}
+                    blockedCount={(combatBlockers[card.instanceId] || []).length}
+                    firstBlockedName={cardsMap.get((combatBlockers[card.instanceId] || [])[0])?.name || null}
                   />
-                  {card.attacking && (
+                  {combatAttackers[card.instanceId] && (
                     <div className="mt-1 text-[10px] px-1.5 py-0.5 rounded bg-red-900/80 text-red-100 border border-red-500/40 whitespace-nowrap">
-                      {getAttackTargetLabel(card.attackTarget)}
+                      ATK → {getCardAttackTargetLabel(card.instanceId)}
                     </div>
                   )}
                   {blockersForThisAttacker.length > 0 && (
@@ -2473,9 +2509,9 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                       Blockers: {blockersForThisAttacker.length}
                     </div>
                   )}
-                  {(card.blocking || []).length > 0 && (
+                  {(combatBlockers[card.instanceId] || []).length > 0 && (
                     <div className="mt-1 text-[10px] px-1.5 py-0.5 rounded bg-slate-800/90 text-slate-100 border border-slate-500/40 whitespace-nowrap max-w-40 overflow-hidden text-ellipsis">
-                      Blocking: {(card.blocking || []).map(id => cardsMap.get(id)?.name || 'Attacker').join(', ')}
+                      Blocking: {getBlockedAttackersForBlocker(card.instanceId).map(c => c.name || 'Attacker').join(', ')}
                     </div>
                   )}
                 </div>
@@ -3093,17 +3129,17 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                 <>
                   <button onClick={() => { handleAction('TAP_TOGGLE', { cardId: selectedCard.instanceId }); setSelectedCard(null); }} className="bg-slate-700 text-white p-3 rounded-lg font-medium">{selectedCard.tapped ? 'Untap' : 'Tap'}</button>
                   <button onClick={() => { handleAction('TOGGLE_FACE', { cardId: selectedCard.instanceId }); setSelectedCard(null); }} className="bg-slate-700 text-white p-3 rounded-lg font-medium">{selectedCard.faceDown ? 'Turn Face Up' : 'Turn Face Down'}</button>
-                  {isAttackersStep && selectedCard.controllerId === viewAsPlayerId && (selectedCard.type_line || '').toLowerCase().includes('creature') && (
+                  {canAct && isAttackersStep && selectedCard.controllerId === viewAsPlayerId && (selectedCard.type_line || '').toLowerCase().includes('creature') && (
                     <button onClick={() => setAttackTargetPickerCard(selectedCard)} className="col-span-2 bg-red-900/50 hover:bg-red-800 text-red-100 p-2 rounded-lg text-sm border border-red-700">Attack...</button>
                   )}
-                  {isBlockersStep && selectedCard.controllerId === viewAsPlayerId && (selectedCard.type_line || '').toLowerCase().includes('creature') && (
+                  {canAct && isBlockersStep && selectedCard.controllerId === viewAsPlayerId && (selectedCard.type_line || '').toLowerCase().includes('creature') && (
                     <button onClick={() => setBlockPickerCard(selectedCard)} className="col-span-2 bg-blue-900/50 hover:bg-blue-800 text-blue-100 p-2 rounded-lg text-sm border border-blue-700">Block...</button>
                   )}
-                  {selectedCard.attacking && (
-                    <div className="col-span-2 text-xs px-2 py-1 rounded bg-red-900/30 border border-red-700/40 text-red-100">{getAttackTargetLabel(selectedCard.attackTarget)}</div>
+                  {combatAttackers[selectedCard.instanceId] && (
+                    <div className="col-span-2 text-xs px-2 py-1 rounded bg-red-900/30 border border-red-700/40 text-red-100">ATK → {getCardAttackTargetLabel(selectedCard.instanceId)}</div>
                   )}
-                  {(selectedCard.blocking || []).length > 0 && (
-                    <div className="col-span-2 text-xs px-2 py-1 rounded bg-blue-900/30 border border-blue-700/40 text-blue-100">Blocking: {(selectedCard.blocking || []).map(id => cardsMap.get(id)?.name || 'Attacker').join(', ')}</div>
+                  {(combatBlockers[selectedCard.instanceId] || []).length > 0 && (
+                    <div className="col-span-2 text-xs px-2 py-1 rounded bg-blue-900/30 border border-blue-700/40 text-blue-100">Blocking: {getBlockedAttackersForBlocker(selectedCard.instanceId).map(c => c.name || 'Attacker').join(', ')}</div>
                   )}
                   <div className="col-span-2 flex flex-col bg-slate-700 rounded-lg p-2 gap-2">
                     <div className="flex justify-between items-center border-b border-slate-600 pb-1">
@@ -3172,18 +3208,18 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               <button onClick={() => setBlockPickerCard(null)}><X size={16} className="text-slate-400" /></button>
             </div>
             <div className="space-y-2 max-h-72 overflow-y-auto">
-              {myAttackers.length === 0 && <div className="text-sm text-slate-400">No attackers available.</div>}
-              {myAttackers.map((attacker) => {
-                const liveBlocker = (game.cards || []).find(c => c.instanceId === blockPickerCard.instanceId) || blockPickerCard;
-                const active = (liveBlocker.blocking || []).includes(attacker.instanceId);
+              {activeAttackers.length === 0 && <div className="text-sm text-slate-400">No attackers available.</div>}
+              {activeAttackers.map((attacker) => {
+                const liveBlockerId = blockPickerCard.instanceId;
+                const active = (combatBlockers[liveBlockerId] || []).includes(attacker.instanceId);
                 return (
                   <button
                     key={attacker.instanceId}
-                    onClick={() => toggleBlockTarget(blockPickerCard.instanceId, attacker.instanceId)}
+                    onClick={() => canAct && toggleBlockTarget(blockPickerCard.instanceId, attacker.instanceId)}
                     className={`w-full text-left px-3 py-2 rounded text-sm border ${active ? 'bg-blue-900/50 border-blue-500 text-blue-100' : 'bg-slate-700 border-slate-600 text-slate-100'}`}
                   >
                     <div className="font-medium">{attacker.name}</div>
-                    <div className="text-[11px] text-slate-300">{getAttackTargetLabel(attacker.attackTarget)}</div>
+                    <div className="text-[11px] text-slate-300">ATK → {getCardAttackTargetLabel(attacker.instanceId)}</div>
                   </button>
                 );
               })}
@@ -3378,6 +3414,7 @@ export default function App() {
         targets: [],
         reveals: [],
         autopass: {},
+        combat: getEmptyCombatState(),
         log: []
       };
 

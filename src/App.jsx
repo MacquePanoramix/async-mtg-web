@@ -124,19 +124,18 @@ const isMeaningfulOpponentAction = (entry, currentUid) => {
 const getAutoPassLogKey = (entry, entryIndex) => {
   if (!entry) return null;
   const safeIndex = Number.isInteger(entryIndex) ? entryIndex : -1;
-  const timestamp = entry.timestamp ?? 'na';
   const playerId = entry.playerId || 'na';
   const type = entry.type || 'na';
   const desc = entry.desc || 'na';
-  return `${safeIndex}:${timestamp}:${playerId}:${type}:${desc}`;
+  return `${safeIndex}:${playerId}:${type}:${desc}`;
 };
 
 const MAX_PROXY_AUTOPASS_ADVANCES = 10;
 
-const getDefaultAutoPassConfig = () => ({ mode: AUTO_PASS_MODE.OFF, phaseId: null, stopOnOpponentAction: true });
+const getDefaultAutoPassConfig = () => ({ mode: AUTO_PASS_MODE.OFF, phaseId: null, stopOnOpponentAction: false });
 
 const normalizeAutoPassConfig = (config) => {
-  const stopOnOpponentAction = config?.stopOnOpponentAction !== false;
+  const stopOnOpponentAction = config?.stopOnOpponentAction === true;
   if (!config || config.mode === AUTO_PASS_MODE.OFF) return { mode: AUTO_PASS_MODE.OFF, phaseId: null, stopOnOpponentAction };
   if (config.mode === AUTO_PASS_MODE.END_OF_TURN) return { mode: AUTO_PASS_MODE.END_OF_TURN, phaseId: null, stopOnOpponentAction };
   if (config.mode === AUTO_PASS_MODE.PHASE && config.phaseId) return { mode: AUTO_PASS_MODE.PHASE, phaseId: config.phaseId, stopOnOpponentAction };
@@ -740,6 +739,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const autoPassInFlightRef = useRef(false);
   const lastAutoPassSignatureRef = useRef(null);
   const lastSeenAutoPassLogKeyRef = useRef(null);
+  const proxyAutoPassInFlightRef = useRef(false);
+  const lastProxyAutoPassTriggerRef = useRef(null);
 
   // New state for multi-targeting
   const [targetingState, setTargetingState] = useState(null); // { source, mode: 'CAST'|'ABILITY'|'MANUAL', selectedIds: [] }
@@ -957,6 +958,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
   const waitingForPlayers = game?.players.length < 2;
   const isAutoPassEnabled = autoPassConfig.mode !== AUTO_PASS_MODE.OFF;
+  const autoPassControlsDisabled = !isPlayer || !game;
 
   const disableAutoPass = async (showNote = false, note = 'AutoPass turned off.') => {
     const nextConfig = getDefaultAutoPassConfig();
@@ -1621,10 +1623,6 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
   useEffect(() => {
     if (!isAutoPassEnabled || !game) return;
-    if (isMyTurn) {
-      disableAutoPass(true, 'AutoPass ended: your turn.');
-      return;
-    }
     if (hasReachedAutoPassTarget(game, autoPassConfig, userId)) {
       disableAutoPass(true, 'AutoPass reached stop target.');
       return;
@@ -1632,19 +1630,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     if ((game.stack || []).length > 0) {
       disableAutoPass(true, 'AutoPass stopped: stack needs attention.');
     }
-  }, [isAutoPassEnabled, game, isMyTurn, autoPassConfig, userId]);
+  }, [isAutoPassEnabled, game, autoPassConfig, userId]);
 
-  useEffect(() => {
-    if (!isAutoPassEnabled || !game) {
-      lastAutoPassSignatureRef.current = null;
-      return;
-    }
-
-    const signature = `${game.phase}:${game.priorityPlayerId}:${(game.stack || []).length}`;
-    if (lastAutoPassSignatureRef.current && lastAutoPassSignatureRef.current !== signature) {
-      lastAutoPassSignatureRef.current = null;
-    }
-  }, [isAutoPassEnabled, game?.phase, game?.priorityPlayerId, game?.stack?.length]);
 
   useEffect(() => {
     if (!game) return;
@@ -1672,11 +1659,69 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   }, [game?.log, isAutoPassEnabled, userId, autoPassConfig.stopOnOpponentAction]);
 
   useEffect(() => {
+    if (!game || !gameId || !userId || waitingForPlayers || proxyAutoPassInFlightRef.current) return;
+
+    const priorityPlayerId = game.priorityPlayerId;
+    if (!priorityPlayerId) return;
+
+    const priorityConfig = getPlayerAutoPassConfig(game, priorityPlayerId);
+    if (priorityConfig.mode === AUTO_PASS_MODE.OFF) return;
+
+    const latestLogIndex = (game.log?.length || 0) - 1;
+    const latestLogEntry = latestLogIndex >= 0 ? game.log[latestLogIndex] : null;
+    const triggerSignature = `${priorityPlayerId}:${game.phase}:${game.turnNumber}:${latestLogIndex}:${latestLogEntry?.playerId || 'na'}:${latestLogEntry?.type || 'na'}`;
+    if (lastProxyAutoPassTriggerRef.current === triggerSignature) return;
+
+    const turnStartEvents = [];
+    proxyAutoPassInFlightRef.current = true;
+    lastProxyAutoPassTriggerRef.current = triggerSignature;
+
+    const gameRef = doc(db, 'games_v3', gameId);
+    runTransaction(db, async (transaction) => {
+      const snap = await transaction.get(gameRef);
+      if (!snap.exists()) return;
+      const currentGame = snap.data();
+
+      const currentPriorityPlayerId = currentGame.priorityPlayerId;
+      if (!currentPriorityPlayerId) return;
+
+      const currentConfig = getPlayerAutoPassConfig(currentGame, currentPriorityPlayerId);
+      if (currentConfig.mode === AUTO_PASS_MODE.OFF) return;
+
+      const actorName = currentGame.players?.find(p => p.id === userId)?.name || displayName || 'Proxy';
+      const { game: proxyGame, advances } = runProxyAutoPassAdvances(currentGame, userId, actorName, (event) => turnStartEvents.push(event));
+      if (advances === 0) return;
+
+      transaction.update(gameRef, {
+        phase: proxyGame.phase,
+        turnNumber: proxyGame.turnNumber,
+        activePlayerIndex: proxyGame.activePlayerIndex,
+        turnPlayerId: proxyGame.turnPlayerId,
+        priorityIndex: proxyGame.priorityIndex,
+        priorityPlayerId: proxyGame.priorityPlayerId,
+        consecutivePasses: proxyGame.consecutivePasses,
+        stack: proxyGame.stack,
+        cards: proxyGame.cards,
+        log: proxyGame.log,
+        autopass: proxyGame.autopass || {}
+      });
+    }).then(async () => {
+      if (turnStartEvents.length > 0) {
+        await Promise.all(turnStartEvents.map((event) => appendEvent(gameId, event)));
+      }
+    }).finally(() => {
+      proxyAutoPassInFlightRef.current = false;
+    });
+  }, [game, gameId, userId, waitingForPlayers, displayName]);
+
+  useEffect(() => {
     if (!isAutoPassEnabled || !game || autoPassInFlightRef.current) return;
-    if (!canAct || waitingForPlayers || isMyTurn || !isOppTurn || !hasPriority) return;
+    if (!canAct || waitingForPlayers || !hasPriority) return;
     if ((game.stack || []).length > 0 || hasReachedAutoPassTarget(game, autoPassConfig, userId)) return;
 
-    const prioritySignature = `${game.phase}:${game.priorityPlayerId}:${(game.stack || []).length}`;
+    const latestLogIndex = (game.log?.length || 0) - 1;
+    const latestLogEntry = latestLogIndex >= 0 ? game.log[latestLogIndex] : null;
+    const prioritySignature = `${game.phase}:${game.priorityPlayerId}:${(game.stack || []).length}:${latestLogIndex}:${latestLogEntry?.playerId || 'na'}:${latestLogEntry?.type || 'na'}`;
     if (lastAutoPassSignatureRef.current === prioritySignature) return;
 
     autoPassInFlightRef.current = true;
@@ -1684,7 +1729,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     handleAction('PASS_PRIORITY').finally(() => {
       autoPassInFlightRef.current = false;
     });
-  }, [isAutoPassEnabled, game, canAct, waitingForPlayers, isMyTurn, isOppTurn, hasPriority, autoPassConfig, userId]);
+  }, [isAutoPassEnabled, game, canAct, waitingForPlayers, hasPriority, autoPassConfig, userId]);
 
   const importDeck = async () => {
     if (isSpectator) {
@@ -2091,24 +2136,29 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           {/* Priority Button */}
           {isSpectator ? (
             <div className="text-xs text-blue-300 font-bold flex items-center gap-1"><Eye size={12} /> Viewing</div>
-          ) : waitingForPlayers ? (
-            <div className="text-xs text-yellow-500 font-bold flex items-center gap-1"><Users size={12} /> Waiting</div>
-          ) : hasPriority ? (
+          ) : (
             <div className="flex items-center gap-2">
-              <button
-                onClick={() => handleAction('PASS_PRIORITY')}
-                className="bg-green-600 hover:bg-green-500 text-white px-4 py-1.5 rounded-full text-sm font-bold shadow-lg transform active:scale-95 transition-all flex items-center gap-2"
-              >
-                <ArrowRight size={14} /> Pass
-              </button>
+              {hasPriority ? (
+                <button
+                  onClick={() => handleAction('PASS_PRIORITY')}
+                  className="bg-green-600 hover:bg-green-500 text-white px-4 py-1.5 rounded-full text-sm font-bold shadow-lg transform active:scale-95 transition-all flex items-center gap-2"
+                >
+                  <ArrowRight size={14} /> Pass
+                </button>
+              ) : (
+                <div className="flex items-center gap-2 text-slate-500 px-3 py-1 bg-slate-900/50 rounded-full border border-slate-800">
+                  {waitingForPlayers ? <Users size={14} /> : <Clock size={14} />} <span className="text-xs font-medium italic">{waitingForPlayers ? 'Waiting for players...' : 'Waiting...'}</span>
+                </div>
+              )}
               <div className="relative">
                 <button
                   onClick={() => setAutoPassMenuOpen(prev => !prev)}
-                  className={`px-3 py-1.5 rounded-full text-xs font-bold border flex items-center gap-1 ${isAutoPassEnabled ? 'bg-purple-700/60 border-purple-400 text-purple-100' : 'bg-slate-800 border-slate-600 text-slate-300 hover:text-white'}`}
+                  disabled={autoPassControlsDisabled}
+                  className={`px-3 py-1.5 rounded-full text-xs font-bold border flex items-center gap-1 ${isAutoPassEnabled ? 'bg-purple-700/60 border-purple-400 text-purple-100' : 'bg-slate-800 border-slate-600 text-slate-300 hover:text-white'} ${autoPassControlsDisabled ? 'opacity-50 cursor-not-allowed' : ''}`}
                 >
                   AutoPass <ChevronDown size={12} />
                 </button>
-                {autoPassMenuOpen && (
+                {autoPassMenuOpen && !autoPassControlsDisabled && (
                   <div className="absolute right-0 mt-2 w-56 bg-slate-900 border border-slate-700 rounded-lg shadow-xl z-40 p-2 space-y-1">
                     <button onClick={() => disableAutoPass()} className="w-full text-left px-2 py-1.5 rounded hover:bg-slate-700 text-sm">Off</button>
                     <button onClick={() => enableAutoPass(AUTO_PASS_MODE.END_OF_TURN)} className="w-full text-left px-2 py-1.5 rounded hover:bg-slate-700 text-sm">Until End of Turn</button>
@@ -2145,10 +2195,6 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                   </div>
                 )}
               </div>
-            </div>
-          ) : (
-            <div className="flex items-center gap-2 text-slate-500 px-3 py-1 bg-slate-900/50 rounded-full border border-slate-800">
-              <Clock size={14} /> <span className="text-xs font-medium italic">Waiting...</span>
             </div>
           )}
 

@@ -2112,14 +2112,12 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     }
   };
 
-  if (loading) return <div className="text-white p-10 flex justify-center"><RotateCw className="animate-spin"/></div>;
-  if (!game) return <div className="text-white p-10">Game not found</div>;
-
+  const gameCards = game?.cards || [];
   // FIX: Add defaults (|| []) to prevent crashes on initial sync
-  const myHand = (game.cards || []).filter(c => c.controllerId === viewAsPlayerId && c.zone === ZONES.HAND);
-  const myBattlefield = (game.cards || []).filter(c => c.controllerId === viewAsPlayerId && c.zone === ZONES.BATTLEFIELD);
-  const oppBattlefield = (game.cards || []).filter(c => c.controllerId !== viewAsPlayerId && c.zone === ZONES.BATTLEFIELD);
-  const oppHand = (game.cards || []).filter(c => c.controllerId !== viewAsPlayerId && c.zone === ZONES.HAND);
+  const myHand = gameCards.filter(c => c.controllerId === viewAsPlayerId && c.zone === ZONES.HAND);
+  const myBattlefield = gameCards.filter(c => c.controllerId === viewAsPlayerId && c.zone === ZONES.BATTLEFIELD);
+  const oppBattlefield = gameCards.filter(c => c.controllerId !== viewAsPlayerId && c.zone === ZONES.BATTLEFIELD);
+  const oppHand = gameCards.filter(c => c.controllerId !== viewAsPlayerId && c.zone === ZONES.HAND);
 
   const buildSectionDisplayNameMap = (cards) => {
     const grouped = new Map();
@@ -2157,6 +2155,10 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     if (!card) return null;
     return getDisplayCardName(card);
   };
+
+  if (loading) return <div className="text-white p-10 flex justify-center"><RotateCw className="animate-spin"/></div>;
+  if (!game) return <div className="text-white p-10">Game not found</div>;
+
   const opponentIsRevealing = (game.players || []).find(p => p.id !== viewAsPlayerId)?.handRevealed;
 
   const getZoneCount = (pid, zone) => (game.cards || []).filter(c => c.ownerId === pid && c.zone === zone).length;

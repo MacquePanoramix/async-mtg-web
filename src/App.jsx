@@ -2237,7 +2237,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       onTouchEnd={handleDragEnd}
     >
       {/* 1. Header */}
-      <div className="bg-slate-800 border-b border-slate-700 p-2 flex flex-wrap items-center justify-between gap-2 shrink-0 shadow-md z-20">
+      <div className="bg-slate-800 border-b border-slate-700 p-2 shrink-0 shadow-md z-20 top-action-scroll-wrap">
+        <div className="top-action-scroll-row hide-scrollbar sm:w-full sm:justify-between">
         <div className="flex items-center gap-2">
           <div className={`w-3 h-3 rounded-full ${isMyTurn ? 'bg-green-500 shadow-[0_0_10px_rgba(34,197,94,0.6)]' : 'bg-slate-600'}`}></div>
           <div className="flex flex-col leading-none">
@@ -2249,7 +2250,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         </div>
 
         <div
-          className="flex flex-col items-center justify-center bg-slate-900 px-3 py-1 rounded border border-slate-700 cursor-pointer hover:bg-slate-800 w-full sm:w-auto order-3 sm:order-none"
+          className="flex flex-col items-center justify-center bg-slate-900 px-3 py-1 rounded border border-slate-700 cursor-pointer hover:bg-slate-800"
           onClick={() => copyToClipboard(gameId)}
           title="Click to Copy Game ID"
         >
@@ -2258,7 +2259,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         </div>
 
         {isSpectator && (
-          <div className="flex items-center gap-2 bg-slate-900 border border-slate-700 rounded px-3 py-1 w-full sm:w-auto order-4 sm:order-none">
+          <div className="flex items-center gap-2 bg-slate-900 border border-slate-700 rounded px-3 py-1">
             <span className="text-[10px] font-bold uppercase tracking-widest text-blue-300 bg-blue-900/40 border border-blue-500/40 px-2 py-0.5 rounded-full">
               VIEWER
             </span>
@@ -2413,6 +2414,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           >
             <X size={16} />
           </button>
+        </div>
         </div>
       </div>
 

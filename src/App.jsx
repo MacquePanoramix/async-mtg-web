@@ -784,9 +784,7 @@ const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isD
 
 
 const BattlefieldCardRow = ({ children, isOpponent = false }) => (
-  <div
-    className={`w-full max-w-5xl mx-auto min-h-[220px] flex flex-wrap content-start gap-3 pt-3 ${isOpponent ? 'justify-start' : 'justify-start'}`}
-  >
+  <div className={`w-full max-w-5xl mx-auto flex flex-wrap gap-3 pt-3 ${isOpponent ? 'justify-center flex-row-reverse' : 'justify-center'}`}>
     {children}
   </div>
 );
@@ -827,6 +825,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const lastSeenAutoPassLogKeyRef = useRef(null);
   const proxyAutoPassInFlightRef = useRef(false);
   const lastProxyAutoPassTriggerRef = useRef(null);
+  const headerTapLoggedRef = useRef(false);
 
   // New state for multi-targeting
   const [targetingState, setTargetingState] = useState(null); // { source, mode: 'CAST'|'ABILITY'|'MANUAL', selectedIds: [] }
@@ -2285,8 +2284,22 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       onTouchEnd={handleDragEnd}
     >
       {/* 1. Header */}
-      <div className="bg-slate-800 border-b border-slate-700 p-2 shrink-0 shadow-md z-20 top-action-scroll-wrap">
-        <div className="top-action-scroll-row hide-scrollbar sm:w-full sm:justify-between">
+      <div className="bg-slate-800 border-b border-slate-700 p-2 shrink-0 shadow-md relative z-50 pointer-events-auto top-action-scroll-wrap">
+        <div
+          className="top-action-scroll-row hide-scrollbar sm:w-full sm:justify-between"
+          onClick={() => {
+            if (!headerTapLoggedRef.current) {
+              console.log('Header container tapped');
+              headerTapLoggedRef.current = true;
+            }
+          }}
+          onTouchStart={() => {
+            if (!headerTapLoggedRef.current) {
+              console.log('Header container tapped');
+              headerTapLoggedRef.current = true;
+            }
+          }}
+        >
         <div className="flex items-center gap-2">
           <div className={`w-3 h-3 rounded-full ${isMyTurn ? 'bg-green-500 shadow-[0_0_10px_rgba(34,197,94,0.6)]' : 'bg-slate-600'}`}></div>
           <div className="flex flex-col leading-none">
@@ -2392,7 +2405,10 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               )}
               <div className="relative">
                 <button
-                  onClick={() => setAutoPassMenuOpen(prev => !prev)}
+                  onClick={() => {
+                    console.log('AutoPass tapped');
+                    setAutoPassMenuOpen(prev => !prev);
+                  }}
                   disabled={autoPassControlsDisabled}
                   className={`relative z-20 pointer-events-auto px-3 py-1.5 rounded-full text-xs font-bold border flex items-center gap-1 ${isAutoPassEnabled ? 'bg-purple-700/60 border-purple-400 text-purple-100' : 'bg-slate-800 border-slate-600 text-slate-300 hover:text-white'} ${autoPassControlsDisabled ? 'opacity-50 cursor-not-allowed' : ''}`}
                 >
@@ -2567,7 +2583,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             </div>
           </div>
 
-          <section className="rounded-xl border border-slate-700 bg-slate-900/30 p-3 min-h-[280px]">
+          <section className="rounded-xl border border-slate-700 bg-slate-900/30 p-3">
             <div className="flex items-center justify-between mb-3 gap-2">
               <div className="flex items-center gap-2">
                 <User size={16} className="text-green-400"/>
@@ -2594,26 +2610,31 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               </div>
             </div>
 
-            <div className="border-t border-slate-700/70 pt-2">
-              <BattlefieldCardRow>
-                {myBattlefield.map(card => (
-                  <Card
-                    key={card.instanceId}
-                    card={card}
-                    zone={ZONES.BATTLEFIELD}
-                    isDraggable={boardUnlocked && !targetingState}
-                    targets={game.targets || []}
-                    stack={stackCards}
-                    isSelected={targetingState?.selectedIds.includes(card.instanceId)}
-                    onMouseDown={(e) => handleDragStart(e, card)}
-                    onMove={() => targetingState ? toggleTarget(card) : setSelectedCard(card)}
-                    onZoom={setZoomedCard}
-                    onPeek={(c) => setPeekCard(c)}
-                    displayName={getDisplayCardName(card)}
-                    combatBadgeLabel={getCardCombatBadgeLabel(card.instanceId)}
-                  />
-                ))}
-              </BattlefieldCardRow>
+            <div ref={boardRef} className={`w-full min-h-[420px] relative pt-2`}>
+              {myBattlefield.map(card => {
+                const isDragging = draggingCard?.card.instanceId === card.instanceId;
+                const x = isDragging ? draggingCard.currentX : (card.x !== undefined ? card.x : 10);
+                const y = isDragging ? draggingCard.currentY : (card.y !== undefined ? card.y : 10);
+                return (
+                  <div key={card.instanceId} className="absolute" style={{ left: `${x}%`, top: `${y}%`, zIndex: isDragging ? 50 : 10 }}>
+                    <Card
+                      card={card}
+                      zone={ZONES.BATTLEFIELD}
+                      isDraggable={boardUnlocked && !targetingState}
+                      targets={game.targets || []}
+                      stack={stackCards}
+                      isSelected={targetingState?.selectedIds.includes(card.instanceId)}
+                      style={{ left: `0%`, top: `0%`, zIndex: isDragging ? 50 : 10 }}
+                      onMouseDown={(e) => handleDragStart(e, card)}
+                      onMove={() => targetingState ? toggleTarget(card) : setSelectedCard(card)}
+                      onZoom={setZoomedCard}
+                      onPeek={(c) => setPeekCard(c)}
+                      displayName={getDisplayCardName(card)}
+                      combatBadgeLabel={getCardCombatBadgeLabel(card.instanceId)}
+                    />
+                  </div>
+                );
+              })}
             </div>
           </section>
         </div>

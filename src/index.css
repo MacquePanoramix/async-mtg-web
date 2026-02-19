@@ -16,3 +16,29 @@ body {
 .hide-scrollbar::-webkit-scrollbar {
   display: none;
 }
+
+
+.top-action-scroll-wrap {
+  position: relative;
+}
+
+.top-action-scroll-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+
+.top-action-scroll-row > * {
+  flex: 0 0 auto;
+}
+
+@media (min-width: 640px) {
+  .top-action-scroll-row {
+    overflow-x: visible;
+  }
+}

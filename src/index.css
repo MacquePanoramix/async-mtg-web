@@ -20,9 +20,12 @@ body {
 
 .top-action-scroll-wrap {
   position: relative;
+  overflow: hidden;
 }
 
 .top-action-scroll-row {
+  position: relative;
+  z-index: 1;
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -31,6 +34,13 @@ body {
   -webkit-overflow-scrolling: touch;
   flex-wrap: nowrap;
   white-space: nowrap;
+  height: auto;
+  max-height: 100%;
+}
+
+.top-action-scroll-row::after {
+  content: '';
+  pointer-events: none;
 }
 
 .top-action-scroll-row > * {

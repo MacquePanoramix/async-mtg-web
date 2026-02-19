@@ -784,7 +784,9 @@ const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isD
 
 
 const BattlefieldCardRow = ({ children, isOpponent = false }) => (
-  <div className={`w-full max-w-5xl mx-auto flex flex-wrap gap-3 pt-3 ${isOpponent ? 'justify-center flex-row-reverse' : 'justify-center'}`}>
+  <div
+    className={`w-full max-w-5xl mx-auto min-h-[220px] flex flex-wrap content-start gap-3 pt-3 ${isOpponent ? 'justify-start' : 'justify-start'}`}
+  >
     {children}
   </div>
 );
@@ -2342,7 +2344,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           </div>
           <button
             onClick={openChat}
-            className="relative p-2 rounded hover:bg-slate-700 text-slate-400 hover:text-white"
+            className="relative z-20 pointer-events-auto p-2 rounded hover:bg-slate-700 text-slate-400 hover:text-white"
           >
             <MessageSquare size={20} />
             {unreadCount > 0 && (
@@ -2353,14 +2355,14 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           </button>
           <button
             onClick={openRecap}
-            className="p-2 rounded hover:bg-slate-700 text-slate-400 hover:text-white"
+            className="relative z-20 pointer-events-auto p-2 rounded hover:bg-slate-700 text-slate-400 hover:text-white"
             title="Recap"
           >
             <BookOpen size={20} />
           </button>
           <button
             onClick={() => setRevealsOpen(true)}
-            className="flex flex-col items-center justify-center px-2 py-1 rounded hover:bg-slate-700 relative"
+            className="relative z-20 pointer-events-auto flex flex-col items-center justify-center px-2 py-1 rounded hover:bg-slate-700"
           >
             <span className="text-[10px] text-slate-400">REVEALS</span>
             <Eye size={16} className="text-blue-400"/>
@@ -2379,12 +2381,12 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               {hasPriority ? (
                 <button
                   onClick={() => handleAction('PASS_PRIORITY')}
-                  className="bg-green-600 hover:bg-green-500 text-white px-4 py-1.5 rounded-full text-sm font-bold shadow-lg transform active:scale-95 transition-all flex items-center gap-2"
+                  className="relative z-20 pointer-events-auto bg-green-600 hover:bg-green-500 text-white px-4 py-1.5 rounded-full text-sm font-bold shadow-lg transform active:scale-95 transition-all flex items-center gap-2"
                 >
                   <ArrowRight size={14} /> Pass
                 </button>
               ) : (
-                <div className="flex items-center gap-2 text-slate-500 px-3 py-1 bg-slate-900/50 rounded-full border border-slate-800">
+                <div className="relative z-10 flex items-center gap-2 text-slate-500 px-3 py-1 bg-slate-900/50 rounded-full border border-slate-800">
                   {waitingForPlayers ? <Users size={14} /> : <Clock size={14} />} <span className="text-xs font-medium italic">{waitingForPlayers ? 'Waiting for players...' : 'Waiting...'}</span>
                 </div>
               )}
@@ -2392,7 +2394,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                 <button
                   onClick={() => setAutoPassMenuOpen(prev => !prev)}
                   disabled={autoPassControlsDisabled}
-                  className={`px-3 py-1.5 rounded-full text-xs font-bold border flex items-center gap-1 ${isAutoPassEnabled ? 'bg-purple-700/60 border-purple-400 text-purple-100' : 'bg-slate-800 border-slate-600 text-slate-300 hover:text-white'} ${autoPassControlsDisabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  className={`relative z-20 pointer-events-auto px-3 py-1.5 rounded-full text-xs font-bold border flex items-center gap-1 ${isAutoPassEnabled ? 'bg-purple-700/60 border-purple-400 text-purple-100' : 'bg-slate-800 border-slate-600 text-slate-300 hover:text-white'} ${autoPassControlsDisabled ? 'opacity-50 cursor-not-allowed' : ''}`}
                 >
                   AutoPass <ChevronDown size={12} />
                 </button>
@@ -2443,11 +2445,11 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             </div>
           )}
 
-          <div className="h-8 w-[1px] bg-slate-700 mx-1"></div>
+          <div className="h-8 w-[1px] bg-slate-700 mx-1 pointer-events-none"></div>
           {opponent && (
             <button
               onClick={scrollToOpponentBattlefield}
-              className="px-3 py-1 rounded-full bg-slate-700/70 hover:bg-slate-600 text-xs font-semibold text-slate-100 border border-slate-600"
+              className="relative z-20 pointer-events-auto px-3 py-1 rounded-full bg-slate-700/70 hover:bg-slate-600 text-xs font-semibold text-slate-100 border border-slate-600"
               title="Scroll to Opponent Battlefield"
             >
               View
@@ -2455,7 +2457,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           )}
           <button
             onClick={onExit}
-            className="p-1 text-slate-400 hover:text-white"
+            className="relative z-20 pointer-events-auto p-1 text-slate-400 hover:text-white"
             title="Leave Game"
           >
             <X size={16} />
@@ -2469,7 +2471,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         <div ref={battlefieldScrollRef} className="h-full overflow-y-auto overflow-x-hidden px-3 pb-4 pt-2 sm:px-4">
           <section
             ref={opponentSectionRef}
-            className={`rounded-xl border p-3 mb-3 transition-all duration-300 ${opponentSectionHighlighted ? 'border-blue-400 bg-blue-900/20 ring-2 ring-blue-400/60' : 'border-slate-700 bg-slate-800/30'}`}
+            className={`rounded-xl border p-3 mb-3 min-h-[280px] transition-all duration-300 ${opponentSectionHighlighted ? 'border-blue-400 bg-blue-900/20 ring-2 ring-blue-400/60' : 'border-slate-700 bg-slate-800/30'}`}
           >
             <div className="flex justify-between items-start mb-2">
               <div className="flex items-center gap-2">
@@ -2503,6 +2505,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               </div>
             )}
 
+            <div className="border-t border-slate-700/70 pt-2">
             <BattlefieldCardRow isOpponent>
               {oppBattlefield.map(card => (
                 <Card
@@ -2519,6 +2522,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                 />
               ))}
             </BattlefieldCardRow>
+            </div>
           </section>
 
           <div className="grid grid-cols-1 lg:grid-cols-[1fr_18rem] gap-3 mb-3">
@@ -2563,7 +2567,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             </div>
           </div>
 
-          <section className="rounded-xl border border-slate-700 bg-slate-900/30 p-3">
+          <section className="rounded-xl border border-slate-700 bg-slate-900/30 p-3 min-h-[280px]">
             <div className="flex items-center justify-between mb-3 gap-2">
               <div className="flex items-center gap-2">
                 <User size={16} className="text-green-400"/>
@@ -2590,31 +2594,26 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               </div>
             </div>
 
-            <div ref={boardRef} className={`w-full min-h-[420px] relative pt-2`}>
-              {myBattlefield.map(card => {
-                const isDragging = draggingCard?.card.instanceId === card.instanceId;
-                const x = isDragging ? draggingCard.currentX : (card.x !== undefined ? card.x : 10);
-                const y = isDragging ? draggingCard.currentY : (card.y !== undefined ? card.y : 10);
-                return (
-                  <div key={card.instanceId} className="absolute" style={{ left: `${x}%`, top: `${y}%`, zIndex: isDragging ? 50 : 10 }}>
-                    <Card
-                      card={card}
-                      zone={ZONES.BATTLEFIELD}
-                      isDraggable={boardUnlocked && !targetingState}
-                      targets={game.targets || []}
-                      stack={stackCards}
-                      isSelected={targetingState?.selectedIds.includes(card.instanceId)}
-                      style={{ left: `0%`, top: `0%`, zIndex: isDragging ? 50 : 10 }}
-                      onMouseDown={(e) => handleDragStart(e, card)}
-                      onMove={() => targetingState ? toggleTarget(card) : setSelectedCard(card)}
-                      onZoom={setZoomedCard}
-                      onPeek={(c) => setPeekCard(c)}
-                      displayName={getDisplayCardName(card)}
-                      combatBadgeLabel={getCardCombatBadgeLabel(card.instanceId)}
-                    />
-                  </div>
-                );
-              })}
+            <div className="border-t border-slate-700/70 pt-2">
+              <BattlefieldCardRow>
+                {myBattlefield.map(card => (
+                  <Card
+                    key={card.instanceId}
+                    card={card}
+                    zone={ZONES.BATTLEFIELD}
+                    isDraggable={boardUnlocked && !targetingState}
+                    targets={game.targets || []}
+                    stack={stackCards}
+                    isSelected={targetingState?.selectedIds.includes(card.instanceId)}
+                    onMouseDown={(e) => handleDragStart(e, card)}
+                    onMove={() => targetingState ? toggleTarget(card) : setSelectedCard(card)}
+                    onZoom={setZoomedCard}
+                    onPeek={(c) => setPeekCard(c)}
+                    displayName={getDisplayCardName(card)}
+                    combatBadgeLabel={getCardCombatBadgeLabel(card.instanceId)}
+                  />
+                ))}
+              </BattlefieldCardRow>
             </div>
           </section>
         </div>

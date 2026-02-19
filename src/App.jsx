@@ -3364,7 +3364,47 @@ export default function App() {
   const [myGames, setMyGames] = useState([]);
   const [toastMessage, setToastMessage] = useState('');
   const [pendingUrlEntry, setPendingUrlEntry] = useState(null);
+  const isExitingRef = useRef(false);
   const suggestedName = myGames.find((g) => (g.myName || '').trim())?.myName || '';
+
+  const clearPersistedJoinState = () => {
+    const keysToClear = [
+      'lastGameId',
+      'lastRoomCode',
+      'lastOpenedGame',
+      'gameId',
+      'roomCode',
+      'room'
+    ];
+
+    keysToClear.forEach((key) => {
+      window.localStorage.removeItem(key);
+      window.sessionStorage.removeItem(key);
+    });
+  };
+
+  const clearGameUrlParams = () => {
+    const url = new URL(window.location.href);
+    url.searchParams.delete('room');
+    url.searchParams.delete('mode');
+    url.searchParams.delete('gameId');
+    url.searchParams.delete('game');
+    url.searchParams.delete('roomCode');
+
+    if (/^\/game\/[A-Za-z0-9]{4,12}$/.test(url.pathname)) {
+      url.pathname = '/';
+    }
+
+    window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+  };
+
+  const handleExitGame = () => {
+    isExitingRef.current = true;
+    setActiveGameId(null);
+    setPendingUrlEntry(null);
+    clearPersistedJoinState();
+    clearGameUrlParams();
+  };
 
   const upsertUserGameMembership = async (uid, roomCode, role, extraFields = {}) => {
     const trimmedName = (extraFields.myName || '').trim();
@@ -3415,6 +3455,8 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (isExitingRef.current) return;
+
     const params = new URLSearchParams(window.location.search);
     const roomFromQuery = (params.get('room') || '').trim().toUpperCase();
     const mode = (params.get('mode') || '').toLowerCase();
@@ -3582,15 +3624,17 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (!pendingUrlEntry || !user || isActionLoading || activeGameId) return;
+    if (isExitingRef.current || !pendingUrlEntry || !user || isActionLoading || activeGameId) return;
     let cancelled = false;
 
     const startFromUrl = async () => {
       const defaultName = user.displayName || 'Guest';
       const preferredName = await getPreferredNameForGame(user.uid, pendingUrlEntry.roomCode, defaultName);
       if (cancelled) return;
+      if (isExitingRef.current) return;
       setPlayerName(preferredName);
 
+      if (isExitingRef.current) return;
       if (pendingUrlEntry.mode === 'viewer') {
         await watchGame(preferredName, pendingUrlEntry.roomCode);
       } else {
@@ -3607,6 +3651,18 @@ export default function App() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingUrlEntry, user, isActionLoading, activeGameId]);
+
+  useEffect(() => {
+    if (activeGameId || !isExitingRef.current) return;
+
+    const timeoutId = window.setTimeout(() => {
+      isExitingRef.current = false;
+    }, 0);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [activeGameId]);
 
   const removeGameFromList = async (game) => {
     if (!user || !game?.id) return;
@@ -3643,7 +3699,7 @@ export default function App() {
   };
 
   if (activeGameId && user) {
-    return <GameBoard gameId={activeGameId} realUserId={user.uid} displayName={playerName} onExit={() => setActiveGameId(null)} />;
+    return <GameBoard gameId={activeGameId} realUserId={user.uid} displayName={playerName} onExit={handleExitGame} />;
   }
 
   return (

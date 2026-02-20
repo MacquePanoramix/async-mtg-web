@@ -131,6 +131,10 @@ const getAutoPassLogKey = (entry, entryIndex) => {
 };
 
 const MAX_PROXY_AUTOPASS_ADVANCES = 10;
+const BATTLEFIELD_CARD_WIDTH_PX = 80;
+const BATTLEFIELD_CARD_HEIGHT_PX = 112;
+
+const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 
 const getDefaultAutoPassConfig = () => ({
   mode: AUTO_PASS_MODE.OFF,
@@ -781,14 +785,6 @@ const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isD
     </div>
   );
 };
-
-
-const BattlefieldCardRow = ({ children, isOpponent = false }) => (
-  <div className={`w-full max-w-5xl mx-auto flex flex-wrap gap-3 pt-3 ${isOpponent ? 'justify-center flex-row-reverse' : 'justify-center'}`}>
-    {children}
-  </div>
-);
-
 const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const [game, setGame] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -812,7 +808,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const [boardUnlocked, setBoardUnlocked] = useState(false);
   const [viewAsId, setViewAsId] = useState(null);
   const [spectatorLastSeenChatAt, setSpectatorLastSeenChatAt] = useState(0);
-  const boardRef = useRef(null);
+  const myBattlefieldRef = useRef(null);
+  const opponentBattlefieldRef = useRef(null);
   const diceButtonRef = useRef(null);
   const libraryButtonRef = useRef(null);
   const battlefieldScrollRef = useRef(null);
@@ -870,8 +867,33 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const viewAsPlayer = (game?.players || []).find(p => p.id === viewAsPlayerId);
   const canAct = !isSpectator;
 
-  const getFallbackPos = (i) => ({ x: (i % 5) * 18 + 5, y: 10 + Math.floor(i / 5) * 22 });
   const getPlayerTargetId = (pid) => `player:${pid}`;
+  const getNormalizedFromLegacyPosition = (x, y, rect) => {
+    if (!rect || !Number.isFinite(x) || !Number.isFinite(y) || rect.width <= 0 || rect.height <= 0) return null;
+    const cardCenterX = rect.left + ((x / 100) * rect.width) + (BATTLEFIELD_CARD_WIDTH_PX / 2);
+    const cardCenterY = rect.top + ((y / 100) * rect.height) + (BATTLEFIELD_CARD_HEIGHT_PX / 2);
+    return {
+      nx: clamp((cardCenterX - rect.left) / rect.width, 0, 1),
+      ny: clamp((cardCenterY - rect.top) / rect.height, 0, 1)
+    };
+  };
+
+  const getCardRenderPosition = (card, isOpponentView = false) => {
+    let nx = Number.isFinite(card?.nx) ? card.nx : null;
+    let ny = Number.isFinite(card?.ny) ? card.ny : null;
+
+    if (nx === null || ny === null) {
+      const containerRect = (isOpponentView ? opponentBattlefieldRef.current : myBattlefieldRef.current)?.getBoundingClientRect?.();
+      const legacy = getNormalizedFromLegacyPosition(card?.x, card?.y, containerRect);
+      nx = legacy?.nx ?? 0.15;
+      ny = legacy?.ny ?? 0.2;
+    }
+
+    return {
+      nx: clamp(nx, 0, 1),
+      ny: clamp(isOpponentView ? 1 - ny : ny, 0, 1)
+    };
+  };
 
   useLayoutEffect(() => {
     if (!diceMenuOpen) {
@@ -998,42 +1020,50 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   };
 
   const handleDragStart = (e, card) => {
-    if (isSpectator || !boardUnlocked || targetingState) return;
+    if (isSpectator || !boardUnlocked || targetingState || !myBattlefieldRef.current) return;
     e.stopPropagation();
     const clientX = e.touches ? e.touches[0].clientX : e.clientX;
     const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    const cardRect = e.currentTarget?.getBoundingClientRect?.();
+    const rect = myBattlefieldRef.current.getBoundingClientRect();
+    const normalized = getCardRenderPosition(card, false);
+    const pointerOffsetToCenterX = cardRect ? (cardRect.left + (cardRect.width / 2)) - clientX : 0;
+    const pointerOffsetToCenterY = cardRect ? (cardRect.top + (cardRect.height / 2)) - clientY : 0;
     setDraggingCard({
       card,
-      startX: clientX,
-      startY: clientY,
-      originalX: card.x ?? 10,
-      originalY: card.y ?? 10
+      currentClientX: clientX,
+      currentClientY: clientY,
+      pointerOffsetToCenterX,
+      pointerOffsetToCenterY,
+      battlefieldRect: rect,
+      nx: normalized.nx,
+      ny: normalized.ny
     });
   };
 
   const handleDragMove = (e) => {
-    if (!draggingCard || !boardRef.current) return;
+    if (!draggingCard) return;
     const clientX = e.touches ? e.touches[0].clientX : e.clientX;
     const clientY = e.touches ? e.touches[0].clientY : e.clientY;
 
-    const deltaX = clientX - draggingCard.startX;
-    const deltaY = clientY - draggingCard.startY;
-
-    const rect = boardRef.current.getBoundingClientRect();
-    const deltaXPercent = (deltaX / rect.width) * 100;
-    const deltaYPercent = (deltaY / rect.height) * 100;
-
-    const newX = Math.max(0, Math.min(90, draggingCard.originalX + deltaXPercent));
-    const newY = Math.max(0, Math.min(90, draggingCard.originalY + deltaYPercent));
-
-    setDraggingCard(prev => ({ ...prev, currentX: newX, currentY: newY }));
+    setDraggingCard(prev => ({ ...prev, currentClientX: clientX, currentClientY: clientY }));
   };
 
   const handleDragEnd = async () => {
     if (!draggingCard) return;
-    const { currentX, currentY, card } = draggingCard;
-    if (currentX !== undefined && currentY !== undefined) {
-      await handleAction('MOVE_CARD_XY', { cardId: card.instanceId, x: Number(currentX.toFixed(1)), y: Number(currentY.toFixed(1)) });
+    const { card, battlefieldRect, currentClientX, currentClientY, pointerOffsetToCenterX = 0, pointerOffsetToCenterY = 0 } = draggingCard;
+    if (battlefieldRect && Number.isFinite(currentClientX) && Number.isFinite(currentClientY)) {
+      const cardCenterX = currentClientX + pointerOffsetToCenterX;
+      const cardCenterY = currentClientY + pointerOffsetToCenterY;
+      const nx = clamp((cardCenterX - battlefieldRect.left) / battlefieldRect.width, 0, 1);
+      const ny = clamp((cardCenterY - battlefieldRect.top) / battlefieldRect.height, 0, 1);
+      await handleAction('MOVE_CARD_XY', {
+        cardId: card.instanceId,
+        x: Number((nx * 100).toFixed(1)),
+        y: Number((ny * 100).toFixed(1)),
+        nx: Number(nx.toFixed(4)),
+        ny: Number(ny.toFixed(4))
+      });
     }
     setDraggingCard(null);
   };
@@ -1200,7 +1230,15 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         delete updates.log; // No log entry for this
       }
     } else if (actionType === 'MOVE_CARD_XY') {
-      const newCards = game.cards.map(c => c.instanceId === payload.cardId ? { ...c, x: payload.x, y: payload.y } : c);
+      const newCards = game.cards.map(c => c.instanceId === payload.cardId
+        ? {
+            ...c,
+            x: payload.x,
+            y: payload.y,
+            nx: Number.isFinite(payload.nx) ? payload.nx : c.nx,
+            ny: Number.isFinite(payload.ny) ? payload.ny : c.ny
+          }
+        : c);
       updates.cards = newCards;
       delete updates.log;
     } else if (actionType === 'TIDY_BOARD') {
@@ -2155,6 +2193,30 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const oppBattlefield = gameCards.filter(c => c.controllerId !== viewAsPlayerId && c.zone === ZONES.BATTLEFIELD);
   const oppHand = gameCards.filter(c => c.controllerId !== viewAsPlayerId && c.zone === ZONES.HAND);
 
+  useEffect(() => {
+    if (!gameId || !game?.cards?.length) return;
+
+    const myRect = myBattlefieldRef.current?.getBoundingClientRect?.();
+    const oppRect = opponentBattlefieldRef.current?.getBoundingClientRect?.();
+    if (!myRect?.width || !myRect?.height || !oppRect?.width || !oppRect?.height) return;
+
+    let changed = false;
+    const nextCards = game.cards.map((card) => {
+      if (card.zone !== ZONES.BATTLEFIELD) return card;
+      if (Number.isFinite(card.nx) && Number.isFinite(card.ny)) return card;
+      if (!Number.isFinite(card.x) || !Number.isFinite(card.y)) return card;
+
+      const rect = card.controllerId === viewAsPlayerId ? myRect : oppRect;
+      const normalized = getNormalizedFromLegacyPosition(card.x, card.y, rect);
+      if (!normalized) return card;
+      changed = true;
+      return { ...card, nx: Number(normalized.nx.toFixed(4)), ny: Number(normalized.ny.toFixed(4)) };
+    });
+
+    if (!changed) return;
+    updateDoc(doc(db, 'games_v3', gameId), { cards: nextCards });
+  }, [gameId, game?.cards, viewAsPlayerId]);
+
   const buildSectionDisplayNameMap = (cards) => {
     const grouped = new Map();
     cards.forEach((card) => {
@@ -2284,7 +2346,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       onTouchEnd={handleDragEnd}
     >
       {/* 1. Header */}
-      <div className="bg-slate-800 border-b border-slate-700 p-2 shrink-0 shadow-md relative z-50 pointer-events-auto top-action-scroll-wrap">
+      <div className="bg-slate-800 border-b border-slate-700 p-2 shrink-0 shadow-md top-action-scroll-wrap">
         <div
           className="top-action-scroll-row hide-scrollbar sm:w-full sm:justify-between"
           onClick={() => {
@@ -2521,23 +2583,34 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               </div>
             )}
 
-            <div className="border-t border-slate-700/70 pt-2">
-            <BattlefieldCardRow isOpponent>
-              {oppBattlefield.map(card => (
-                <Card
-                  key={card.instanceId}
-                  card={card}
-                  zone={ZONES.BATTLEFIELD}
-                  targets={game.targets || []}
-                  stack={stackCards}
-                  isSelected={false}
-                  onMove={() => setZoomedCard(card)}
-                  onZoom={setZoomedCard}
-                  displayName={getDisplayCardName(card)}
-                  combatBadgeLabel={getCardCombatBadgeLabel(card.instanceId)}
-                />
-              ))}
-            </BattlefieldCardRow>
+            <div ref={opponentBattlefieldRef} className="border-t border-slate-700/70 pt-2 w-full min-h-[280px] relative">
+              {oppBattlefield.map(card => {
+                const normalized = getCardRenderPosition(card, true);
+                return (
+                  <div
+                    key={card.instanceId}
+                    className="absolute"
+                    style={{
+                      left: `${normalized.nx * 100}%`,
+                      top: `${normalized.ny * 100}%`,
+                      transform: 'translate(-50%, -50%)',
+                      zIndex: 10
+                    }}
+                  >
+                    <Card
+                      card={card}
+                      zone={ZONES.BATTLEFIELD}
+                      targets={game.targets || []}
+                      stack={stackCards}
+                      isSelected={false}
+                      onMove={() => setZoomedCard(card)}
+                      onZoom={setZoomedCard}
+                      displayName={getDisplayCardName(card)}
+                      combatBadgeLabel={getCardCombatBadgeLabel(card.instanceId)}
+                    />
+                  </div>
+                );
+              })}
             </div>
           </section>
 
@@ -2610,13 +2683,32 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               </div>
             </div>
 
-            <div ref={boardRef} className={`w-full min-h-[420px] relative pt-2`}>
+            <div ref={myBattlefieldRef} className="w-full min-h-[420px] relative pt-2">
               {myBattlefield.map(card => {
                 const isDragging = draggingCard?.card.instanceId === card.instanceId;
-                const x = isDragging ? draggingCard.currentX : (card.x !== undefined ? card.x : 10);
-                const y = isDragging ? draggingCard.currentY : (card.y !== undefined ? card.y : 10);
+                const normalized = getCardRenderPosition(card, false);
+                const dragLeftPx = isDragging && draggingCard?.battlefieldRect
+                  ? clamp(
+                      (draggingCard.currentClientX + (draggingCard.pointerOffsetToCenterX || 0) - draggingCard.battlefieldRect.left) - (BATTLEFIELD_CARD_WIDTH_PX / 2),
+                      0,
+                      draggingCard.battlefieldRect.width - BATTLEFIELD_CARD_WIDTH_PX
+                    )
+                  : null;
+                const dragTopPx = isDragging && draggingCard?.battlefieldRect
+                  ? clamp(
+                      (draggingCard.currentClientY + (draggingCard.pointerOffsetToCenterY || 0) - draggingCard.battlefieldRect.top) - (BATTLEFIELD_CARD_HEIGHT_PX / 2),
+                      0,
+                      draggingCard.battlefieldRect.height - BATTLEFIELD_CARD_HEIGHT_PX
+                    )
+                  : null;
                 return (
-                  <div key={card.instanceId} className="absolute" style={{ left: `${x}%`, top: `${y}%`, zIndex: isDragging ? 50 : 10 }}>
+                  <div
+                    key={card.instanceId}
+                    className="absolute"
+                    style={isDragging
+                      ? { left: `${dragLeftPx}px`, top: `${dragTopPx}px`, zIndex: 50 }
+                      : { left: `${normalized.nx * 100}%`, top: `${normalized.ny * 100}%`, transform: 'translate(-50%, -50%)', zIndex: 10 }}
+                  >
                     <Card
                       card={card}
                       zone={ZONES.BATTLEFIELD}
@@ -2626,6 +2718,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                       isSelected={targetingState?.selectedIds.includes(card.instanceId)}
                       style={{ left: `0%`, top: `0%`, zIndex: isDragging ? 50 : 10 }}
                       onMouseDown={(e) => handleDragStart(e, card)}
+                      onTouchStart={(e) => handleDragStart(e, card)}
                       onMove={() => targetingState ? toggleTarget(card) : setSelectedCard(card)}
                       onZoom={setZoomedCard}
                       onPeek={(c) => setPeekCard(c)}

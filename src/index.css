@@ -19,10 +19,11 @@ body {
 
 
 .top-action-scroll-wrap {
-  position: relative;
+  position: sticky;
+  top: 0;
   overflow: hidden;
   pointer-events: auto;
-  z-index: 50;
+  z-index: 9999;
 }
 
 .top-action-scroll-row {

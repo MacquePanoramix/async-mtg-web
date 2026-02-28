@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useLayoutEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged, GoogleAuthProvider, linkWithPopup, signInWithPopup } from 'firebase/auth';
@@ -51,6 +51,8 @@ const AUTO_PASS_MODE = {
   END_OF_TURN: 'end_of_turn',
   PHASE: 'phase'
 };
+
+const AUTO_PASS_MENU_WIDTH = 224;
 
 // --- Helper Functions ---
 const generateGameId = () => {
@@ -817,7 +819,11 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const [draggingCard, setDraggingCard] = useState(null);
   const [autoPassConfig, setAutoPassConfig] = useState(getDefaultAutoPassConfig());
   const [autoPassMenuOpen, setAutoPassMenuOpen] = useState(false);
+  const [autoPassMenuPosition, setAutoPassMenuPosition] = useState(null);
   const autoPassInFlightRef = useRef(false);
+  const autoPassBtnRef = useRef(null);
+  const autoPassMenuRef = useRef(null);
+  const topActionScrollRef = useRef(null);
   const lastAutoPassSignatureRef = useRef(null);
   const lastSeenAutoPassLogKeyRef = useRef(null);
   const proxyAutoPassInFlightRef = useRef(false);
@@ -1129,6 +1135,61 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     : autoPassConfig.mode === AUTO_PASS_MODE.PHASE
       ? `AUTO: until ${PHASES.find(p => p.id === autoPassConfig.phaseId)?.label || 'phase'}`
       : null;
+
+  const updateAutoPassMenuPosition = useCallback(() => {
+    const btn = autoPassBtnRef.current;
+    if (!btn) return;
+    const rect = btn.getBoundingClientRect();
+    const padding = 8;
+    const maxLeft = Math.max(padding, window.innerWidth - AUTO_PASS_MENU_WIDTH - padding);
+    const left = clamp(rect.right - AUTO_PASS_MENU_WIDTH, padding, maxLeft);
+    setAutoPassMenuPosition({ top: rect.bottom + 8, left });
+  }, []);
+
+  useEffect(() => {
+    if (!autoPassMenuOpen || autoPassControlsDisabled) {
+      setAutoPassMenuPosition(null);
+      return;
+    }
+
+    const handlePositionUpdate = () => updateAutoPassMenuPosition();
+    handlePositionUpdate();
+
+    window.addEventListener('resize', handlePositionUpdate);
+    window.addEventListener('scroll', handlePositionUpdate, true);
+    const topActionScrollEl = topActionScrollRef.current;
+    topActionScrollEl?.addEventListener('scroll', handlePositionUpdate, { passive: true });
+
+    return () => {
+      window.removeEventListener('resize', handlePositionUpdate);
+      window.removeEventListener('scroll', handlePositionUpdate, true);
+      topActionScrollEl?.removeEventListener('scroll', handlePositionUpdate);
+    };
+  }, [autoPassMenuOpen, autoPassControlsDisabled, updateAutoPassMenuPosition]);
+
+  useEffect(() => {
+    if (!autoPassMenuOpen) return;
+
+    const handleOutsideClick = (event) => {
+      const target = event.target;
+      if (autoPassBtnRef.current?.contains(target) || autoPassMenuRef.current?.contains(target)) return;
+      setAutoPassMenuOpen(false);
+    };
+
+    const handleEscape = (event) => {
+      if (event.key === 'Escape') setAutoPassMenuOpen(false);
+    };
+
+    document.addEventListener('mousedown', handleOutsideClick);
+    document.addEventListener('touchstart', handleOutsideClick);
+    window.addEventListener('keydown', handleEscape);
+
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideClick);
+      document.removeEventListener('touchstart', handleOutsideClick);
+      window.removeEventListener('keydown', handleEscape);
+    };
+  }, [autoPassMenuOpen]);
 
   const handleAction = async (actionType, payload = {}) => {
     if (!game) return;
@@ -2348,6 +2409,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       {/* 1. Header */}
       <div className="bg-slate-800 border-b border-slate-700 p-2 shrink-0 shadow-md top-action-scroll-wrap">
         <div
+          ref={topActionScrollRef}
           className="top-action-scroll-row hide-scrollbar sm:w-full sm:justify-between"
           onClick={() => {
             if (!headerTapLoggedRef.current) {
@@ -2467,6 +2529,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               )}
               <div className="relative">
                 <button
+                  ref={autoPassBtnRef}
                   onClick={() => {
                     console.log('AutoPass tapped');
                     setAutoPassMenuOpen(prev => !prev);
@@ -2476,8 +2539,17 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                 >
                   AutoPass <ChevronDown size={12} />
                 </button>
-                {autoPassMenuOpen && !autoPassControlsDisabled && (
-                  <div className="absolute right-0 mt-2 w-56 bg-slate-900 border border-slate-700 rounded-lg shadow-xl z-40 p-2 space-y-1">
+                {autoPassMenuOpen && !autoPassControlsDisabled && autoPassMenuPosition && createPortal(
+                  <div
+                    ref={autoPassMenuRef}
+                    className="bg-slate-900 border border-slate-700 rounded-lg shadow-xl z-[99999] p-2 space-y-1"
+                    style={{
+                      position: 'fixed',
+                      top: autoPassMenuPosition.top,
+                      left: autoPassMenuPosition.left,
+                      width: AUTO_PASS_MENU_WIDTH
+                    }}
+                  >
                     <button onClick={() => disableAutoPass()} className="w-full text-left px-2 py-1.5 rounded hover:bg-slate-700 text-sm">Off</button>
                     <button onClick={() => enableAutoPass(AUTO_PASS_MODE.END_OF_TURN)} className="w-full text-left px-2 py-1.5 rounded hover:bg-slate-700 text-sm">Until End of Turn</button>
                     <div className="border-t border-slate-700 my-1"></div>
@@ -2508,9 +2580,10 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                         >
                           {phase.label}
                         </button>
-                      ))}
+                        ))}
                     </div>
-                  </div>
+                  </div>,
+                  document.body
                 )}
               </div>
             </div>

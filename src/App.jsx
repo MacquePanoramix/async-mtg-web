@@ -2542,7 +2542,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                 {autoPassMenuOpen && !autoPassControlsDisabled && autoPassMenuPosition && createPortal(
                   <div
                     ref={autoPassMenuRef}
-                    className="bg-slate-900 border border-slate-700 rounded-lg shadow-xl z-[99999] p-2 space-y-1"
+                    className="bg-slate-900 border border-slate-700 text-slate-100 rounded-lg shadow-xl z-[99999] p-2 space-y-1"
                     style={{
                       position: 'fixed',
                       top: autoPassMenuPosition.top,
@@ -2550,10 +2550,10 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                       width: AUTO_PASS_MENU_WIDTH
                     }}
                   >
-                    <button onClick={() => disableAutoPass()} className="w-full text-left px-2 py-1.5 rounded hover:bg-slate-700 text-sm">Off</button>
-                    <button onClick={() => enableAutoPass(AUTO_PASS_MODE.END_OF_TURN)} className="w-full text-left px-2 py-1.5 rounded hover:bg-slate-700 text-sm">Until End of Turn</button>
+                    <button onClick={() => disableAutoPass()} className="w-full text-left px-2 py-1.5 rounded hover:bg-slate-800 focus:outline-none text-sm disabled:text-slate-600">Off</button>
+                    <button onClick={() => enableAutoPass(AUTO_PASS_MODE.END_OF_TURN)} className="w-full text-left px-2 py-1.5 rounded hover:bg-slate-800 focus:outline-none text-sm disabled:text-slate-600">Until End of Turn</button>
                     <div className="border-t border-slate-700 my-1"></div>
-                    <label className="flex items-center justify-between gap-3 px-2 py-1.5 rounded hover:bg-slate-800 text-sm cursor-pointer">
+                    <label className="flex items-center justify-between gap-3 px-2 py-1.5 rounded hover:bg-slate-800 focus:outline-none text-sm cursor-pointer">
                       <span className="text-slate-200">Stop when opponent acts</span>
                       <button
                         type="button"
@@ -2576,7 +2576,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                         <button
                           key={phase.id}
                           onClick={() => enableAutoPass(AUTO_PASS_MODE.PHASE, phase.id)}
-                          className="w-full text-left px-2 py-1.5 rounded hover:bg-slate-700 text-sm"
+                          className="w-full text-left px-2 py-1.5 rounded hover:bg-slate-800 focus:outline-none text-sm disabled:text-slate-600"
                         >
                           {phase.label}
                         </button>

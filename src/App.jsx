@@ -135,8 +135,22 @@ const getAutoPassLogKey = (entry, entryIndex) => {
 const MAX_PROXY_AUTOPASS_ADVANCES = 10;
 const BATTLEFIELD_CARD_WIDTH_PX = 80;
 const BATTLEFIELD_CARD_HEIGHT_PX = 112;
+const BATTLEFIELD_NORMALIZED_MIN = 0.02;
+const BATTLEFIELD_NORMALIZED_MAX = 0.98;
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+const clampBattlefieldNormalized = (value) => clamp(value, BATTLEFIELD_NORMALIZED_MIN, BATTLEFIELD_NORMALIZED_MAX);
+
+const getDefaultBattlefieldSpawnPosition = () => {
+  const nx = clampBattlefieldNormalized(0.18 + (Math.random() * 0.08));
+  const ny = clampBattlefieldNormalized(0.3 + (Math.random() * 0.08));
+  return {
+    nx: Number(nx.toFixed(4)),
+    ny: Number(ny.toFixed(4)),
+    x: Number((nx * 100).toFixed(1)),
+    y: Number((ny * 100).toFixed(1))
+  };
+};
 
 const getDefaultAutoPassConfig = () => ({
   mode: AUTO_PASS_MODE.OFF,
@@ -879,8 +893,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     const cardCenterX = rect.left + ((x / 100) * rect.width) + (BATTLEFIELD_CARD_WIDTH_PX / 2);
     const cardCenterY = rect.top + ((y / 100) * rect.height) + (BATTLEFIELD_CARD_HEIGHT_PX / 2);
     return {
-      nx: clamp((cardCenterX - rect.left) / rect.width, 0, 1),
-      ny: clamp((cardCenterY - rect.top) / rect.height, 0, 1)
+      nx: clampBattlefieldNormalized((cardCenterX - rect.left) / rect.width),
+      ny: clampBattlefieldNormalized((cardCenterY - rect.top) / rect.height)
     };
   };
 
@@ -896,8 +910,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     }
 
     return {
-      nx: clamp(nx, 0, 1),
-      ny: clamp(isOpponentView ? 1 - ny : ny, 0, 1)
+      nx: clampBattlefieldNormalized(nx),
+      ny: clampBattlefieldNormalized(isOpponentView ? 1 - ny : ny)
     };
   };
 
@@ -1061,8 +1075,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     if (battlefieldRect && Number.isFinite(currentClientX) && Number.isFinite(currentClientY)) {
       const cardCenterX = currentClientX + pointerOffsetToCenterX;
       const cardCenterY = currentClientY + pointerOffsetToCenterY;
-      const nx = clamp((cardCenterX - battlefieldRect.left) / battlefieldRect.width, 0, 1);
-      const ny = clamp((cardCenterY - battlefieldRect.top) / battlefieldRect.height, 0, 1);
+      const nx = clampBattlefieldNormalized((cardCenterX - battlefieldRect.left) / battlefieldRect.width);
+      const ny = clampBattlefieldNormalized((cardCenterY - battlefieldRect.top) / battlefieldRect.height);
       await handleAction('MOVE_CARD_XY', {
         cardId: card.instanceId,
         x: Number((nx * 100).toFixed(1)),
@@ -1296,8 +1310,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             ...c,
             x: payload.x,
             y: payload.y,
-            nx: Number.isFinite(payload.nx) ? payload.nx : c.nx,
-            ny: Number.isFinite(payload.ny) ? payload.ny : c.ny
+            nx: Number.isFinite(payload.nx) ? clampBattlefieldNormalized(payload.nx) : c.nx,
+            ny: Number.isFinite(payload.ny) ? clampBattlefieldNormalized(payload.ny) : c.ny
           }
         : c);
       updates.cards = newCards;
@@ -1307,14 +1321,56 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       const lands = myBattlefield.filter(c => c.type_line && c.type_line.toLowerCase().includes('land'));
       const nonLands = myBattlefield.filter(c => !c.type_line || !c.type_line.toLowerCase().includes('land'));
 
-      const updatesArr = [];
-      nonLands.forEach((c, i) => updatesArr.push({ ...c, x: (i % 5) * 18 + 5, y: 10 + Math.floor(i / 5) * 20 }));
-      lands.forEach((c, i) => updatesArr.push({ ...c, x: (i % 6) * 15 + 5, y: 60 + Math.floor(i / 6) * 15 }));
+      const updatesById = new Map();
+      const nonLandColumns = 5;
+      const landColumns = 6;
+      const nonLandStepX = 0.16;
+      const nonLandStepY = 0.2;
+      const landStepX = 0.13;
+      const landStepY = 0.14;
+      const nonLandStartX = 0.12;
+      const nonLandStartY = 0.18;
+      const landStartX = 0.12;
+      const landStartY = 0.62;
 
-      const newCards = game.cards.map(c => {
-        const updated = updatesArr.find(u => u.instanceId === c.instanceId);
-        return updated || c;
+      nonLands.forEach((card, i) => {
+        const nx = clampBattlefieldNormalized(nonLandStartX + ((i % nonLandColumns) * nonLandStepX));
+        const ny = clampBattlefieldNormalized(nonLandStartY + (Math.floor(i / nonLandColumns) * nonLandStepY));
+        updatesById.set(card.instanceId, {
+          ...card,
+          nx: Number(nx.toFixed(4)),
+          ny: Number(ny.toFixed(4)),
+          x: Number((nx * 100).toFixed(1)),
+          y: Number((ny * 100).toFixed(1))
+        });
       });
+
+      lands.forEach((card, i) => {
+        const nx = clampBattlefieldNormalized(landStartX + ((i % landColumns) * landStepX));
+        const ny = clampBattlefieldNormalized(landStartY + (Math.floor(i / landColumns) * landStepY));
+        updatesById.set(card.instanceId, {
+          ...card,
+          nx: Number(nx.toFixed(4)),
+          ny: Number(ny.toFixed(4)),
+          x: Number((nx * 100).toFixed(1)),
+          y: Number((ny * 100).toFixed(1))
+        });
+      });
+
+      const newCards = game.cards.map(c => updatesById.get(c.instanceId) || c);
+
+      if (import.meta.env.DEV && myBattlefield.length > 0) {
+        const firstBefore = myBattlefield[0];
+        const firstAfter = updatesById.get(firstBefore.instanceId);
+        if (firstAfter) {
+          console.log('[TIDY_BOARD]', {
+            cardId: firstBefore.instanceId,
+            before: { nx: firstBefore.nx, ny: firstBefore.ny },
+            after: { nx: firstAfter.nx, ny: firstAfter.ny }
+          });
+        }
+      }
+
       updates.cards = newCards;
       updates.log = arrayUnion({...logEntry, desc: 'Tidied the board'});
     } else if (actionType === 'SHUFFLE_LIBRARY') {
@@ -1357,6 +1413,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       updates.log = arrayUnion({...logEntry, desc: `${payload.amount > 0 ? 'Added' : 'Removed'} ${payload.counterType} counter`});
 
     } else if (actionType === 'CREATE_TOKEN') {
+      const spawnPosition = getDefaultBattlefieldSpawnPosition();
       const newToken = {
         instanceId: generateCardId(),
         name: payload.name || "Token",
@@ -1370,8 +1427,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         counters: {},
         tempDamage: 0,
         isToken: true,
-        x: 10 + (Math.random() * 10 - 5),
-        y: 10 + (Math.random() * 10 - 5)
+        ...spawnPosition
       };
       updates.cards = [...game.cards, newToken];
       updates.log = arrayUnion({...logEntry, desc: `Created ${newToken.power}/${newToken.toughness} ${newToken.name} Token`});
@@ -1429,7 +1485,14 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
     } else if (actionType === 'CHANGE_CONTROL') {
       const newCards = game.cards.map(c =>
-        c.instanceId === payload.cardId ? { ...c, controllerId: c.controllerId === userId ? (opponent?.id || userId) : userId, zone: ZONES.BATTLEFIELD, x: 10, y: 10 } : c
+        c.instanceId === payload.cardId
+          ? {
+              ...c,
+              controllerId: c.controllerId === userId ? (opponent?.id || userId) : userId,
+              zone: ZONES.BATTLEFIELD,
+              ...getDefaultBattlefieldSpawnPosition()
+            }
+          : c
       );
       updates.cards = newCards;
       updates.combat = clearCombatAssignmentsForCard(game.combat || getEmptyCombatState(), payload.cardId);
@@ -1604,7 +1667,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
     } else if (actionType === 'PLAY_LAND') {
       const playedCard = game.cards.find(c => c.instanceId === payload.cardId);
-      const newCards = game.cards.map(c => c.instanceId === payload.cardId ? { ...c, zone: ZONES.BATTLEFIELD, x: 10, y: 70 } : c);
+      const spawnPosition = getDefaultBattlefieldSpawnPosition();
+      const newCards = game.cards.map(c => c.instanceId === payload.cardId ? { ...c, zone: ZONES.BATTLEFIELD, ...spawnPosition } : c);
       updates.cards = newCards;
       pendingRecapEvents.push({
         type: 'PLAY_LAND',
@@ -1719,7 +1783,16 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
     } else if (actionType === 'MOVE_ZONE') {
       const newCards = game.cards.map(c =>
-        c.instanceId === payload.cardId ? { ...c, zone: payload.targetZone, tapped: false, tempDamage: 0, controllerId: c.ownerId, x: 10, y: 10 } : c
+        c.instanceId === payload.cardId
+          ? {
+              ...c,
+              zone: payload.targetZone,
+              tapped: false,
+              tempDamage: 0,
+              controllerId: c.ownerId,
+              ...(payload.targetZone === ZONES.BATTLEFIELD ? getDefaultBattlefieldSpawnPosition() : { x: 10, y: 10 })
+            }
+          : c
       );
       updates.cards = newCards;
       updates.combat = clearCombatAssignmentsForCard(game.combat || getEmptyCombatState(), payload.cardId);

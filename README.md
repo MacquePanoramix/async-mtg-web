@@ -14,3 +14,16 @@ The React Compiler is not enabled on this template because of its impact on dev 
 ## Expanding the ESLint configuration
 
 If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+
+## Firebase Functions (hard delete support)
+
+This project includes a Cloud Function named `hardDeleteGame` for permanent game cleanup.
+
+### Local setup / deploy
+
+1. Initialize functions in your Firebase project if you have not already:
+   - `firebase init functions`
+2. Install function dependencies:
+   - `cd functions && npm install`
+3. Deploy functions:
+   - `firebase deploy --only functions`

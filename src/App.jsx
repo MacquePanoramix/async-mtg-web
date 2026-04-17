@@ -3667,6 +3667,7 @@ export default function App() {
   const [activeGameId, setActiveGameId] = useState(null);
   const [initError, setInitError] = useState(null);
   const [isActionLoading, setIsActionLoading] = useState(false);
+  const [isAuthStartupLoading, setIsAuthStartupLoading] = useState(true);
   const [playerName, setPlayerName] = useState('');
   const [myGames, setMyGames] = useState([]);
   const [toastMessage, setToastMessage] = useState('');
@@ -3749,41 +3750,67 @@ export default function App() {
   };
 
   useEffect(() => {
-    const initAuth = async () => {
-      try {
-        await signInAnonymously(auth);
-      } catch (e) {
-        setInitError(e.message);
-      }
-    };
-    initAuth();
-    const unsub = onAuthStateChanged(auth, (u) => setUser(u));
-    return () => unsub();
-  }, []);
-
-  useEffect(() => {
     let cancelled = false;
+    let unsubscribe = () => {};
+    let attemptedAnonymousFallback = false;
 
-    const handleRedirectResult = async () => {
+    const finishStartup = () => {
+      if (cancelled) return;
+      setIsAuthStartupLoading(false);
+      setIsActionLoading(false);
+    };
+
+    const runAuthStartup = async () => {
+      console.log('auth startup begin');
+      setIsAuthStartupLoading(true);
       setIsActionLoading(true);
+
       try {
-        const result = await getRedirectResult(auth);
-        console.log('Google redirect result returned', result);
-        if (!cancelled) setInitError(null);
+        await getRedirectResult(auth);
       } catch (e) {
         console.error('Google redirect result error', e);
         if (!cancelled) {
           setInitError(`Google sign-in failed: ${e?.code || 'unknown'} — ${e?.message || 'no message'}`);
         }
       } finally {
-        if (!cancelled) setIsActionLoading(false);
+        console.log('redirect result processed');
       }
+
+      unsubscribe = onAuthStateChanged(auth, async (u) => {
+        if (cancelled) return;
+
+        console.log('auth state user', u ? { uid: u.uid, isAnonymous: u.isAnonymous } : null);
+        setUser(u);
+
+        if (u) {
+          setInitError(null);
+          finishStartup();
+          return;
+        }
+
+        if (!attemptedAnonymousFallback) {
+          attemptedAnonymousFallback = true;
+          console.log('falling back to anonymous sign-in');
+          try {
+            await signInAnonymously(auth);
+          } catch (e) {
+            if (!cancelled) {
+              setInitError(e.message);
+            }
+            finishStartup();
+          }
+          return;
+        }
+
+        finishStartup();
+      });
     };
 
-    handleRedirectResult();
+    runAuthStartup();
 
     return () => {
       cancelled = true;
+      unsubscribe();
     };
   }, []);
 
@@ -3957,7 +3984,7 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (isExitingRef.current || !pendingUrlEntry || !user || isActionLoading || activeGameId) return;
+    if (isExitingRef.current || !pendingUrlEntry || !user || isActionLoading || isAuthStartupLoading || activeGameId) return;
     let cancelled = false;
 
     const startFromUrl = async () => {
@@ -3983,7 +4010,7 @@ export default function App() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingUrlEntry, user, isActionLoading, activeGameId]);
+  }, [pendingUrlEntry, user, isActionLoading, isAuthStartupLoading, activeGameId]);
 
   useEffect(() => {
     if (activeGameId || !isExitingRef.current) return;

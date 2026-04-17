@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, onAuthStateChanged, GoogleAuthProvider, linkWithPopup, signInWithPopup } from 'firebase/auth';
+import { getAuth, signInAnonymously, onAuthStateChanged, GoogleAuthProvider, linkWithPopup, signInWithPopup, signInWithRedirect, getRedirectResult } from 'firebase/auth';
 import { getFirestore, doc, setDoc, collection, onSnapshot, updateDoc, arrayUnion, serverTimestamp, runTransaction, query, orderBy, deleteDoc, getDoc, addDoc, limit } from 'firebase/firestore';
 import { X, ArrowRight, Clock, Shield, Skull, Layers, Eye, ChevronDown, ChevronUp, BookOpen, Shuffle, Plus, Copy, UserCheck, EyeOff, RotateCw, Search, Hexagon, Unlock, Lock, Move, Dices, Coins, LayoutGrid, LogOut, Users, User, Bug, Loader2, RefreshCw, AlertTriangle, Repeat, Check, ArrowUp, ArrowDown, MessageSquare, Trash2 } from 'lucide-react';
 
@@ -94,6 +94,17 @@ const copyToClipboard = (text) => {
     }
     document.body.removeChild(textArea);
   }
+};
+
+const isMobileOrTouchDevice = () => {
+  if (typeof window === 'undefined' || typeof navigator === 'undefined') return false;
+
+  const ua = navigator.userAgent || '';
+  const isMobileUa = /iPhone|iPad|iPod|Android/i.test(ua);
+  const isCoarsePointer = typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches;
+  const isNarrowViewport = typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 900px)').matches;
+
+  return isMobileUa || (isCoarsePointer && isNarrowViewport);
 };
 
 const NON_MEANINGFUL_AUTOPASS_TYPES = new Set([
@@ -3751,6 +3762,32 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+
+    const handleRedirectResult = async () => {
+      setIsActionLoading(true);
+      try {
+        const result = await getRedirectResult(auth);
+        console.log('Google redirect result returned', result);
+        if (!cancelled) setInitError(null);
+      } catch (e) {
+        console.error('Google redirect result error', e);
+        if (!cancelled) {
+          setInitError(`Google sign-in failed: ${e?.code || 'unknown'} — ${e?.message || 'no message'}`);
+        }
+      } finally {
+        if (!cancelled) setIsActionLoading(false);
+      }
+    };
+
+    handleRedirectResult();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     if (isExitingRef.current) return;
 
     const params = new URLSearchParams(window.location.search);
@@ -3979,8 +4016,18 @@ export default function App() {
     if (!user) return;
     setInitError(null);
     setIsActionLoading(true);
+    const isMobileDevice = isMobileOrTouchDevice();
+    let redirectStarted = false;
     try {
       const provider = new GoogleAuthProvider();
+      if (isMobileDevice) {
+        console.log('Google auth path selected: mobile redirect');
+        await signInWithRedirect(auth, provider);
+        redirectStarted = true;
+        return;
+      }
+
+      console.log('Google auth path selected: desktop popup');
       if (user.isAnonymous) {
         try {
           await linkWithPopup(user, provider);
@@ -4000,7 +4047,9 @@ export default function App() {
       console.error('Google auth error message:', e?.message);
       setInitError(`Google sign-in failed: ${e?.code || 'unknown'} — ${e?.message || 'no message'}`);
     } finally {
-      setIsActionLoading(false);
+      if (!isMobileDevice || !redirectStarted) {
+        setIsActionLoading(false);
+      }
     }
   };
 

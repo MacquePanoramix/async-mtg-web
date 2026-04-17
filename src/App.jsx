@@ -141,9 +141,20 @@ const BATTLEFIELD_NORMALIZED_MAX = 0.98;
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 const clampBattlefieldNormalized = (value) => clamp(value, BATTLEFIELD_NORMALIZED_MIN, BATTLEFIELD_NORMALIZED_MAX);
 
-const getDefaultBattlefieldSpawnPosition = () => {
+const getDefaultPermanentSpawnPosition = () => {
   const nx = clampBattlefieldNormalized(0.18 + (Math.random() * 0.08));
   const ny = clampBattlefieldNormalized(0.3 + (Math.random() * 0.08));
+  return {
+    nx: Number(nx.toFixed(4)),
+    ny: Number(ny.toFixed(4)),
+    x: Number((nx * 100).toFixed(1)),
+    y: Number((ny * 100).toFixed(1))
+  };
+};
+
+const getDefaultLandSpawnPosition = () => {
+  const nx = clampBattlefieldNormalized(0.16 + (Math.random() * 0.12));
+  const ny = clampBattlefieldNormalized(0.72 + (Math.random() * 0.08));
   return {
     nx: Number(nx.toFixed(4)),
     ny: Number(ny.toFixed(4)),
@@ -1413,7 +1424,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       updates.log = arrayUnion({...logEntry, desc: `${payload.amount > 0 ? 'Added' : 'Removed'} ${payload.counterType} counter`});
 
     } else if (actionType === 'CREATE_TOKEN') {
-      const spawnPosition = getDefaultBattlefieldSpawnPosition();
+      const spawnPosition = getDefaultPermanentSpawnPosition();
       const newToken = {
         instanceId: generateCardId(),
         name: payload.name || "Token",
@@ -1490,7 +1501,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               ...c,
               controllerId: c.controllerId === userId ? (opponent?.id || userId) : userId,
               zone: ZONES.BATTLEFIELD,
-              ...getDefaultBattlefieldSpawnPosition()
+              ...getDefaultPermanentSpawnPosition()
             }
           : c
       );
@@ -1667,7 +1678,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
     } else if (actionType === 'PLAY_LAND') {
       const playedCard = game.cards.find(c => c.instanceId === payload.cardId);
-      const spawnPosition = getDefaultBattlefieldSpawnPosition();
+      const spawnPosition = getDefaultLandSpawnPosition();
       const newCards = game.cards.map(c => c.instanceId === payload.cardId ? { ...c, zone: ZONES.BATTLEFIELD, ...spawnPosition } : c);
       updates.cards = newCards;
       pendingRecapEvents.push({
@@ -1790,7 +1801,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               tapped: false,
               tempDamage: 0,
               controllerId: c.ownerId,
-              ...(payload.targetZone === ZONES.BATTLEFIELD ? getDefaultBattlefieldSpawnPosition() : { x: 10, y: 10 })
+              ...(payload.targetZone === ZONES.BATTLEFIELD ? getDefaultPermanentSpawnPosition() : { x: 10, y: 10 })
             }
           : c
       );
@@ -3971,13 +3982,21 @@ export default function App() {
     try {
       const provider = new GoogleAuthProvider();
       if (user.isAnonymous) {
-        await linkWithPopup(user, provider);
+        try {
+          await linkWithPopup(user, provider);
+        } catch (e) {
+          if (e?.code === 'auth/credential-already-in-use') {
+            await signInWithPopup(auth, provider);
+          } else {
+            throw e;
+          }
+        }
       } else {
         await signInWithPopup(auth, provider);
       }
     } catch (e) {
       console.error(e);
-      setInitError(e.message);
+      setInitError('Unable to continue with Google right now. Please try again.');
     } finally {
       setIsActionLoading(false);
     }

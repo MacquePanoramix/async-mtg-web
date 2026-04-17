@@ -3752,7 +3752,6 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
     let unsubscribe = () => {};
-    let attemptedAnonymousFallback = false;
 
     const finishStartup = () => {
       if (cancelled) return;
@@ -3765,6 +3764,12 @@ export default function App() {
       setIsAuthStartupLoading(true);
       setIsActionLoading(true);
 
+      unsubscribe = onAuthStateChanged(auth, (u) => {
+        if (cancelled) return;
+        console.log('auth state user', u?.uid, u?.isAnonymous);
+        setUser(u);
+      });
+
       try {
         await getRedirectResult(auth);
       } catch (e) {
@@ -3776,34 +3781,22 @@ export default function App() {
         console.log('redirect result processed');
       }
 
-      unsubscribe = onAuthStateChanged(auth, async (u) => {
-        if (cancelled) return;
+      console.log('auth currentUser after redirect', auth.currentUser ? { uid: auth.currentUser.uid, isAnonymous: auth.currentUser.isAnonymous } : null);
 
-        console.log('auth state user', u ? { uid: u.uid, isAnonymous: u.isAnonymous } : null);
-        setUser(u);
-
-        if (u) {
-          setInitError(null);
-          finishStartup();
-          return;
-        }
-
-        if (!attemptedAnonymousFallback) {
-          attemptedAnonymousFallback = true;
-          console.log('falling back to anonymous sign-in');
-          try {
-            await signInAnonymously(auth);
-          } catch (e) {
-            if (!cancelled) {
-              setInitError(e.message);
-            }
-            finishStartup();
+      if (!auth.currentUser) {
+        console.log('falling back to anonymous sign-in');
+        try {
+          await signInAnonymously(auth);
+        } catch (e) {
+          if (!cancelled) {
+            setInitError(e.message);
           }
-          return;
         }
+      } else if (!cancelled) {
+        setInitError(null);
+      }
 
-        finishStartup();
-      });
+      finishStartup();
     };
 
     runAuthStartup();

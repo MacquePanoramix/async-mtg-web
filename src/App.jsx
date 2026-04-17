@@ -3995,8 +3995,10 @@ export default function App() {
         await signInWithPopup(auth, provider);
       }
     } catch (e) {
-      console.error(e);
-      setInitError('Unable to continue with Google right now. Please try again.');
+      console.error('Google auth failed', e);
+      console.error('Google auth error code:', e?.code);
+      console.error('Google auth error message:', e?.message);
+      setInitError(`Google sign-in failed: ${e?.code || 'unknown'} — ${e?.message || 'no message'}`);
     } finally {
       setIsActionLoading(false);
     }

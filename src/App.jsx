@@ -3770,8 +3770,9 @@ export default function App() {
         setUser(u);
       });
 
+      let redirectResult = null;
       try {
-        await getRedirectResult(auth);
+        redirectResult = await getRedirectResult(auth);
       } catch (e) {
         console.error('Google redirect result error', e);
         if (!cancelled) {
@@ -3781,9 +3782,26 @@ export default function App() {
         console.log('redirect result processed');
       }
 
+      console.log('redirect result user', redirectResult?.user?.uid, redirectResult?.user?.isAnonymous);
+      if (redirectResult?.user) {
+        console.log('redirect result user found');
+        if (!cancelled) {
+          setUser(redirectResult.user);
+          setInitError(null);
+        }
+        finishStartup();
+        return;
+      }
+
       console.log('auth currentUser after redirect', auth.currentUser ? { uid: auth.currentUser.uid, isAnonymous: auth.currentUser.isAnonymous } : null);
 
-      if (!auth.currentUser) {
+      if (auth.currentUser) {
+        console.log('using existing auth.currentUser');
+        if (!cancelled) {
+          setUser(auth.currentUser);
+          setInitError(null);
+        }
+      } else {
         console.log('falling back to anonymous sign-in');
         try {
           await signInAnonymously(auth);
@@ -3792,8 +3810,6 @@ export default function App() {
             setInitError(e.message);
           }
         }
-      } else if (!cancelled) {
-        setInitError(null);
       }
 
       finishStartup();

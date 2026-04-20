@@ -3810,6 +3810,10 @@ export default function App() {
       console.log('auth startup begin');
       setIsAuthStartupLoading(true);
       setIsActionLoading(true);
+      const redirectStarted = sessionStorage.getItem('googleRedirectStarted') === '1';
+      if (redirectStarted) {
+        console.log('googleRedirectStarted flag detected');
+      }
 
       unsubscribe = onAuthStateChanged(auth, (u) => {
         if (cancelled) return;
@@ -3831,11 +3835,44 @@ export default function App() {
 
       console.log('redirect result user', redirectResult?.user?.uid, redirectResult?.user?.isAnonymous);
       if (redirectResult?.user) {
-        console.log('redirect result user found');
+        console.log('redirect user found');
         if (!cancelled) {
           setUser(redirectResult.user);
           setInitError(null);
         }
+        sessionStorage.removeItem('googleRedirectStarted');
+        finishStartup();
+        return;
+      }
+
+      if (redirectStarted) {
+        console.log('waiting extra tick for auth state after redirect');
+        const postRedirectUser = await new Promise((resolve) => {
+          let settled = false;
+          let tickUnsubscribe = () => {};
+
+          const settle = (value) => {
+            if (settled) return;
+            settled = true;
+            tickUnsubscribe();
+            resolve(value);
+          };
+
+          tickUnsubscribe = onAuthStateChanged(auth, (u) => {
+            if (u && !u.isAnonymous) {
+              settle(u);
+            }
+          });
+
+          window.setTimeout(() => settle(null), 1000);
+        });
+
+        if (postRedirectUser && !cancelled) {
+          setUser(postRedirectUser);
+          setInitError(null);
+        }
+
+        sessionStorage.removeItem('googleRedirectStarted');
         finishStartup();
         return;
       }
@@ -3849,7 +3886,7 @@ export default function App() {
           setInitError(null);
         }
       } else {
-        console.log('falling back to anonymous sign-in');
+        console.log('falling back to anonymous');
         try {
           await signInAnonymously(auth);
         } catch (e) {
@@ -4111,7 +4148,12 @@ export default function App() {
     try {
       const provider = new GoogleAuthProvider();
       if (isMobileDevice) {
-        console.log('Google auth path selected: mobile redirect');
+        console.log('mobile google redirect starting');
+        sessionStorage.setItem('googleRedirectStarted', '1');
+        if (auth.currentUser?.isAnonymous === true) {
+          console.log('signing out anonymous user before redirect');
+          await signOut(auth);
+        }
         await signInWithRedirect(auth, provider);
         redirectStarted = true;
         return;

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, onAuthStateChanged, GoogleAuthProvider, linkWithPopup, signInWithPopup, signInWithRedirect, getRedirectResult } from 'firebase/auth';
+import { getAuth, signInAnonymously, onAuthStateChanged, GoogleAuthProvider, linkWithPopup, signInWithPopup, signInWithRedirect, getRedirectResult, signOut } from 'firebase/auth';
 import { getFirestore, doc, setDoc, collection, onSnapshot, updateDoc, arrayUnion, serverTimestamp, runTransaction, query, orderBy, deleteDoc, getDoc, addDoc, limit } from 'firebase/firestore';
 import { X, ArrowRight, Clock, Shield, Skull, Layers, Eye, ChevronDown, ChevronUp, BookOpen, Shuffle, Plus, Copy, UserCheck, EyeOff, RotateCw, Search, Hexagon, Unlock, Lock, Move, Dices, Coins, LayoutGrid, LogOut, Users, User, Bug, Loader2, RefreshCw, AlertTriangle, Repeat, Check, ArrowUp, ArrowDown, MessageSquare, Trash2 } from 'lucide-react';
 
@@ -450,6 +450,7 @@ const Lobby = ({
   onWatch,
   onRemoveFromList,
   onContinueWithGoogle,
+  onSignOut,
   myGames,
   toastMessage,
   suggestedName,
@@ -511,11 +512,16 @@ const Lobby = ({
                 {currentUser?.email && (
                   <div className="text-sm text-slate-300 break-all">{currentUser.email}</div>
                 )}
+                {currentUser?.uid && (
+                  <div className="text-xs text-slate-400 font-mono break-all">UID: {currentUser.uid}</div>
+                )}
               </div>
             ) : (
               <div className="space-y-1">
                 <div className="text-sm font-semibold text-slate-300">Guest mode</div>
-                <div className="text-xs text-slate-400">Anonymous session</div>
+                {currentUser?.uid && (
+                  <div className="text-xs text-slate-400 font-mono break-all">UID: {currentUser.uid}</div>
+                )}
               </div>
             )}
           </div>
@@ -645,6 +651,16 @@ const Lobby = ({
           >
             {isGoogleConnected ? 'Google connected' : 'Continue with Google'}
           </button>
+          {isGoogleConnected && (
+            <button
+              onClick={onSignOut}
+              disabled={isActionLoading}
+              className="w-full bg-slate-700 hover:bg-slate-600 disabled:opacity-50 disabled:cursor-wait text-white p-3 rounded-lg font-bold transition-colors flex justify-center items-center gap-2"
+            >
+              <LogOut size={16} />
+              Sign out
+            </button>
+          )}
 
           <div className="text-xs text-slate-400 font-mono flex items-center gap-2">
             Current ID: {currentUser ? (
@@ -3884,6 +3900,13 @@ export default function App() {
     return () => unsub();
   }, [user]);
 
+  useEffect(() => {
+    if (!user) return;
+    console.log('currentUser uid', user.uid);
+    console.log('currentUser isAnonymous', user.isAnonymous);
+    console.log('currentUser providerData', user.providerData);
+  }, [user]);
+
   const createGame = async (playerNameInput, gameTitleInput) => {
     if (!user) return;
     setIsActionLoading(true);
@@ -4120,6 +4143,20 @@ export default function App() {
     }
   };
 
+  const handleSignOut = async () => {
+    setInitError(null);
+    setIsActionLoading(true);
+    try {
+      await signOut(auth);
+      await signInAnonymously(auth);
+    } catch (e) {
+      console.error('Sign out failed', e);
+      setInitError(`Sign out failed: ${e?.code || 'unknown'} — ${e?.message || 'no message'}`);
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
+
   if (activeGameId && user) {
     return <GameBoard gameId={activeGameId} realUserId={user.uid} displayName={playerName} onExit={handleExitGame} />;
   }
@@ -4131,6 +4168,7 @@ export default function App() {
       onWatch={watchGame}
       onRemoveFromList={removeGameFromList}
       onContinueWithGoogle={continueWithGoogle}
+      onSignOut={handleSignOut}
       myGames={myGames}
       toastMessage={toastMessage}
       suggestedName={suggestedName}

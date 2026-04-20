@@ -464,6 +464,7 @@ const Lobby = ({
   const [mode, setMode] = useState('menu');
   const [pendingDeleteGame, setPendingDeleteGame] = useState(null);
   const isInitLoading = !currentUser;
+  const isGoogleConnected = currentUser?.isAnonymous === false;
   const effectiveName = name || suggestedName || '';
 
   const openGameFromHistory = (game) => {
@@ -491,6 +492,34 @@ const Lobby = ({
         )}
 
         <div className="bg-slate-800 p-6 rounded-xl shadow-xl border border-slate-700 space-y-4">
+          <div
+            className={`rounded-lg border p-3 ${
+              isGoogleConnected
+                ? 'bg-emerald-950/40 border-emerald-700/60'
+                : 'bg-slate-900 border-slate-700'
+            }`}
+          >
+            {isGoogleConnected ? (
+              <div className="space-y-1">
+                <div className="flex items-center gap-2 text-emerald-300 font-semibold">
+                  <Check size={16} />
+                  <span>Signed in with Google</span>
+                </div>
+                {currentUser?.displayName && (
+                  <div className="text-sm text-slate-200 break-words">{currentUser.displayName}</div>
+                )}
+                {currentUser?.email && (
+                  <div className="text-sm text-slate-300 break-all">{currentUser.email}</div>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-1">
+                <div className="text-sm font-semibold text-slate-300">Guest mode</div>
+                <div className="text-xs text-slate-400">Anonymous session</div>
+              </div>
+            )}
+          </div>
+
           <div>
             <label className="block text-sm font-medium text-slate-400 mb-1">Your Name</label>
             <input
@@ -606,12 +635,25 @@ const Lobby = ({
           )}
 
           <button
-            onClick={onContinueWithGoogle}
-            disabled={isInitLoading || isActionLoading}
-            className="w-full bg-white text-slate-800 hover:bg-slate-100 disabled:opacity-50 disabled:cursor-wait p-3 rounded-lg font-bold transition-colors"
+            onClick={isGoogleConnected ? undefined : onContinueWithGoogle}
+            disabled={isGoogleConnected || isInitLoading || isActionLoading}
+            className={`w-full p-3 rounded-lg font-bold transition-colors ${
+              isGoogleConnected
+                ? 'bg-emerald-900/40 border border-emerald-700/50 text-emerald-200 cursor-default'
+                : 'bg-white text-slate-800 hover:bg-slate-100 disabled:opacity-50 disabled:cursor-wait'
+            }`}
           >
-            Continue with Google
+            {isGoogleConnected ? 'Google connected' : 'Continue with Google'}
           </button>
+
+          <div className="text-xs text-slate-400 font-mono flex items-center gap-2">
+            Current ID: {currentUser ? (
+              <span className="text-slate-300">{currentUser.uid.slice(0, 8) + '...'}</span>
+            ) : (
+              <span className="text-yellow-500 flex items-center gap-1"><Loader2 className="animate-spin" size={10}/> Initializing...</span>
+            )}
+            {isGoogleConnected && <span className="text-emerald-300">(Google)</span>}
+          </div>
 
           <div className="border border-slate-700 rounded-lg p-3 space-y-2">
             <div className="text-sm font-semibold text-slate-300">My Games</div>
@@ -650,17 +692,6 @@ const Lobby = ({
             </div>
           )}
         </div>
-
-        <div className="absolute -bottom-24 left-0 right-0 flex flex-col items-center gap-2">
-          <div className="text-[10px] text-slate-500 font-mono flex items-center gap-2">
-            Current ID: {currentUser ? (
-              <span className="text-slate-300">{currentUser.uid.slice(0, 8) + '...'}</span>
-            ) : (
-              <span className="text-yellow-500 flex items-center gap-1"><Loader2 className="animate-spin" size={10}/> Initializing...</span>
-            )}
-            {currentUser?.isAnonymous === false && <span className="text-green-400">(Google)</span>}
-            </div>
-          </div>
       </div>
       {pendingDeleteGame && (
         <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">

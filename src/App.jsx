@@ -155,6 +155,7 @@ const BATTLEFIELD_BASE_MIN_HEIGHT_PX = 420;
 const BATTLEFIELD_DEFAULT_WIDTH_PX = 360;
 const BATTLEFIELD_NORMALIZED_MIN = 0.03;
 const BATTLEFIELD_NORMALIZED_MAX = 0.97;
+const BATTLEFIELD_SIDE_PADDING_PX = 16;
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 const clampBattlefieldNormalized = (value) => clamp(value, BATTLEFIELD_NORMALIZED_MIN, BATTLEFIELD_NORMALIZED_MAX);
@@ -178,7 +179,7 @@ const getBattlefieldLayoutConfig = (isMobile = getIsNarrowBattlefield()) => ({
   cardWidthPx: BATTLEFIELD_CARD_WIDTH_PX,
   cardHeightPx: isMobile ? 120 : BATTLEFIELD_CARD_HEIGHT_PX,
   labelSafePx: 28,
-  rowGapPx: 24,
+  rowGapPx: 18,
   laneGapPx: 44,
   bottomPaddingPx: 48,
   minHeightPx: BATTLEFIELD_BASE_MIN_HEIGHT_PX,
@@ -186,12 +187,21 @@ const getBattlefieldLayoutConfig = (isMobile = getIsNarrowBattlefield()) => ({
   columns: 3
 });
 
-const getBattlefieldColumnCenters = ({ containerWidth, cardWidthPx, columns, isMobile }) => {
+const getBattlefieldHorizontalSafeBounds = ({ containerWidth, cardWidthPx }) => {
   const width = Number.isFinite(containerWidth) && containerWidth > 0 ? containerWidth : BATTLEFIELD_DEFAULT_WIDTH_PX;
-  const sideSafePx = isMobile ? 70 : 72;
-  const halfCardSafePx = (cardWidthPx / 2) + 12;
-  const usableLeftPx = Math.min(width / 2, Math.max(sideSafePx, halfCardSafePx));
-  const usableRightPx = Math.max(width / 2, Math.min(width - usableLeftPx, width - halfCardSafePx));
+  const safeCardWidthPx = Number.isFinite(cardWidthPx) && cardWidthPx > 0 ? cardWidthPx : BATTLEFIELD_CARD_WIDTH_PX;
+  const halfCard = safeCardWidthPx / 2;
+  const sidePaddingPx = BATTLEFIELD_SIDE_PADDING_PX;
+
+  return {
+    usableLeftPx: halfCard + sidePaddingPx,
+    usableRightPx: width - halfCard - sidePaddingPx
+  };
+};
+
+const getBattlefieldColumnCenters = ({ containerWidth, cardWidthPx, columns }) => {
+  const width = Number.isFinite(containerWidth) && containerWidth > 0 ? containerWidth : BATTLEFIELD_DEFAULT_WIDTH_PX;
+  const { usableLeftPx, usableRightPx } = getBattlefieldHorizontalSafeBounds({ containerWidth: width, cardWidthPx });
 
   if (columns <= 1 || usableRightPx <= usableLeftPx) return [width / 2];
 
@@ -229,11 +239,14 @@ const calculateBattlefieldLayout = ({
     + landGapsPx
     + config.bottomPaddingPx;
   const battlefieldHeightPx = Math.ceil(clamp(neededHeight, config.minHeightPx, config.maxHeightPx));
+  const { usableLeftPx, usableRightPx } = getBattlefieldHorizontalSafeBounds({
+    containerWidth: battlefieldWidth,
+    cardWidthPx
+  });
   const columnCentersPx = getBattlefieldColumnCenters({
     containerWidth: battlefieldWidth,
     cardWidthPx,
-    columns,
-    isMobile
+    columns
   });
   const rowPitchPx = cardHeightPx + config.labelSafePx + config.rowGapPx;
   const nonlandStartY = config.headerSafeTopPx;
@@ -276,9 +289,20 @@ const calculateBattlefieldLayout = ({
   console.log(`[${debugLabel}]`, {
     battlefieldWidth,
     battlefieldHeightPx,
+    cardWidthPx,
+    usableLeftPx: Number(usableLeftPx.toFixed(1)),
+    usableRightPx: Number(usableRightPx.toFixed(1)),
+    rowGapPx: config.rowGapPx,
+    columnCentersPx: columnCentersPx.map(centerX => Number(centerX.toFixed(1))),
     nonlandRows,
     landRows,
     columns
+  });
+  columnCentersPx.forEach((centerX, col) => {
+    console.log(`[${debugLabel}_COLUMN]`, {
+      col,
+      centerX: Number(centerX.toFixed(1))
+    });
   });
   tidyPositions.forEach((position, cardId) => {
     const card = cards.find(candidate => candidate.instanceId === cardId);

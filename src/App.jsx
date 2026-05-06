@@ -155,9 +155,9 @@ const BATTLEFIELD_BASE_MIN_HEIGHT_PX = 420;
 const BATTLEFIELD_DEFAULT_WIDTH_PX = 360;
 const BATTLEFIELD_NORMALIZED_MIN = 0.03;
 const BATTLEFIELD_NORMALIZED_MAX = 0.97;
-const BATTLEFIELD_SIDE_PADDING_PX = 20;
-const BATTLEFIELD_LABEL_EXTRA_PADDING_PX = 12;
-const BATTLEFIELD_MIN_CARD_GAP_PX = 32;
+const BATTLEFIELD_SIDE_PADDING_PX = 16;
+const BATTLEFIELD_LABEL_EXTRA_PADDING_PX = 0;
+const BATTLEFIELD_CARD_GAP_PX = 16;
 const BATTLEFIELD_POSITION_MODE_AUTO = 'auto';
 const BATTLEFIELD_POSITION_MODE_MANUAL = 'manual';
 
@@ -184,12 +184,13 @@ const getBattlefieldLayoutConfig = (isMobile = getIsNarrowBattlefield()) => ({
   cardWidthPx: BATTLEFIELD_CARD_WIDTH_PX,
   cardHeightPx: BATTLEFIELD_CARD_HEIGHT_PX,
   labelSafePx: 28,
-  rowGapPx: 18,
-  laneGapPx: 44,
+  rowGapPx: 12,
+  laneGapPx: 28,
   bottomPaddingPx: 48,
   minHeightPx: BATTLEFIELD_BASE_MIN_HEIGHT_PX,
   maxHeightPx: isMobile ? 1500 : 1800,
-  preferredColumns: isMobile ? 3 : 4
+  gapPx: BATTLEFIELD_CARD_GAP_PX,
+  sidePaddingPx: BATTLEFIELD_SIDE_PADDING_PX
 });
 
 const getBattlefieldHorizontalSafeBounds = ({ containerWidth, cardWidthPx }) => {
@@ -208,33 +209,30 @@ const getBattlefieldHorizontalSafeBounds = ({ containerWidth, cardWidthPx }) => 
   };
 };
 
-const getBattlefieldColumnCount = ({ containerWidth, cardWidthPx, preferredColumns }) => {
-  const width = Number.isFinite(containerWidth) && containerWidth > 0 ? containerWidth : BATTLEFIELD_DEFAULT_WIDTH_PX;
+const calculateBattlefieldColumns = ({ containerWidth, cardWidthPx, gapPx, sidePaddingPx }) => {
+  const battlefieldWidthPx = Number.isFinite(containerWidth) && containerWidth > 0 ? containerWidth : BATTLEFIELD_DEFAULT_WIDTH_PX;
   const safeCardWidthPx = Number.isFinite(cardWidthPx) && cardWidthPx > 0 ? cardWidthPx : BATTLEFIELD_CARD_WIDTH_PX;
-  const desiredColumns = clamp(Math.max(1, Math.floor(preferredColumns || 3)), 1, 3);
-  const safetyPaddingPx = (BATTLEFIELD_SIDE_PADDING_PX + BATTLEFIELD_LABEL_EXTRA_PADDING_PX) * 2;
-  const columnsFit = (columnCount) => {
-    const neededWidthPx = (columnCount * safeCardWidthPx)
-      + (Math.max(0, columnCount - 1) * BATTLEFIELD_MIN_CARD_GAP_PX)
-      + safetyPaddingPx;
-    return width >= neededWidthPx;
+  const safeGapPx = Number.isFinite(gapPx) && gapPx >= 0 ? gapPx : BATTLEFIELD_CARD_GAP_PX;
+  const safeSidePaddingPx = Number.isFinite(sidePaddingPx) && sidePaddingPx >= 0 ? sidePaddingPx : BATTLEFIELD_SIDE_PADDING_PX;
+  const availableWidth = Math.max(0, battlefieldWidthPx - (safeSidePaddingPx * 2));
+  const calculatedMaxColumns = Math.floor((availableWidth + safeGapPx) / (safeCardWidthPx + safeGapPx));
+  const columns = Math.max(1, calculatedMaxColumns);
+  const rowWidth = (columns * safeCardWidthPx) + (Math.max(0, columns - 1) * safeGapPx);
+  const startX = (battlefieldWidthPx / 2) - (rowWidth / 2) + (safeCardWidthPx / 2);
+  const columnCentersPx = Array.from({ length: columns }, (_unused, col) => startX + (col * (safeCardWidthPx + safeGapPx)));
+
+  return {
+    battlefieldWidthPx,
+    cardWidthPx: safeCardWidthPx,
+    gapPx: safeGapPx,
+    sidePaddingPx: safeSidePaddingPx,
+    availableWidth,
+    calculatedMaxColumns,
+    columns,
+    rowWidth,
+    startX,
+    columnCentersPx
   };
-
-  if (desiredColumns >= 3 && columnsFit(3)) return 3;
-  if (desiredColumns >= 2 && columnsFit(2)) return 2;
-  return 1;
-};
-
-const getBattlefieldColumnCenters = ({ containerWidth, cardWidthPx, columns }) => {
-  const width = Number.isFinite(containerWidth) && containerWidth > 0 ? containerWidth : BATTLEFIELD_DEFAULT_WIDTH_PX;
-  const { usableLeftPx, usableRightPx } = getBattlefieldHorizontalSafeBounds({ containerWidth: width, cardWidthPx });
-
-  if (columns <= 1 || usableRightPx <= usableLeftPx) return [width / 2];
-
-  return Array.from({ length: columns }, (_unused, index) => {
-    const ratio = index / (columns - 1);
-    return usableLeftPx + ((usableRightPx - usableLeftPx) * ratio);
-  });
 };
 
 const calculateBattlefieldLayout = ({
@@ -246,11 +244,13 @@ const calculateBattlefieldLayout = ({
   const battlefieldWidth = Number.isFinite(containerWidth) && containerWidth > 0 ? containerWidth : BATTLEFIELD_DEFAULT_WIDTH_PX;
   const config = getBattlefieldLayoutConfig(isMobile);
   const cardWidthPx = config.cardWidthPx;
-  const columns = getBattlefieldColumnCount({
+  const columnLayout = calculateBattlefieldColumns({
     containerWidth: battlefieldWidth,
     cardWidthPx,
-    preferredColumns: config.preferredColumns
+    gapPx: config.gapPx,
+    sidePaddingPx: config.sidePaddingPx
   });
+  const columns = columnLayout.columns;
   const cardHeightPx = config.cardHeightPx;
   const nonlands = cards.filter(card => !isLandCard(card));
   const lands = cards.filter(isLandCard);
@@ -273,11 +273,7 @@ const calculateBattlefieldLayout = ({
     containerWidth: battlefieldWidth,
     cardWidthPx
   });
-  const columnCentersPx = getBattlefieldColumnCenters({
-    containerWidth: battlefieldWidth,
-    cardWidthPx,
-    columns
-  });
+  const columnCentersPx = columnLayout.columnCentersPx;
   const rowPitchPx = cardHeightPx + config.labelSafePx + config.rowGapPx;
   const nonlandStartY = config.headerSafeTopPx;
   const landStartY = nonlandStartY + nonlandRowsHeightPx + nonlandGapsPx + laneGapPx;
@@ -318,17 +314,22 @@ const calculateBattlefieldLayout = ({
   assignLanePositions(lands, 'land', landStartY);
 
   console.log(`[${debugLabel}]`, {
+    battlefieldWidthPx: battlefieldWidth,
     battlefieldWidth,
     battlefieldHeightPx,
     cardWidthPx,
     usableLeftPx: Number(usableLeftPx.toFixed(1)),
     usableRightPx: Number(usableRightPx.toFixed(1)),
+    gapPx: columnLayout.gapPx,
+    sidePaddingPx: columnLayout.sidePaddingPx,
+    availableWidth: Number(columnLayout.availableWidth.toFixed(1)),
+    calculatedMaxColumns: columnLayout.calculatedMaxColumns,
+    chosenColumnCount: columns,
+    rowWidth: Number(columnLayout.rowWidth.toFixed(1)),
+    startX: Number(columnLayout.startX.toFixed(1)),
     rowGapPx: config.rowGapPx,
-    orientation: typeof window !== 'undefined' ? (window.innerWidth <= window.innerHeight ? 'portrait' : 'landscape') : 'unknown',
-    windowWidth: typeof window !== 'undefined' ? window.innerWidth : null,
     actualCardWidthPx: cardWidthPx,
     actualCardHeightPx: cardHeightPx,
-    chosenColumnCount: columns,
     columnCentersPx: columnCentersPx.map(centerX => Number(centerX.toFixed(1))),
     rightmostCardRightEdgePx: columnCentersPx.length ? Number((Math.max(...columnCentersPx) + (cardWidthPx / 2)).toFixed(1)) : null,
     rightmostColumnBattlefieldWidthPx: battlefieldWidth,
@@ -369,7 +370,13 @@ const calculateBattlefieldLayout = ({
     usableLeftPx,
     usableRightPx,
     rowGapPx: config.rowGapPx,
-    laneGapPx: config.laneGapPx
+    laneGapPx: config.laneGapPx,
+    gapPx: columnLayout.gapPx,
+    sidePaddingPx: columnLayout.sidePaddingPx,
+    availableWidth: columnLayout.availableWidth,
+    calculatedMaxColumns: columnLayout.calculatedMaxColumns,
+    rowWidth: columnLayout.rowWidth,
+    startX: columnLayout.startX
   };
 };
 
@@ -521,7 +528,7 @@ const getNextCombatState = (currentGame, nextPhase, turnChanged = false) => {
   return currentGame.combat || getEmptyCombatState();
 };
 
-const advancePassPriorityState = (currentGame, logEntry, onTurnStart) => {
+const advancePassPriorityState = (currentGame, logEntry, onTurnStart, layoutOptions = {}) => {
   const players = currentGame.players || [];
   const updatedGame = {
     ...currentGame,
@@ -572,10 +579,12 @@ const advancePassPriorityState = (currentGame, logEntry, onTurnStart) => {
         card.tapped = false;
 
         if (isPerm) {
+          const battlefieldWidthPx = layoutOptions.getBattlefieldWidthForController?.(card.controllerId);
           const spawnPosition = getBattlefieldGridPosition({
             card,
             existingBattlefieldCards: updatedGame.cards,
-            controllerId: card.controllerId
+            controllerId: card.controllerId,
+            containerWidth: battlefieldWidthPx
           });
           Object.assign(card, getBattlefieldPositionCoordinates(spawnPosition));
           logBattlefieldEntry(card, 'STACK_RESOLUTION', spawnPosition);
@@ -1499,7 +1508,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     if (currentBattlefieldRect && Number.isFinite(currentClientX) && Number.isFinite(currentClientY)) {
       const cardCenterX = currentClientX + pointerOffsetToCenterX;
       const cardCenterY = currentClientY + pointerOffsetToCenterY;
-      const nx = clampBattlefieldCenterNormalized((cardCenterX - currentBattlefieldRect.left) / currentBattlefieldRect.width, currentBattlefieldRect.width, BATTLEFIELD_CARD_WIDTH_PX);
+      const nx = clampBattlefieldCenterNormalized((cardCenterX - currentBattlefieldRect.left) / currentBattlefieldRect.width, currentBattlefieldRect.width, BATTLEFIELD_CARD_WIDTH_PX, BATTLEFIELD_SIDE_PADDING_PX);
       const ny = clampBattlefieldCenterNormalized((cardCenterY - currentBattlefieldRect.top) / currentBattlefieldRect.height, currentBattlefieldRect.height, BATTLEFIELD_CARD_HEIGHT_PX);
       await handleAction('MOVE_CARD_XY', {
         cardId: card.instanceId,
@@ -1674,7 +1683,10 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           desc: payload.desc || 'PASS_PRIORITY'
         };
 
-        const passedGame = advancePassPriorityState(currentGame, passLogEntry, (event) => turnStartEvents.push(event));
+        const layoutOptions = {
+          getBattlefieldWidthForController: (controllerId) => controllerId === userId ? getCurrentBattlefieldWidthPx() : undefined
+        };
+        const passedGame = advancePassPriorityState(currentGame, passLogEntry, (event) => turnStartEvents.push(event), layoutOptions);
         const { game: proxyGame } = runProxyAutoPassAdvances(passedGame, userId, actorName, (event) => turnStartEvents.push(event));
 
         transaction.update(gameRef, {
@@ -1732,12 +1744,24 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         delete updates.log; // No log entry for this
       }
     } else if (actionType === 'MOVE_CARD_XY') {
-      const payloadNx = Number.isFinite(payload.nx)
-        ? clampBattlefieldNormalized(payload.nx)
-        : (Number.isFinite(payload.x) ? clampBattlefieldNormalized(payload.x / 100) : null);
-      const payloadNy = Number.isFinite(payload.ny)
-        ? clampBattlefieldNormalized(payload.ny)
-        : (Number.isFinite(payload.y) ? clampBattlefieldNormalized(payload.y / 100) : null);
+      const payloadWidthPx = Number.isFinite(payload.positionBasisWidthPx) ? payload.positionBasisWidthPx : null;
+      const payloadHeightPx = Number.isFinite(payload.positionBasisHeightPx) ? payload.positionBasisHeightPx : null;
+      const rawPayloadNx = Number.isFinite(payload.nx)
+        ? payload.nx
+        : (Number.isFinite(payload.x) ? payload.x / 100 : null);
+      const rawPayloadNy = Number.isFinite(payload.ny)
+        ? payload.ny
+        : (Number.isFinite(payload.y) ? payload.y / 100 : null);
+      const payloadNx = Number.isFinite(rawPayloadNx)
+        ? (payloadWidthPx
+            ? clampBattlefieldCenterNormalized(rawPayloadNx, payloadWidthPx, BATTLEFIELD_CARD_WIDTH_PX, BATTLEFIELD_SIDE_PADDING_PX)
+            : clampBattlefieldNormalized(rawPayloadNx))
+        : null;
+      const payloadNy = Number.isFinite(rawPayloadNy)
+        ? (payloadHeightPx
+            ? clampBattlefieldCenterNormalized(rawPayloadNy, payloadHeightPx, BATTLEFIELD_CARD_HEIGHT_PX)
+            : clampBattlefieldNormalized(rawPayloadNy))
+        : null;
       const newCards = game.cards.map(c => c.instanceId === payload.cardId
         ? {
             ...c,
@@ -2808,6 +2832,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
   useEffect(() => {
     console.log('[BATTLEFIELD_PANEL_SIZE]', {
+      battlefieldWidthPx: myBattlefieldLayout.battlefieldWidth,
       battlefieldWidth: myBattlefieldLayout.battlefieldWidth,
       battlefieldHeightPx: myBattlefieldLayout.battlefieldHeightPx,
       landCount: myBattlefieldLandCount,
@@ -2820,6 +2845,14 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       measuredPanelWidth: myBattlefieldSizePx.width,
       measuredBattlefieldPositioningLayerWidth: myBattlefieldSizePx.width,
       actualCardWidthPx: myBattlefieldLayout.cardWidthPx,
+      cardWidthPx: myBattlefieldLayout.cardWidthPx,
+      gapPx: myBattlefieldLayout.gapPx,
+      sidePaddingPx: myBattlefieldLayout.sidePaddingPx,
+      availableWidth: Number(myBattlefieldLayout.availableWidth?.toFixed?.(1) ?? 0),
+      calculatedMaxColumns: myBattlefieldLayout.calculatedMaxColumns,
+      chosenColumnCount: myBattlefieldLayout.columns,
+      rowWidth: Number(myBattlefieldLayout.rowWidth?.toFixed?.(1) ?? 0),
+      startX: Number(myBattlefieldLayout.startX?.toFixed?.(1) ?? 0),
       usableLeftPx: Number(myBattlefieldLayout.usableLeftPx?.toFixed?.(1) ?? 0),
       usableRightPx: Number(myBattlefieldLayout.usableRightPx?.toFixed?.(1) ?? 0),
       columnCentersPx: myBattlefieldLayout.columnCentersPx.map(centerX => Number(centerX.toFixed(1)))
@@ -2878,8 +2911,16 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       orientation: battlefieldViewport.width <= battlefieldViewport.height ? 'portrait' : 'landscape',
       windowWidth: battlefieldViewport.width,
       measuredBattlefieldWidth: myBattlefieldLayout.battlefieldWidth,
+      battlefieldWidthPx: myBattlefieldLayout.battlefieldWidth,
       actualCardWidthPx: myBattlefieldLayout.cardWidthPx,
+      cardWidthPx: myBattlefieldLayout.cardWidthPx,
+      gapPx: myBattlefieldLayout.gapPx,
+      sidePaddingPx: myBattlefieldLayout.sidePaddingPx,
+      availableWidth: Number(myBattlefieldLayout.availableWidth?.toFixed?.(1) ?? 0),
+      calculatedMaxColumns: myBattlefieldLayout.calculatedMaxColumns,
       chosenColumnCount: myBattlefieldLayout.columns,
+      rowWidth: Number(myBattlefieldLayout.rowWidth?.toFixed?.(1) ?? 0),
+      startX: Number(myBattlefieldLayout.startX?.toFixed?.(1) ?? 0),
       autoCardCount: autoBattlefieldIds.size
     });
     updateDoc(doc(db, 'games_v3', gameId), { cards: nextCards });

@@ -157,38 +157,60 @@ const BATTLEFIELD_NORMALIZED_MAX = 0.97;
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 const clampBattlefieldNormalized = (value) => clamp(value, BATTLEFIELD_NORMALIZED_MIN, BATTLEFIELD_NORMALIZED_MAX);
 
-const getDefaultPermanentSpawnPosition = () => {
-  const nx = clampBattlefieldNormalized(0.18 + (Math.random() * 0.08));
-  const ny = clampBattlefieldNormalized(0.3 + (Math.random() * 0.08));
-  return {
-    nx: Number(nx.toFixed(4)),
-    ny: Number(ny.toFixed(4)),
-    x: Number((nx * 100).toFixed(1)),
-    y: Number((ny * 100).toFixed(1))
-  };
-};
-
-const getDefaultLandSpawnPosition = () => {
-  const nx = clampBattlefieldNormalized(0.16 + (Math.random() * 0.12));
-  const ny = clampBattlefieldNormalized(0.72 + (Math.random() * 0.08));
-  return {
-    nx: Number(nx.toFixed(4)),
-    ny: Number(ny.toFixed(4)),
-    x: Number((nx * 100).toFixed(1)),
-    y: Number((ny * 100).toFixed(1))
-  };
-};
-
 const isLandCard = (card) => (card?.type_line || '').toLowerCase().includes('land');
 
-const getDefaultBattlefieldSpawnPosition = (card) => (
-  isLandCard(card) ? getDefaultLandSpawnPosition() : getDefaultPermanentSpawnPosition()
-);
+const BATTLEFIELD_GRID_LAYOUT = {
+  nonland: {
+    columns: 4,
+    stepX: 0.24,
+    stepY: 0.18,
+    startX: 0.14,
+    startY: 0.16
+  },
+  land: {
+    columns: 4,
+    stepX: 0.24,
+    stepY: 0.12,
+    startX: 0.14,
+    startY: 0.84
+  }
+};
+
+const getBattlefieldGridPosition = ({ card, existingBattlefieldCards = [], controllerId } = {}) => {
+  const lane = isLandCard(card) ? 'land' : 'nonland';
+  const layout = BATTLEFIELD_GRID_LAYOUT[lane];
+  const slotIndex = existingBattlefieldCards.filter((existingCard) => {
+    if (!existingCard || existingCard.instanceId === card?.instanceId) return false;
+    if (controllerId && existingCard.controllerId !== controllerId) return false;
+    if (existingCard.zone !== ZONES.BATTLEFIELD) return false;
+    return (isLandCard(existingCard) ? 'land' : 'nonland') === lane;
+  }).length;
+  const nx = clampBattlefieldNormalized(layout.startX + ((slotIndex % layout.columns) * layout.stepX));
+  const ny = clampBattlefieldNormalized(layout.startY + (Math.floor(slotIndex / layout.columns) * layout.stepY));
+
+  return {
+    nx: Number(nx.toFixed(4)),
+    ny: Number(ny.toFixed(4)),
+    x: Number((nx * 100).toFixed(1)),
+    y: Number((ny * 100).toFixed(1)),
+    slotIndex,
+    lane
+  };
+};
+
+const getBattlefieldPositionCoordinates = (position) => ({
+  nx: position?.nx,
+  ny: position?.ny,
+  x: position?.x,
+  y: position?.y
+});
 
 const logBattlefieldEntry = (card, source, position) => {
   console.log('[BATTLEFIELD_ENTRY]', {
     name: card?.name || 'Unknown card',
     source,
+    lane: position?.lane || (isLandCard(card) ? 'land' : 'nonland'),
+    slotIndex: position?.slotIndex,
     nx: position?.nx,
     ny: position?.ny
   });
@@ -339,8 +361,12 @@ const advancePassPriorityState = (currentGame, logEntry, onTurnStart) => {
         card.tapped = false;
 
         if (isPerm) {
-          const spawnPosition = getDefaultBattlefieldSpawnPosition(card);
-          Object.assign(card, spawnPosition);
+          const spawnPosition = getBattlefieldGridPosition({
+            card,
+            existingBattlefieldCards: updatedGame.cards,
+            controllerId: card.controllerId
+          });
+          Object.assign(card, getBattlefieldPositionCoordinates(spawnPosition));
           logBattlefieldEntry(card, 'STACK_RESOLUTION', spawnPosition);
         }
 
@@ -1411,52 +1437,36 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       delete updates.log;
     } else if (actionType === 'TIDY_BOARD') {
       const myBattlefield = game.cards.filter(c => c.controllerId === userId && c.zone === ZONES.BATTLEFIELD);
-      const lands = myBattlefield.filter(c => c.type_line && c.type_line.toLowerCase().includes('land'));
-      const nonLands = myBattlefield.filter(c => !c.type_line || !c.type_line.toLowerCase().includes('land'));
+      const lands = myBattlefield.filter(isLandCard);
+      const nonLands = myBattlefield.filter(c => !isLandCard(c));
 
       const updatesById = new Map();
-      const nonLandColumns = 4;
-      const landColumns = 4;
-      const nonLandStepX = 0.24;
-      const nonLandStepY = 0.18;
-      const landStepX = 0.24;
-      const landStepY = 0.12;
-      const nonLandStartX = 0.14;
-      const nonLandStartY = 0.16;
-      const landStartX = 0.14;
-      const landStartY = 0.84;
-
-      nonLands.forEach((card, i) => {
-        const nx = clampBattlefieldNormalized(nonLandStartX + ((i % nonLandColumns) * nonLandStepX));
-        const ny = clampBattlefieldNormalized(nonLandStartY + (Math.floor(i / nonLandColumns) * nonLandStepY));
+      const positionsById = new Map();
+      const arrangedCards = [];
+      [...nonLands, ...lands].forEach((card) => {
+        const position = getBattlefieldGridPosition({
+          card,
+          existingBattlefieldCards: arrangedCards,
+          controllerId: userId
+        });
         updatesById.set(card.instanceId, {
           ...card,
-          nx: Number(nx.toFixed(4)),
-          ny: Number(ny.toFixed(4)),
-          x: Number((nx * 100).toFixed(1)),
-          y: Number((ny * 100).toFixed(1))
+          ...getBattlefieldPositionCoordinates(position)
         });
-      });
-
-      lands.forEach((card, i) => {
-        const nx = clampBattlefieldNormalized(landStartX + ((i % landColumns) * landStepX));
-        const ny = clampBattlefieldNormalized(landStartY + (Math.floor(i / landColumns) * landStepY));
-        updatesById.set(card.instanceId, {
-          ...card,
-          nx: Number(nx.toFixed(4)),
-          ny: Number(ny.toFixed(4)),
-          x: Number((nx * 100).toFixed(1)),
-          y: Number((ny * 100).toFixed(1))
-        });
+        positionsById.set(card.instanceId, position);
+        arrangedCards.push(card);
       });
 
       const newCards = game.cards.map(c => updatesById.get(c.instanceId) || c);
 
-      const tidyPreview = myBattlefield.slice(0, 5).map((before) => {
+      const tidyPreview = [...nonLands, ...lands].slice(0, 5).map((before) => {
         const after = updatesById.get(before.instanceId);
+        const position = positionsById.get(before.instanceId);
         return {
           name: before.name || 'Unknown card',
           cardId: before.instanceId,
+          lane: position?.lane || (isLandCard(before) ? 'land' : 'nonland'),
+          slotIndex: position?.slotIndex,
           before: { nx: before.nx, ny: before.ny },
           after: after ? { nx: after.nx, ny: after.ny } : null
         };
@@ -1505,8 +1515,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       updates.log = arrayUnion({...logEntry, desc: `${payload.amount > 0 ? 'Added' : 'Removed'} ${payload.counterType} counter`});
 
     } else if (actionType === 'CREATE_TOKEN') {
-      const spawnPosition = getDefaultPermanentSpawnPosition();
-      const newToken = {
+      const tokenBase = {
         instanceId: generateCardId(),
         name: payload.name || "Token",
         power: payload.power || "1",
@@ -1518,8 +1527,16 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         tapped: false,
         counters: {},
         tempDamage: 0,
-        isToken: true,
-        ...spawnPosition
+        isToken: true
+      };
+      const spawnPosition = getBattlefieldGridPosition({
+        card: tokenBase,
+        existingBattlefieldCards: game.cards,
+        controllerId: userId
+      });
+      const newToken = {
+        ...tokenBase,
+        ...getBattlefieldPositionCoordinates(spawnPosition)
       };
       logBattlefieldEntry(newToken, 'CREATE_TOKEN', spawnPosition);
       updates.cards = [...game.cards, newToken];
@@ -1528,12 +1545,16 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     } else if (actionType === 'CLONE_CARD') {
       const original = game.cards.find(c => c.instanceId === payload.cardId);
       if (original) {
-        const spawnPosition = getDefaultBattlefieldSpawnPosition(original);
+        const cloneBase = { ...original, instanceId: generateCardId(), zone: ZONES.BATTLEFIELD };
+        const spawnPosition = getBattlefieldGridPosition({
+          card: cloneBase,
+          existingBattlefieldCards: game.cards,
+          controllerId: cloneBase.controllerId
+        });
         const clone = {
-          ...original,
-          instanceId: generateCardId(),
-          zone: ZONES.BATTLEFIELD, // Keep owner/controller, copy other fields by spread
-          ...spawnPosition
+          ...cloneBase,
+          // Keep owner/controller, copy other fields by spread
+          ...getBattlefieldPositionCoordinates(spawnPosition)
         };
         logBattlefieldEntry(clone, 'CLONE_CARD', spawnPosition);
         updates.cards = [...game.cards, clone];
@@ -1577,14 +1598,19 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
     } else if (actionType === 'CHANGE_CONTROL') {
       const changedCard = game.cards.find(c => c.instanceId === payload.cardId);
-      const spawnPosition = getDefaultBattlefieldSpawnPosition(changedCard);
+      const nextControllerId = changedCard?.controllerId === userId ? (opponent?.id || userId) : userId;
+      const spawnPosition = getBattlefieldGridPosition({
+        card: { ...changedCard, controllerId: nextControllerId, zone: ZONES.BATTLEFIELD },
+        existingBattlefieldCards: game.cards,
+        controllerId: nextControllerId
+      });
       const newCards = game.cards.map(c =>
         c.instanceId === payload.cardId
           ? {
               ...c,
-              controllerId: c.controllerId === userId ? (opponent?.id || userId) : userId,
+              controllerId: nextControllerId,
               zone: ZONES.BATTLEFIELD,
-              ...spawnPosition
+              ...getBattlefieldPositionCoordinates(spawnPosition)
             }
           : c
       );
@@ -1679,8 +1705,12 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               card.zone = isPerm ? ZONES.BATTLEFIELD : ZONES.GRAVEYARD;
               card.tapped = false;
               if (isPerm) {
-                const spawnPosition = getDefaultBattlefieldSpawnPosition(card);
-                Object.assign(card, spawnPosition);
+                const spawnPosition = getBattlefieldGridPosition({
+                  card,
+                  existingBattlefieldCards: game.cards,
+                  controllerId: card.controllerId
+                });
+                Object.assign(card, getBattlefieldPositionCoordinates(spawnPosition));
                 logBattlefieldEntry(card, 'STACK_RESOLUTION', spawnPosition);
               }
             }
@@ -1751,9 +1781,14 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
     } else if (actionType === 'PLAY_LAND') {
       const playedCard = game.cards.find(c => c.instanceId === payload.cardId);
-      const spawnPosition = getDefaultLandSpawnPosition();
-      const newCards = game.cards.map(c => c.instanceId === payload.cardId ? { ...c, zone: ZONES.BATTLEFIELD, ...spawnPosition } : c);
-      logBattlefieldEntry(playedCard, 'PLAY_LAND', spawnPosition);
+      const battlefieldCard = { ...playedCard, zone: ZONES.BATTLEFIELD };
+      const spawnPosition = getBattlefieldGridPosition({
+        card: battlefieldCard,
+        existingBattlefieldCards: game.cards,
+        controllerId: userId
+      });
+      const newCards = game.cards.map(c => c.instanceId === payload.cardId ? { ...c, zone: ZONES.BATTLEFIELD, ...getBattlefieldPositionCoordinates(spawnPosition) } : c);
+      logBattlefieldEntry(battlefieldCard, 'PLAY_LAND', spawnPosition);
       updates.cards = newCards;
       pendingRecapEvents.push({
         type: 'PLAY_LAND',
@@ -1868,8 +1903,13 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
     } else if (actionType === 'MOVE_ZONE') {
       const movingCard = game.cards.find(c => c.instanceId === payload.cardId);
+      const battlefieldMovingCard = movingCard ? { ...movingCard, zone: ZONES.BATTLEFIELD, controllerId: movingCard.ownerId } : null;
       const spawnPosition = payload.targetZone === ZONES.BATTLEFIELD
-        ? getDefaultBattlefieldSpawnPosition(movingCard)
+        ? getBattlefieldGridPosition({
+            card: battlefieldMovingCard,
+            existingBattlefieldCards: game.cards,
+            controllerId: battlefieldMovingCard?.controllerId
+          })
         : null;
       const newCards = game.cards.map(c =>
         c.instanceId === payload.cardId
@@ -1879,11 +1919,11 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               tapped: false,
               tempDamage: 0,
               controllerId: c.ownerId,
-              ...(spawnPosition || { x: 10, y: 10 })
+              ...(spawnPosition ? getBattlefieldPositionCoordinates(spawnPosition) : { x: 10, y: 10 })
             }
           : c
       );
-      if (spawnPosition) logBattlefieldEntry(movingCard, 'MOVE_ZONE', spawnPosition);
+      if (spawnPosition) logBattlefieldEntry(battlefieldMovingCard, 'MOVE_ZONE', spawnPosition);
       updates.cards = newCards;
       updates.combat = clearCombatAssignmentsForCard(game.combat || getEmptyCombatState(), payload.cardId);
 

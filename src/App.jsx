@@ -161,6 +161,12 @@ const BATTLEFIELD_CARD_GAP_PX = 16;
 const BATTLEFIELD_POSITION_MODE_AUTO = 'auto';
 const BATTLEFIELD_POSITION_MODE_MANUAL = 'manual';
 
+const getCardPositionMode = (card) => (
+  card?.positionMode === BATTLEFIELD_POSITION_MODE_MANUAL
+    ? BATTLEFIELD_POSITION_MODE_MANUAL
+    : BATTLEFIELD_POSITION_MODE_AUTO
+);
+
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 const clampBattlefieldNormalized = (value) => clamp(value, BATTLEFIELD_NORMALIZED_MIN, BATTLEFIELD_NORMALIZED_MAX);
 const clampBattlefieldCenterNormalized = (value, dimensionPx, cardDimensionPx, sidePaddingPx = 0) => {
@@ -1157,6 +1163,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const battlefieldScrollRef = useRef(null);
   const opponentSectionRef = useRef(null);
   const [draggingCard, setDraggingCard] = useState(null);
+  const [optimisticAutoBattlefieldIds, setOptimisticAutoBattlefieldIds] = useState(() => new Set());
   const [myBattlefieldSizePx, setMyBattlefieldSizePx] = useState({
     width: BATTLEFIELD_DEFAULT_WIDTH_PX,
     height: BATTLEFIELD_BASE_MIN_HEIGHT_PX
@@ -1252,33 +1259,58 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
     if (!isOpponentView && battlefieldDimensions) {
       const { widthPx, heightPx, cardWidthPx, cardHeightPx } = battlefieldDimensions;
-      if (Number.isFinite(card?.positionBasisWidthPx) && card.positionBasisWidthPx > 0 && Number.isFinite(widthPx) && widthPx > 0) {
-        nx = (nx * card.positionBasisWidthPx) / widthPx;
-      }
-      if (Number.isFinite(card?.positionBasisHeightPx) && card.positionBasisHeightPx > 0 && Number.isFinite(heightPx) && heightPx > 0) {
-        ny = (ny * card.positionBasisHeightPx) / heightPx;
-      }
-      const renderedPosition = {
+      return {
         nx: clampBattlefieldCenterNormalized(nx, widthPx, cardWidthPx || BATTLEFIELD_CARD_WIDTH_PX, BATTLEFIELD_SIDE_PADDING_PX),
         ny: clampBattlefieldCenterNormalized(ny, heightPx, cardHeightPx || BATTLEFIELD_CARD_HEIGHT_PX)
       };
-      console.log('[BATTLEFIELD_RENDER_CARD]', {
-        name: card?.name || 'Unknown card',
-        cardId: card?.instanceId,
-        positionMode: card?.positionMode || BATTLEFIELD_POSITION_MODE_MANUAL,
-        widthPx,
-        heightPx,
-        cardWidthPx: cardWidthPx || BATTLEFIELD_CARD_WIDTH_PX,
-        nx: renderedPosition.nx,
-        ny: renderedPosition.ny
-      });
-      return renderedPosition;
     }
 
     return {
       nx: clampBattlefieldNormalized(nx),
       ny: clampBattlefieldNormalized(isOpponentView ? 1 - ny : ny)
     };
+  };
+
+  const getMyBattlefieldRenderPosition = (card, liveLayoutPosition, battlefieldDimensions, layout, forceAuto = false) => {
+    const positionMode = forceAuto ? BATTLEFIELD_POSITION_MODE_AUTO : getCardPositionMode(card);
+    const source = positionMode === BATTLEFIELD_POSITION_MODE_AUTO && liveLayoutPosition
+      ? 'live auto layout'
+      : 'saved manual nx/ny';
+    const dimensions = battlefieldDimensions || {
+      widthPx: layout?.battlefieldWidth,
+      heightPx: layout?.battlefieldHeightPx,
+      cardWidthPx: layout?.cardWidthPx,
+      cardHeightPx: layout?.cardHeightPx
+    };
+    const renderedPosition = source === 'live auto layout'
+      ? {
+          nx: clampBattlefieldCenterNormalized(
+            liveLayoutPosition.nx,
+            dimensions.widthPx,
+            dimensions.cardWidthPx || BATTLEFIELD_CARD_WIDTH_PX,
+            BATTLEFIELD_SIDE_PADDING_PX
+          ),
+          ny: clampBattlefieldCenterNormalized(
+            liveLayoutPosition.ny,
+            dimensions.heightPx,
+            dimensions.cardHeightPx || BATTLEFIELD_CARD_HEIGHT_PX
+          )
+        }
+      : getCardRenderPosition(card, false, dimensions);
+
+    console.log('[BATTLEFIELD_RENDER_CARD]', {
+      name: card?.name || 'Unknown card',
+      cardId: card?.instanceId,
+      positionMode,
+      renderedFrom: source,
+      nx: renderedPosition.nx,
+      ny: renderedPosition.ny,
+      measuredBattlefieldWidth: layout?.battlefieldWidth ?? dimensions.widthPx,
+      chosenColumns: layout?.columns,
+      columnCentersPx: layout?.columnCentersPx?.map(centerX => Number(centerX.toFixed(1))) || []
+    });
+
+    return renderedPosition;
   };
 
   useLayoutEffect(() => {
@@ -1469,16 +1501,28 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const handleDragStart = (e, card) => {
     if (isSpectator || !boardUnlocked || targetingState || !myBattlefieldRef.current) return;
     e.stopPropagation();
+    setOptimisticAutoBattlefieldIds(prev => {
+      if (!prev.has(card.instanceId)) return prev;
+      const next = new Set(prev);
+      next.delete(card.instanceId);
+      return next;
+    });
     const clientX = e.touches ? e.touches[0].clientX : e.clientX;
     const clientY = e.touches ? e.touches[0].clientY : e.clientY;
     const cardRect = e.currentTarget?.getBoundingClientRect?.();
     const rect = myBattlefieldRef.current.getBoundingClientRect();
-    const normalized = getCardRenderPosition(card, false, {
-      widthPx: rect.width,
-      heightPx: rect.height,
-      cardWidthPx: BATTLEFIELD_CARD_WIDTH_PX,
-      cardHeightPx: BATTLEFIELD_CARD_HEIGHT_PX
-    });
+    const normalized = getMyBattlefieldRenderPosition(
+      card,
+      myBattlefieldLayout?.tidyPositions?.get(card.instanceId),
+      {
+        widthPx: rect.width,
+        heightPx: rect.height,
+        cardWidthPx: BATTLEFIELD_CARD_WIDTH_PX,
+        cardHeightPx: BATTLEFIELD_CARD_HEIGHT_PX
+      },
+      myBattlefieldLayout,
+      optimisticAutoBattlefieldIds.has(card.instanceId)
+    );
     const pointerOffsetToCenterX = cardRect ? (cardRect.left + (cardRect.width / 2)) - clientX : 0;
     const pointerOffsetToCenterY = cardRect ? (cardRect.top + (cardRect.height / 2)) - clientY : 0;
     setDraggingCard({
@@ -1778,6 +1822,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       delete updates.log;
     } else if (actionType === 'TIDY_BOARD') {
       const myBattlefield = game.cards.filter(c => c.controllerId === userId && c.zone === ZONES.BATTLEFIELD);
+      setOptimisticAutoBattlefieldIds(new Set(myBattlefield.map(c => c.instanceId)));
       const lands = myBattlefield.filter(isLandCard);
       const nonLands = myBattlefield.filter(c => !isLandCard(c));
       const orderedBattlefield = [...nonLands, ...lands];
@@ -2883,7 +2928,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
     const autoBattlefieldIds = new Set(
       myBattlefield
-        .filter(card => card.positionMode === BATTLEFIELD_POSITION_MODE_AUTO)
+        .filter(card => getCardPositionMode(card) === BATTLEFIELD_POSITION_MODE_AUTO)
         .map(card => card.instanceId)
     );
     if (autoBattlefieldIds.size === 0) return;
@@ -3411,12 +3456,13 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             >
               {myBattlefield.map(card => {
                 const isDragging = draggingCard?.card.instanceId === card.instanceId;
-                const normalized = getCardRenderPosition(card, false, {
+                const liveLayoutPosition = myBattlefieldLayout.tidyPositions.get(card.instanceId);
+                const normalized = getMyBattlefieldRenderPosition(card, liveLayoutPosition, {
                   widthPx: myBattlefieldLayout.battlefieldWidth,
                   heightPx: myBattlefieldLayout.battlefieldHeightPx,
                   cardWidthPx: myBattlefieldLayout.cardWidthPx,
                   cardHeightPx: myBattlefieldLayout.cardHeightPx
-                });
+                }, myBattlefieldLayout, optimisticAutoBattlefieldIds.has(card.instanceId));
                 const currentDragRect = myBattlefieldRef.current?.getBoundingClientRect?.() || draggingCard?.battlefieldRect;
                 const dragLeftPx = isDragging && currentDragRect
                   ? clamp(

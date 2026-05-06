@@ -3859,17 +3859,40 @@ export default function App() {
           };
 
           tickUnsubscribe = onAuthStateChanged(auth, (u) => {
-            if (u && !u.isAnonymous) {
+            if (u) {
               settle(u);
             }
           });
 
-          window.setTimeout(() => settle(null), 1000);
+          window.setTimeout(() => settle(auth.currentUser || null), 1000);
         });
 
-        if (postRedirectUser && !cancelled) {
-          setUser(postRedirectUser);
-          setInitError(null);
+        const recoveredUser = postRedirectUser || auth.currentUser;
+        if (recoveredUser && !cancelled) {
+          setUser(recoveredUser);
+          if (!recoveredUser.isAnonymous) {
+            setInitError(null);
+          } else {
+            console.warn('redirect failed or empty; recovering guest session');
+            setInitError('Google sign-in did not complete; recovered guest session. You can continue as Guest or try Google again.');
+          }
+        } else {
+          console.warn('redirect failed or empty; recovering guest session');
+          if (!cancelled) {
+            setInitError('Google sign-in did not complete; recovered guest session. You can continue as Guest or try Google again.');
+          }
+          try {
+            console.log('guest recovery anonymous sign-in');
+            const anonResult = await signInAnonymously(auth);
+            if (!cancelled) {
+              setUser(anonResult.user);
+            }
+          } catch (e) {
+            console.error('Guest recovery anonymous sign-in failed', e);
+            if (!cancelled) {
+              setInitError(`Google sign-in did not complete and guest recovery failed: ${e?.code || 'unknown'} — ${e?.message || 'no message'}`);
+            }
+          }
         }
 
         sessionStorage.removeItem('googleRedirectStarted');
@@ -4144,18 +4167,23 @@ export default function App() {
     setInitError(null);
     setIsActionLoading(true);
     const isMobileDevice = isMobileOrTouchDevice();
-    let redirectStarted = false;
     try {
       const provider = new GoogleAuthProvider();
       if (isMobileDevice) {
         console.log('mobile google redirect starting');
         sessionStorage.setItem('googleRedirectStarted', '1');
-        if (auth.currentUser?.isAnonymous === true) {
-          console.log('signing out anonymous user before redirect');
-          await signOut(auth);
+        try {
+          await signInWithRedirect(auth, provider);
+          console.warn('mobile redirect returned without navigation');
+          sessionStorage.removeItem('googleRedirectStarted');
+          setInitError('Google sign-in redirect returned without navigating. You can continue as Guest or try Google again.');
+          setIsActionLoading(false);
+        } catch (e) {
+          console.error('mobile redirect failed to start', e);
+          sessionStorage.removeItem('googleRedirectStarted');
+          setInitError(`Google sign-in failed to start: ${e?.code || 'unknown'} — ${e?.message || 'no message'}`);
+          setIsActionLoading(false);
         }
-        await signInWithRedirect(auth, provider);
-        redirectStarted = true;
         return;
       }
 
@@ -4179,7 +4207,7 @@ export default function App() {
       console.error('Google auth error message:', e?.message);
       setInitError(`Google sign-in failed: ${e?.code || 'unknown'} — ${e?.message || 'no message'}`);
     } finally {
-      if (!isMobileDevice || !redirectStarted) {
+      if (!isMobileDevice) {
         setIsActionLoading(false);
       }
     }

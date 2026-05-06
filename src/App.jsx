@@ -151,8 +151,8 @@ const getAutoPassLogKey = (entry, entryIndex) => {
 const MAX_PROXY_AUTOPASS_ADVANCES = 10;
 const BATTLEFIELD_CARD_WIDTH_PX = 80;
 const BATTLEFIELD_CARD_HEIGHT_PX = 112;
-const BATTLEFIELD_NORMALIZED_MIN = 0.02;
-const BATTLEFIELD_NORMALIZED_MAX = 0.98;
+const BATTLEFIELD_NORMALIZED_MIN = 0.03;
+const BATTLEFIELD_NORMALIZED_MAX = 0.97;
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 const clampBattlefieldNormalized = (value) => clamp(value, BATTLEFIELD_NORMALIZED_MIN, BATTLEFIELD_NORMALIZED_MAX);
@@ -177,6 +177,21 @@ const getDefaultLandSpawnPosition = () => {
     x: Number((nx * 100).toFixed(1)),
     y: Number((ny * 100).toFixed(1))
   };
+};
+
+const isLandCard = (card) => (card?.type_line || '').toLowerCase().includes('land');
+
+const getDefaultBattlefieldSpawnPosition = (card) => (
+  isLandCard(card) ? getDefaultLandSpawnPosition() : getDefaultPermanentSpawnPosition()
+);
+
+const logBattlefieldEntry = (card, source, position) => {
+  console.log('[BATTLEFIELD_ENTRY]', {
+    name: card?.name || 'Unknown card',
+    source,
+    nx: position?.nx,
+    ny: position?.ny
+  });
 };
 
 const getDefaultAutoPassConfig = () => ({
@@ -324,19 +339,9 @@ const advancePassPriorityState = (currentGame, logEntry, onTurnStart) => {
         card.tapped = false;
 
         if (isPerm) {
-          const isLand = typeLine.toLowerCase().includes('land');
-          const existingBf = updatedGame.cards.filter(c => c.controllerId === card.controllerId && c.zone === ZONES.BATTLEFIELD && c.instanceId !== card.instanceId);
-          const existingLands = existingBf.filter(c => (c.type_line || '').toLowerCase().includes('land'));
-          const existingNonLands = existingBf.filter(c => !(c.type_line || '').toLowerCase().includes('land'));
-          if (isLand) {
-            const i = existingLands.length;
-            card.x = (i % 6) * 15 + 5;
-            card.y = 60 + Math.floor(i / 6) * 15;
-          } else {
-            const i = existingNonLands.length;
-            card.x = (i % 5) * 18 + 5;
-            card.y = 10 + Math.floor(i / 5) * 20;
-          }
+          const spawnPosition = getDefaultBattlefieldSpawnPosition(card);
+          Object.assign(card, spawnPosition);
+          logBattlefieldEntry(card, 'STACK_RESOLUTION', spawnPosition);
         }
 
         updatedGame.cards[cardIndex] = card;
@@ -962,13 +967,11 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const canAct = !isSpectator;
 
   const getPlayerTargetId = (pid) => `player:${pid}`;
-  const getNormalizedFromLegacyPosition = (x, y, rect) => {
-    if (!rect || !Number.isFinite(x) || !Number.isFinite(y) || rect.width <= 0 || rect.height <= 0) return null;
-    const cardCenterX = rect.left + ((x / 100) * rect.width) + (BATTLEFIELD_CARD_WIDTH_PX / 2);
-    const cardCenterY = rect.top + ((y / 100) * rect.height) + (BATTLEFIELD_CARD_HEIGHT_PX / 2);
+  const getNormalizedFromLegacyPosition = (x, y) => {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
     return {
-      nx: clampBattlefieldNormalized((cardCenterX - rect.left) / rect.width),
-      ny: clampBattlefieldNormalized((cardCenterY - rect.top) / rect.height)
+      nx: clampBattlefieldNormalized(x / 100),
+      ny: clampBattlefieldNormalized(y / 100)
     };
   };
 
@@ -977,8 +980,17 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     let ny = Number.isFinite(card?.ny) ? card.ny : null;
 
     if (nx === null || ny === null) {
-      const containerRect = (isOpponentView ? opponentBattlefieldRef.current : myBattlefieldRef.current)?.getBoundingClientRect?.();
-      const legacy = getNormalizedFromLegacyPosition(card?.x, card?.y, containerRect);
+      const legacy = getNormalizedFromLegacyPosition(card?.x, card?.y);
+      if (legacy) {
+        console.log('[BATTLEFIELD_LEGACY_FALLBACK]', {
+          name: card?.name || 'Unknown card',
+          cardId: card?.instanceId,
+          x: card?.x,
+          y: card?.y,
+          nx: legacy.nx,
+          ny: legacy.ny
+        });
+      }
       nx = legacy?.nx ?? 0.15;
       ny = legacy?.ny ?? 0.2;
     }
@@ -1146,11 +1158,12 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const handleDragEnd = async () => {
     if (!draggingCard) return;
     const { card, battlefieldRect, currentClientX, currentClientY, pointerOffsetToCenterX = 0, pointerOffsetToCenterY = 0 } = draggingCard;
-    if (battlefieldRect && Number.isFinite(currentClientX) && Number.isFinite(currentClientY)) {
+    const currentBattlefieldRect = myBattlefieldRef.current?.getBoundingClientRect?.() || battlefieldRect;
+    if (currentBattlefieldRect && Number.isFinite(currentClientX) && Number.isFinite(currentClientY)) {
       const cardCenterX = currentClientX + pointerOffsetToCenterX;
       const cardCenterY = currentClientY + pointerOffsetToCenterY;
-      const nx = clampBattlefieldNormalized((cardCenterX - battlefieldRect.left) / battlefieldRect.width);
-      const ny = clampBattlefieldNormalized((cardCenterY - battlefieldRect.top) / battlefieldRect.height);
+      const nx = clampBattlefieldNormalized((cardCenterX - currentBattlefieldRect.left) / currentBattlefieldRect.width);
+      const ny = clampBattlefieldNormalized((cardCenterY - currentBattlefieldRect.top) / currentBattlefieldRect.height);
       await handleAction('MOVE_CARD_XY', {
         cardId: card.instanceId,
         x: Number((nx * 100).toFixed(1)),
@@ -1379,13 +1392,19 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         delete updates.log; // No log entry for this
       }
     } else if (actionType === 'MOVE_CARD_XY') {
+      const payloadNx = Number.isFinite(payload.nx)
+        ? clampBattlefieldNormalized(payload.nx)
+        : (Number.isFinite(payload.x) ? clampBattlefieldNormalized(payload.x / 100) : null);
+      const payloadNy = Number.isFinite(payload.ny)
+        ? clampBattlefieldNormalized(payload.ny)
+        : (Number.isFinite(payload.y) ? clampBattlefieldNormalized(payload.y / 100) : null);
       const newCards = game.cards.map(c => c.instanceId === payload.cardId
         ? {
             ...c,
-            x: payload.x,
-            y: payload.y,
-            nx: Number.isFinite(payload.nx) ? clampBattlefieldNormalized(payload.nx) : c.nx,
-            ny: Number.isFinite(payload.ny) ? clampBattlefieldNormalized(payload.ny) : c.ny
+            x: Number.isFinite(payloadNx) ? Number((payloadNx * 100).toFixed(1)) : payload.x,
+            y: Number.isFinite(payloadNy) ? Number((payloadNy * 100).toFixed(1)) : payload.y,
+            nx: Number.isFinite(payloadNx) ? Number(payloadNx.toFixed(4)) : c.nx,
+            ny: Number.isFinite(payloadNy) ? Number(payloadNy.toFixed(4)) : c.ny
           }
         : c);
       updates.cards = newCards;
@@ -1396,16 +1415,16 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       const nonLands = myBattlefield.filter(c => !c.type_line || !c.type_line.toLowerCase().includes('land'));
 
       const updatesById = new Map();
-      const nonLandColumns = 5;
-      const landColumns = 6;
-      const nonLandStepX = 0.16;
-      const nonLandStepY = 0.2;
-      const landStepX = 0.13;
-      const landStepY = 0.14;
-      const nonLandStartX = 0.12;
-      const nonLandStartY = 0.18;
-      const landStartX = 0.12;
-      const landStartY = 0.62;
+      const nonLandColumns = 4;
+      const landColumns = 4;
+      const nonLandStepX = 0.24;
+      const nonLandStepY = 0.18;
+      const landStepX = 0.24;
+      const landStepY = 0.12;
+      const nonLandStartX = 0.14;
+      const nonLandStartY = 0.16;
+      const landStartX = 0.14;
+      const landStartY = 0.84;
 
       nonLands.forEach((card, i) => {
         const nx = clampBattlefieldNormalized(nonLandStartX + ((i % nonLandColumns) * nonLandStepX));
@@ -1433,17 +1452,16 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
       const newCards = game.cards.map(c => updatesById.get(c.instanceId) || c);
 
-      if (import.meta.env.DEV && myBattlefield.length > 0) {
-        const firstBefore = myBattlefield[0];
-        const firstAfter = updatesById.get(firstBefore.instanceId);
-        if (firstAfter) {
-          console.log('[TIDY_BOARD]', {
-            cardId: firstBefore.instanceId,
-            before: { nx: firstBefore.nx, ny: firstBefore.ny },
-            after: { nx: firstAfter.nx, ny: firstAfter.ny }
-          });
-        }
-      }
+      const tidyPreview = myBattlefield.slice(0, 5).map((before) => {
+        const after = updatesById.get(before.instanceId);
+        return {
+          name: before.name || 'Unknown card',
+          cardId: before.instanceId,
+          before: { nx: before.nx, ny: before.ny },
+          after: after ? { nx: after.nx, ny: after.ny } : null
+        };
+      });
+      console.log('[TIDY_BOARD]', tidyPreview);
 
       updates.cards = newCards;
       updates.log = arrayUnion({...logEntry, desc: 'Tidied the board'});
@@ -1503,21 +1521,21 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         isToken: true,
         ...spawnPosition
       };
+      logBattlefieldEntry(newToken, 'CREATE_TOKEN', spawnPosition);
       updates.cards = [...game.cards, newToken];
       updates.log = arrayUnion({...logEntry, desc: `Created ${newToken.power}/${newToken.toughness} ${newToken.name} Token`});
 
     } else if (actionType === 'CLONE_CARD') {
       const original = game.cards.find(c => c.instanceId === payload.cardId);
       if (original) {
-        const newX = Math.max(0, Math.min(90, (original.x || 10) + 3));
-        const newY = Math.max(0, Math.min(90, (original.y || 10) + 3));
+        const spawnPosition = getDefaultBattlefieldSpawnPosition(original);
         const clone = {
           ...original,
           instanceId: generateCardId(),
-          x: newX,
-          y: newY,
           zone: ZONES.BATTLEFIELD, // Keep owner/controller, copy other fields by spread
+          ...spawnPosition
         };
+        logBattlefieldEntry(clone, 'CLONE_CARD', spawnPosition);
         updates.cards = [...game.cards, clone];
         updates.log = arrayUnion({...logEntry, desc: `Cloned ${original.name}`});
       }
@@ -1558,16 +1576,19 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       updates.cards = newCards;
 
     } else if (actionType === 'CHANGE_CONTROL') {
+      const changedCard = game.cards.find(c => c.instanceId === payload.cardId);
+      const spawnPosition = getDefaultBattlefieldSpawnPosition(changedCard);
       const newCards = game.cards.map(c =>
         c.instanceId === payload.cardId
           ? {
               ...c,
               controllerId: c.controllerId === userId ? (opponent?.id || userId) : userId,
               zone: ZONES.BATTLEFIELD,
-              ...getDefaultPermanentSpawnPosition()
+              ...spawnPosition
             }
           : c
       );
+      logBattlefieldEntry(changedCard, 'CHANGE_CONTROL', spawnPosition);
       updates.cards = newCards;
       updates.combat = clearCombatAssignmentsForCard(game.combat || getEmptyCombatState(), payload.cardId);
       updates.log = arrayUnion({...logEntry, desc: `Changed control of ${payload.cardName}`});
@@ -1658,20 +1679,9 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               card.zone = isPerm ? ZONES.BATTLEFIELD : ZONES.GRAVEYARD;
               card.tapped = false;
               if (isPerm) {
-                const isLand = (card.type_line || '').toLowerCase().includes('land');
-                const existingBf = updatedCards.filter(c => c.controllerId === card.controllerId && c.zone === ZONES.BATTLEFIELD && c.instanceId !== card.instanceId );
-                const existingLands = existingBf.filter(c => (c.type_line || '').toLowerCase().includes('land'));
-                const existingNonLands = existingBf.filter(c => !(c.type_line || '').toLowerCase().includes('land'));
-
-                if (isLand) {
-                  const i = existingLands.length;
-                  card.x = (i % 6) * 15 + 5;
-                  card.y = 60 + Math.floor(i / 6) * 15;
-                } else {
-                  const i = existingNonLands.length;
-                  card.x = (i % 5) * 18 + 5;
-                  card.y = 10 + Math.floor(i / 5) * 20;
-                }
+                const spawnPosition = getDefaultBattlefieldSpawnPosition(card);
+                Object.assign(card, spawnPosition);
+                logBattlefieldEntry(card, 'STACK_RESOLUTION', spawnPosition);
               }
             }
 
@@ -1743,6 +1753,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       const playedCard = game.cards.find(c => c.instanceId === payload.cardId);
       const spawnPosition = getDefaultLandSpawnPosition();
       const newCards = game.cards.map(c => c.instanceId === payload.cardId ? { ...c, zone: ZONES.BATTLEFIELD, ...spawnPosition } : c);
+      logBattlefieldEntry(playedCard, 'PLAY_LAND', spawnPosition);
       updates.cards = newCards;
       pendingRecapEvents.push({
         type: 'PLAY_LAND',
@@ -1856,6 +1867,10 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       }
 
     } else if (actionType === 'MOVE_ZONE') {
+      const movingCard = game.cards.find(c => c.instanceId === payload.cardId);
+      const spawnPosition = payload.targetZone === ZONES.BATTLEFIELD
+        ? getDefaultBattlefieldSpawnPosition(movingCard)
+        : null;
       const newCards = game.cards.map(c =>
         c.instanceId === payload.cardId
           ? {
@@ -1864,10 +1879,11 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               tapped: false,
               tempDamage: 0,
               controllerId: c.ownerId,
-              ...(payload.targetZone === ZONES.BATTLEFIELD ? getDefaultPermanentSpawnPosition() : { x: 10, y: 10 })
+              ...(spawnPosition || { x: 10, y: 10 })
             }
           : c
       );
+      if (spawnPosition) logBattlefieldEntry(movingCard, 'MOVE_ZONE', spawnPosition);
       updates.cards = newCards;
       updates.combat = clearCombatAssignmentsForCard(game.combat || getEmptyCombatState(), payload.cardId);
 
@@ -2404,18 +2420,13 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   useEffect(() => {
     if (!gameId || !game?.cards?.length) return;
 
-    const myRect = myBattlefieldRef.current?.getBoundingClientRect?.();
-    const oppRect = opponentBattlefieldRef.current?.getBoundingClientRect?.();
-    if (!myRect?.width || !myRect?.height || !oppRect?.width || !oppRect?.height) return;
-
     let changed = false;
     const nextCards = game.cards.map((card) => {
-      if (card.zone !== ZONES.BATTLEFIELD) return card;
+      if (card.zone !== ZONES.BATTLEFIELD || card.controllerId !== viewAsPlayerId) return card;
       if (Number.isFinite(card.nx) && Number.isFinite(card.ny)) return card;
       if (!Number.isFinite(card.x) || !Number.isFinite(card.y)) return card;
 
-      const rect = card.controllerId === viewAsPlayerId ? myRect : oppRect;
-      const normalized = getNormalizedFromLegacyPosition(card.x, card.y, rect);
+      const normalized = getNormalizedFromLegacyPosition(card.x, card.y);
       if (!normalized) return card;
       changed = true;
       return { ...card, nx: Number(normalized.nx.toFixed(4)), ny: Number(normalized.ny.toFixed(4)) };

@@ -162,17 +162,17 @@ const isLandCard = (card) => (card?.type_line || '').toLowerCase().includes('lan
 const BATTLEFIELD_GRID_LAYOUT = {
   nonland: {
     columns: 4,
-    stepX: 0.24,
+    stepX: 0.23,
     stepY: 0.18,
-    startX: 0.14,
-    startY: 0.16
+    startX: 0.17,
+    startY: 0.20
   },
   land: {
-    columns: 4,
-    stepX: 0.24,
-    stepY: 0.12,
-    startX: 0.14,
-    startY: 0.84
+    columns: 3,
+    stepX: 0.23,
+    stepY: 0.16,
+    startX: 0.17,
+    startY: 0.64
   }
 };
 

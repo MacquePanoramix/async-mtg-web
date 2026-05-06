@@ -152,8 +152,6 @@ const MAX_PROXY_AUTOPASS_ADVANCES = 10;
 const BATTLEFIELD_CARD_WIDTH_PX = 80;
 const BATTLEFIELD_CARD_HEIGHT_PX = 112;
 const BATTLEFIELD_BASE_MIN_HEIGHT_PX = 420;
-const BATTLEFIELD_CARD_LABEL_HEIGHT_PX = 22;
-const BATTLEFIELD_BOTTOM_PADDING_PX = 24;
 const BATTLEFIELD_NORMALIZED_MIN = 0.03;
 const BATTLEFIELD_NORMALIZED_MAX = 0.97;
 
@@ -162,50 +160,90 @@ const clampBattlefieldNormalized = (value) => clamp(value, BATTLEFIELD_NORMALIZE
 
 const isLandCard = (card) => (card?.type_line || '').toLowerCase().includes('land');
 
+const getIsNarrowBattlefield = () => {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
+  return window.matchMedia('(max-width: 900px)').matches;
+};
+
 const BATTLEFIELD_GRID_LAYOUT = {
   nonland: {
-    columns: 4,
-    stepX: 0.23,
-    stepY: 0.18,
-    startX: 0.17,
-    startY: 0.20
+    desktopColumns: 4,
+    mobileColumns: 3,
+    mobileX: [0.20, 0.50, 0.80],
+    desktopX: [0.14, 0.36, 0.58, 0.80],
+    minY: 0.18,
+    maxY: 0.46,
+    singleRowY: 0.24
   },
   land: {
-    columns: 3,
-    stepX: 0.23,
-    stepY: 0.16,
-    startX: 0.17,
-    startY: 0.64
+    desktopColumns: 3,
+    mobileColumns: 3,
+    mobileX: [0.20, 0.50, 0.80],
+    desktopX: [0.20, 0.50, 0.80],
+    minY: 0.58,
+    maxY: 0.82,
+    singleRowY: 0.66
   }
 };
 
+const getBattlefieldLaneColumns = (lane) => {
+  const layout = BATTLEFIELD_GRID_LAYOUT[lane];
+  if (!layout) return 1;
+  return getIsNarrowBattlefield() ? layout.mobileColumns : layout.desktopColumns;
+};
+
+const getBattlefieldLaneXValues = (lane) => {
+  const layout = BATTLEFIELD_GRID_LAYOUT[lane];
+  if (!layout) return [0.5];
+  return getIsNarrowBattlefield() ? layout.mobileX : layout.desktopX;
+};
+
 const getBattlefieldLaneRows = (count, lane) => {
-  const columns = BATTLEFIELD_GRID_LAYOUT[lane]?.columns || 1;
-  return Math.ceil(count / columns);
+  const columns = getBattlefieldLaneColumns(lane);
+  return Math.max(0, Math.ceil(count / columns));
 };
 
-const getBattlefieldLaneMinHeight = (rows, lane) => {
-  if (rows <= 0) return BATTLEFIELD_BASE_MIN_HEIGHT_PX;
-
+const getBattlefieldYBand = (lane, rows) => {
   const layout = BATTLEFIELD_GRID_LAYOUT[lane];
-  const lowestRowCenterY = clampBattlefieldNormalized(layout.startY + ((rows - 1) * layout.stepY));
-  const bottomRoomPx = (BATTLEFIELD_CARD_HEIGHT_PX / 2) + BATTLEFIELD_CARD_LABEL_HEIGHT_PX + BATTLEFIELD_BOTTOM_PADDING_PX;
-  const requiredHeight = bottomRoomPx / (1 - lowestRowCenterY);
-
-  return Math.ceil(Math.max(BATTLEFIELD_BASE_MIN_HEIGHT_PX, requiredHeight));
+  if (lane !== 'land') return { minY: layout.minY, maxY: layout.maxY, singleRowY: layout.singleRowY };
+  if (rows >= 3) return { minY: 0.56, maxY: 0.80, singleRowY: layout.singleRowY };
+  if (rows === 2) return { minY: 0.60, maxY: 0.76, singleRowY: layout.singleRowY };
+  return { minY: layout.minY, maxY: layout.maxY, singleRowY: layout.singleRowY };
 };
 
-const getBattlefieldGridPosition = ({ card, existingBattlefieldCards = [], controllerId } = {}) => {
+const getBattlefieldLaneMinHeight = () => BATTLEFIELD_BASE_MIN_HEIGHT_PX;
+
+const getBattlefieldGridPosition = ({
+  card,
+  existingBattlefieldCards = [],
+  controllerId,
+  slotIndexOverride = null,
+  laneCountOverride = null
+} = {}) => {
   const lane = isLandCard(card) ? 'land' : 'nonland';
-  const layout = BATTLEFIELD_GRID_LAYOUT[lane];
-  const slotIndex = existingBattlefieldCards.filter((existingCard) => {
-    if (!existingCard || existingCard.instanceId === card?.instanceId) return false;
+  const laneCards = existingBattlefieldCards.filter((existingCard) => {
+    if (!existingCard) return false;
     if (controllerId && existingCard.controllerId !== controllerId) return false;
     if (existingCard.zone !== ZONES.BATTLEFIELD) return false;
     return (isLandCard(existingCard) ? 'land' : 'nonland') === lane;
-  }).length;
-  const nx = clampBattlefieldNormalized(layout.startX + ((slotIndex % layout.columns) * layout.stepX));
-  const ny = clampBattlefieldNormalized(layout.startY + (Math.floor(slotIndex / layout.columns) * layout.stepY));
+  });
+  const existingSlotIndex = laneCards.filter((existingCard) => existingCard.instanceId !== card?.instanceId).length;
+  const slotIndex = Number.isInteger(slotIndexOverride) ? slotIndexOverride : existingSlotIndex;
+  const laneCount = Number.isInteger(laneCountOverride)
+    ? laneCountOverride
+    : laneCards.some((existingCard) => existingCard.instanceId === card?.instanceId)
+      ? laneCards.length
+      : laneCards.length + 1;
+  const columns = getBattlefieldLaneColumns(lane);
+  const xValues = getBattlefieldLaneXValues(lane);
+  const rows = Math.max(1, getBattlefieldLaneRows(laneCount, lane));
+  const row = Math.floor(slotIndex / columns);
+  const col = slotIndex % columns;
+  const { minY, maxY, singleRowY } = getBattlefieldYBand(lane, rows);
+  const rowStep = rows <= 1 ? 0 : (maxY - minY) / (rows - 1);
+  const rawNy = rows <= 1 ? singleRowY : minY + (Math.min(row, rows - 1) * rowStep);
+  const nx = clampBattlefieldNormalized(xValues[Math.min(col, xValues.length - 1)] ?? xValues[xValues.length - 1] ?? 0.5);
+  const ny = clampBattlefieldNormalized(rawNy);
 
   return {
     nx: Number(nx.toFixed(4)),
@@ -213,7 +251,10 @@ const getBattlefieldGridPosition = ({ card, existingBattlefieldCards = [], contr
     x: Number((nx * 100).toFixed(1)),
     y: Number((ny * 100).toFixed(1)),
     slotIndex,
-    lane
+    lane,
+    row,
+    col,
+    rows
   };
 };
 
@@ -230,6 +271,9 @@ const logBattlefieldEntry = (card, source, position) => {
     source,
     lane: position?.lane || (isLandCard(card) ? 'land' : 'nonland'),
     slotIndex: position?.slotIndex,
+    row: position?.row,
+    col: position?.col,
+    rows: position?.rows,
     nx: position?.nx,
     ny: position?.ny
   });
@@ -1461,20 +1505,24 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
       const updatesById = new Map();
       const positionsById = new Map();
-      const arrangedCards = [];
-      [...nonLands, ...lands].forEach((card) => {
-        const position = getBattlefieldGridPosition({
-          card,
-          existingBattlefieldCards: arrangedCards,
-          controllerId: userId
+      const arrangeLane = (cards, laneCount) => {
+        cards.forEach((card, slotIndex) => {
+          const position = getBattlefieldGridPosition({
+            card,
+            existingBattlefieldCards: myBattlefield,
+            controllerId: userId,
+            slotIndexOverride: slotIndex,
+            laneCountOverride: laneCount
+          });
+          updatesById.set(card.instanceId, {
+            ...card,
+            ...getBattlefieldPositionCoordinates(position)
+          });
+          positionsById.set(card.instanceId, position);
         });
-        updatesById.set(card.instanceId, {
-          ...card,
-          ...getBattlefieldPositionCoordinates(position)
-        });
-        positionsById.set(card.instanceId, position);
-        arrangedCards.push(card);
-      });
+      };
+      arrangeLane(nonLands, nonLands.length);
+      arrangeLane(lands, lands.length);
 
       const newCards = game.cards.map(c => updatesById.get(c.instanceId) || c);
 
@@ -1486,6 +1534,9 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           cardId: before.instanceId,
           lane: position?.lane || (isLandCard(before) ? 'land' : 'nonland'),
           slotIndex: position?.slotIndex,
+          row: position?.row,
+          col: position?.col,
+          rows: position?.rows,
           before: { nx: before.nx, ny: before.ny },
           after: after ? { nx: after.nx, ny: after.ny } : null
         };

@@ -241,27 +241,87 @@ const calculateBattlefieldColumns = ({ containerWidth, cardWidthPx, gapPx, sideP
   };
 };
 
-const calculateBattlefieldLayout = ({
+const getBattlefieldLayoutGroupKey = (card) => (isLandCard(card) ? 'land' : 'nonland');
+
+const getBattlefieldLayoutGroupLabel = (groupKey) => (groupKey === 'land' ? 'Lands' : 'Nonlands');
+
+const computeAutoBattlefieldLayout = ({
   cards = [],
+  controllerId = null,
   containerWidth = BATTLEFIELD_DEFAULT_WIDTH_PX,
   isMobile = getIsNarrowBattlefield(),
-  debugLabel = 'BATTLEFIELD_LAYOUT'
+  debugLabel = 'BATTLEFIELD_AUTO_LAYOUT',
+  battlefieldType = 'unknown',
+  treatManualAsAuto = false
 } = {}) => {
   const battlefieldWidth = Number.isFinite(containerWidth) && containerWidth > 0 ? containerWidth : BATTLEFIELD_DEFAULT_WIDTH_PX;
   const config = getBattlefieldLayoutConfig(isMobile);
   const cardWidthPx = config.cardWidthPx;
+  const cardHeightPx = config.cardHeightPx;
   const columnLayout = calculateBattlefieldColumns({
     containerWidth: battlefieldWidth,
     cardWidthPx,
     gapPx: config.gapPx,
     sidePaddingPx: config.sidePaddingPx
   });
-  const columns = columnLayout.columns;
-  const cardHeightPx = config.cardHeightPx;
-  const nonlands = cards.filter(card => !isLandCard(card));
-  const lands = cards.filter(isLandCard);
-  const nonlandRows = Math.ceil(nonlands.length / columns);
-  const landRows = Math.ceil(lands.length / columns);
+  const maxColumns = columnLayout.columns;
+  const { usableLeftPx, usableRightPx } = getBattlefieldHorizontalSafeBounds({
+    containerWidth: battlefieldWidth,
+    cardWidthPx
+  });
+
+  const relevantBattlefieldCards = cards.filter((card) => {
+    if (!card || card.zone !== ZONES.BATTLEFIELD) return false;
+    if (controllerId && card.controllerId !== controllerId) return false;
+    return true;
+  });
+  const autoCards = treatManualAsAuto
+    ? relevantBattlefieldCards
+    : relevantBattlefieldCards.filter(card => getCardPositionMode(card) === BATTLEFIELD_POSITION_MODE_AUTO);
+  const manualCards = treatManualAsAuto
+    ? []
+    : relevantBattlefieldCards.filter(card => getCardPositionMode(card) === BATTLEFIELD_POSITION_MODE_MANUAL);
+
+  const groupDefinitions = [
+    { key: 'nonland', label: getBattlefieldLayoutGroupLabel('nonland') },
+    { key: 'land', label: getBattlefieldLayoutGroupLabel('land') }
+  ];
+  const groups = groupDefinitions.map((definition) => {
+    const groupCards = autoCards.filter(card => getBattlefieldLayoutGroupKey(card) === definition.key);
+    const rows = [];
+    for (let rowStart = 0; rowStart < groupCards.length; rowStart += maxColumns) {
+      const rowCards = groupCards.slice(rowStart, rowStart + maxColumns);
+      const columns = Math.max(1, rowCards.length);
+      const rowLayout = calculateBattlefieldColumns({
+        containerWidth: battlefieldWidth,
+        cardWidthPx,
+        gapPx: config.gapPx,
+        sidePaddingPx: config.sidePaddingPx
+      });
+      const rowWidth = (columns * cardWidthPx) + (Math.max(0, columns - 1) * rowLayout.gapPx);
+      const startX = (battlefieldWidth / 2) - (rowWidth / 2) + (cardWidthPx / 2);
+      rows.push({
+        index: rows.length,
+        cards: rowCards,
+        columns,
+        rowWidth,
+        startX,
+        columnCentersPx: Array.from({ length: columns }, (_unused, col) => startX + (col * (cardWidthPx + rowLayout.gapPx)))
+      });
+    }
+    return {
+      ...definition,
+      cards: groupCards,
+      rows,
+      rowCount: rows.length,
+      columns: rows.map(row => row.columns)
+    };
+  });
+
+  const nonlandGroup = groups.find(group => group.key === 'nonland');
+  const landGroup = groups.find(group => group.key === 'land');
+  const nonlandRows = nonlandGroup?.rowCount || 0;
+  const landRows = landGroup?.rowCount || 0;
   const nonlandRowsHeightPx = nonlandRows * (cardHeightPx + config.labelSafePx);
   const landRowsHeightPx = landRows * (cardHeightPx + config.labelSafePx);
   const nonlandGapsPx = Math.max(0, nonlandRows - 1) * config.rowGapPx;
@@ -275,103 +335,128 @@ const calculateBattlefieldLayout = ({
     + landGapsPx
     + config.bottomPaddingPx;
   const battlefieldHeightPx = Math.ceil(clamp(neededHeight, config.minHeightPx, config.maxHeightPx));
-  const { usableLeftPx, usableRightPx } = getBattlefieldHorizontalSafeBounds({
-    containerWidth: battlefieldWidth,
-    cardWidthPx
-  });
-  const columnCentersPx = columnLayout.columnCentersPx;
   const rowPitchPx = cardHeightPx + config.labelSafePx + config.rowGapPx;
-  const nonlandStartY = config.headerSafeTopPx;
-  const landStartY = nonlandStartY + nonlandRowsHeightPx + nonlandGapsPx + laneGapPx;
+  const groupStartYPx = new Map([
+    ['nonland', config.headerSafeTopPx],
+    ['land', config.headerSafeTopPx + nonlandRowsHeightPx + nonlandGapsPx + laneGapPx]
+  ]);
   const tidyPositions = new Map();
 
-  const assignLanePositions = (laneCards, lane, laneStartY) => {
-    laneCards.forEach((card, slotIndex) => {
-      const row = Math.floor(slotIndex / columns);
-      const col = slotIndex % columns;
-      const pixelX = columnCentersPx[Math.min(col, columnCentersPx.length - 1)] ?? (battlefieldWidth / 2);
-      const unclampedPixelY = laneStartY + (row * rowPitchPx) + (cardHeightPx / 2);
-      const pixelY = clamp(unclampedPixelY, cardHeightPx / 2, battlefieldHeightPx - (cardHeightPx / 2) - config.bottomPaddingPx / 4);
-      const nx = Number(clampBattlefieldCenterNormalized(pixelX / battlefieldWidth, battlefieldWidth, cardWidthPx).toFixed(4));
-      const ny = Number(clampBattlefieldCenterNormalized(pixelY / battlefieldHeightPx, battlefieldHeightPx, cardHeightPx).toFixed(4));
-      const position = {
-        nx,
-        ny,
-        x: Number((nx * 100).toFixed(1)),
-        y: Number((ny * 100).toFixed(1)),
-        pixelX: Number(pixelX.toFixed(1)),
-        pixelY: Number(pixelY.toFixed(1)),
-        lane,
-        slotIndex,
-        row,
-        col,
-        rows: lane === 'land' ? landRows : nonlandRows,
-        battlefieldWidth,
-        battlefieldHeightPx,
-        positionBasisWidthPx: battlefieldWidth,
-        positionBasisHeightPx: battlefieldHeightPx,
-        positionMode: BATTLEFIELD_POSITION_MODE_AUTO
-      };
-      tidyPositions.set(card.instanceId, position);
+  groups.forEach((group) => {
+    const laneStartY = groupStartYPx.get(group.key) || config.headerSafeTopPx;
+    group.rows.forEach((row) => {
+      row.cards.forEach((card, col) => {
+        const slotIndex = row.index * maxColumns + col;
+        const pixelX = row.columnCentersPx[Math.min(col, row.columnCentersPx.length - 1)] ?? (battlefieldWidth / 2);
+        const unclampedPixelY = laneStartY + (row.index * rowPitchPx) + (cardHeightPx / 2);
+        const pixelY = clamp(unclampedPixelY, cardHeightPx / 2, battlefieldHeightPx - (cardHeightPx / 2) - config.bottomPaddingPx / 4);
+        const nx = Number(clampBattlefieldCenterNormalized(pixelX / battlefieldWidth, battlefieldWidth, cardWidthPx, BATTLEFIELD_SIDE_PADDING_PX).toFixed(4));
+        const ny = Number(clampBattlefieldCenterNormalized(pixelY / battlefieldHeightPx, battlefieldHeightPx, cardHeightPx).toFixed(4));
+        tidyPositions.set(card.instanceId, {
+          nx,
+          ny,
+          x: Number((nx * 100).toFixed(1)),
+          y: Number((ny * 100).toFixed(1)),
+          pixelX: Number(pixelX.toFixed(1)),
+          pixelY: Number(pixelY.toFixed(1)),
+          lane: group.key,
+          groupKey: group.key,
+          groupLabel: group.label,
+          slotIndex,
+          row: row.index,
+          col,
+          rows: group.rowCount,
+          rowColumns: row.columns,
+          battlefieldWidth,
+          battlefieldHeightPx,
+          positionBasisWidthPx: battlefieldWidth,
+          positionBasisHeightPx: battlefieldHeightPx,
+          positionMode: BATTLEFIELD_POSITION_MODE_AUTO
+        });
+      });
     });
-  };
+  });
 
-  assignLanePositions(nonlands, 'nonland', nonlandStartY);
-  assignLanePositions(lands, 'land', landStartY);
-
-  console.log(`[${debugLabel}]`, {
+  const groupingDebug = groups.map(group => ({
+    key: group.key,
+    label: group.label,
+    count: group.cards.length,
+    order: group.cards.map(card => ({ instanceId: card.instanceId, name: card.name || 'Unknown card' })),
+    chosenColumnsPerRow: group.rows.map(row => row.columns),
+    rowCount: group.rowCount,
+    rows: group.rows.map(row => ({
+      row: row.index,
+      columns: row.columns,
+      cardOrder: row.cards.map(card => ({ instanceId: card.instanceId, name: card.name || 'Unknown card' }))
+    }))
+  }));
+  const generatedPositionsDebug = autoCards.map((card) => {
+    const position = tidyPositions.get(card.instanceId);
+    return {
+      instanceId: card.instanceId,
+      name: card.name || 'Unknown card',
+      group: position?.groupKey,
+      row: position?.row,
+      col: position?.col,
+      nx: position?.nx,
+      ny: position?.ny,
+      pixelX: position?.pixelX,
+      pixelY: position?.pixelY
+    };
+  });
+  const debugInfo = {
+    battlefieldType,
+    measuredWidth: battlefieldWidth,
     battlefieldWidthPx: battlefieldWidth,
-    battlefieldWidth,
     battlefieldHeightPx,
-    cardWidthPx,
-    usableLeftPx: Number(usableLeftPx.toFixed(1)),
-    usableRightPx: Number(usableRightPx.toFixed(1)),
+    contentHeightPx: neededHeight,
+    clampedContentHeightPx: battlefieldHeightPx,
+    autoCardsCount: autoCards.length,
+    manualCardsCount: manualCards.length,
+    manualCards: manualCards.map(card => ({ instanceId: card.instanceId, name: card.name || 'Unknown card', nx: card.nx, ny: card.ny })),
+    treatManualAsAuto,
+    grouping: groupingDebug,
+    generatedPositions: generatedPositionsDebug,
+    maxColumns,
+    columnCentersPx: columnLayout.columnCentersPx.map(centerX => Number(centerX.toFixed(1))),
+    rowGapPx: config.rowGapPx,
+    laneGapPx: config.laneGapPx,
     gapPx: columnLayout.gapPx,
     sidePaddingPx: columnLayout.sidePaddingPx,
     availableWidth: Number(columnLayout.availableWidth.toFixed(1)),
     calculatedMaxColumns: columnLayout.calculatedMaxColumns,
-    chosenColumnCount: columns,
     rowWidth: Number(columnLayout.rowWidth.toFixed(1)),
     startX: Number(columnLayout.startX.toFixed(1)),
-    rowGapPx: config.rowGapPx,
-    actualCardWidthPx: cardWidthPx,
-    actualCardHeightPx: cardHeightPx,
-    columnCentersPx: columnCentersPx.map(centerX => Number(centerX.toFixed(1))),
-    rightmostCardRightEdgePx: columnCentersPx.length ? Number((Math.max(...columnCentersPx) + (cardWidthPx / 2)).toFixed(1)) : null,
-    rightmostColumnBattlefieldWidthPx: battlefieldWidth,
-    nonlandRows,
-    landRows,
-    columns
-  });
-  columnCentersPx.forEach((centerX, col) => {
-    console.log(`[${debugLabel}_COLUMN]`, {
-      col,
-      centerX: Number(centerX.toFixed(1))
+    usableLeftPx: Number(usableLeftPx.toFixed(1)),
+    usableRightPx: Number(usableRightPx.toFixed(1))
+  };
+
+  console.log(`[${debugLabel}]`, debugInfo);
+  groups.forEach((group) => {
+    console.log(`[${debugLabel}_GROUP]`, {
+      battlefieldType,
+      group: group.key,
+      label: group.label,
+      order: group.cards.map(card => `${card.instanceId}:${card.name || 'Unknown card'}`),
+      chosenColumnsPerRow: group.rows.map(row => row.columns),
+      rowCount: group.rowCount
     });
   });
-  tidyPositions.forEach((position, cardId) => {
-    const card = cards.find(candidate => candidate.instanceId === cardId);
-    console.log(`[${debugLabel}_CARD]`, {
-      name: card?.name || 'Unknown card',
-      lane: position.lane,
-      row: position.row,
-      col: position.col,
-      pixelX: position.pixelX,
-      pixelY: position.pixelY,
-      nx: position.nx,
-      ny: position.ny
-    });
+  generatedPositionsDebug.forEach((position) => {
+    console.log(`[${debugLabel}_CARD]`, { battlefieldType, ...position });
   });
 
   return {
+    positionedCards: autoCards.map(card => ({ card, position: tidyPositions.get(card.instanceId) })).filter(entry => entry.position),
     battlefieldHeightPx,
+    contentHeightPx: neededHeight,
     cardWidthPx,
     cardHeightPx,
-    columnCentersPx,
+    columnCentersPx: columnLayout.columnCentersPx,
     nonlandRows,
     landRows,
     tidyPositions,
-    columns,
+    columns: maxColumns,
     battlefieldWidth,
     usableLeftPx,
     usableRightPx,
@@ -382,7 +467,11 @@ const calculateBattlefieldLayout = ({
     availableWidth: columnLayout.availableWidth,
     calculatedMaxColumns: columnLayout.calculatedMaxColumns,
     rowWidth: columnLayout.rowWidth,
-    startX: columnLayout.startX
+    startX: columnLayout.startX,
+    groups,
+    autoCards,
+    manualCards,
+    debugInfo
   };
 };
 
@@ -402,11 +491,12 @@ const getBattlefieldGridPosition = ({
     return existingCard.instanceId !== card.instanceId;
   });
   const battlefieldCard = { ...card, zone: ZONES.BATTLEFIELD, controllerId: card.controllerId || controllerId };
-  const layout = calculateBattlefieldLayout({
+  const layout = computeAutoBattlefieldLayout({
     cards: [...controlledBattlefieldCards, battlefieldCard],
     containerWidth,
     isMobile,
-    debugLabel
+    debugLabel,
+    battlefieldType: 'grid-position'
   });
   return layout.tidyPositions.get(card.instanceId) || null;
 };
@@ -1876,14 +1966,14 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     } else if (actionType === 'TIDY_BOARD') {
       const myBattlefield = game.cards.filter(c => c.controllerId === userId && c.zone === ZONES.BATTLEFIELD);
       setOptimisticAutoBattlefieldIds(new Set(myBattlefield.map(c => c.instanceId)));
-      const lands = myBattlefield.filter(isLandCard);
-      const nonLands = myBattlefield.filter(c => !isLandCard(c));
-      const orderedBattlefield = [...nonLands, ...lands];
-      const layout = calculateBattlefieldLayout({
-        cards: orderedBattlefield,
+      const layout = computeAutoBattlefieldLayout({
+        cards: myBattlefield.map(card => ({ ...card, positionMode: BATTLEFIELD_POSITION_MODE_AUTO })),
+        controllerId: userId,
         containerWidth: getCurrentBattlefieldWidthPx(),
         isMobile: battlefieldViewport.width <= 900,
-        debugLabel: 'TIDY_BOARD_LAYOUT'
+        debugLabel: 'TIDY_BOARD_AUTO_LAYOUT',
+        battlefieldType: 'own-tidy',
+        treatManualAsAuto: true
       });
 
       const updatesById = new Map();
@@ -1898,7 +1988,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
       const newCards = game.cards.map(c => updatesById.get(c.instanceId) || c);
 
-      const tidyPreview = orderedBattlefield.map((before) => {
+      const tidyPreview = myBattlefield.map((before) => {
         const after = updatesById.get(before.instanceId);
         const position = layout.tidyPositions.get(before.instanceId);
         return {
@@ -2964,26 +3054,22 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const myBattlefieldNonlandCount = myBattlefield.length - myBattlefieldLandCount;
   const oppBattlefieldLandCount = oppBattlefield.filter(isLandCard).length;
   const oppBattlefieldNonlandCount = oppBattlefield.length - oppBattlefieldLandCount;
-  const orderedMyBattlefieldForLayout = useMemo(() => [
-    ...myBattlefield.filter(c => !isLandCard(c)),
-    ...myBattlefield.filter(isLandCard)
-  ], [myBattlefield]);
-  const orderedOppBattlefieldForLayout = useMemo(() => [
-    ...oppBattlefield.filter(c => !isLandCard(c)),
-    ...oppBattlefield.filter(isLandCard)
-  ], [oppBattlefield]);
-  const myBattlefieldLayout = useMemo(() => calculateBattlefieldLayout({
-    cards: orderedMyBattlefieldForLayout,
+  const myBattlefieldLayout = useMemo(() => computeAutoBattlefieldLayout({
+    cards: myBattlefield,
+    controllerId: viewAsPlayerId,
     containerWidth: myBattlefieldSizePx.width,
     isMobile: battlefieldViewport.width <= 900,
-    debugLabel: 'MY_BATTLEFIELD_LAYOUT'
-  }), [orderedMyBattlefieldForLayout, myBattlefieldSizePx.width, battlefieldViewport.width]);
-  const opponentBattlefieldLayout = useMemo(() => calculateBattlefieldLayout({
-    cards: orderedOppBattlefieldForLayout,
+    debugLabel: 'MY_BATTLEFIELD_AUTO_LAYOUT',
+    battlefieldType: 'own'
+  }), [myBattlefield, viewAsPlayerId, myBattlefieldSizePx.width, battlefieldViewport.width]);
+  const opponentBattlefieldLayout = useMemo(() => computeAutoBattlefieldLayout({
+    cards: oppBattlefield,
+    controllerId: opponent?.id || null,
     containerWidth: opponentBattlefieldSizePx.width,
     isMobile: battlefieldViewport.width <= 900,
-    debugLabel: 'OPPONENT_BATTLEFIELD_LAYOUT'
-  }), [orderedOppBattlefieldForLayout, opponentBattlefieldSizePx.width, battlefieldViewport.width]);
+    debugLabel: 'OPPONENT_BATTLEFIELD_AUTO_LAYOUT',
+    battlefieldType: 'opponent'
+  }), [oppBattlefield, opponent?.id, opponentBattlefieldSizePx.width, battlefieldViewport.width]);
   const myBattlefieldMinHeightPx = myBattlefieldLayout.battlefieldHeightPx;
   const opponentBattlefieldMinHeightPx = opponentBattlefieldLayout.battlefieldHeightPx;
 

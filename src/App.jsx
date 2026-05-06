@@ -151,6 +151,9 @@ const getAutoPassLogKey = (entry, entryIndex) => {
 const MAX_PROXY_AUTOPASS_ADVANCES = 10;
 const BATTLEFIELD_CARD_WIDTH_PX = 80;
 const BATTLEFIELD_CARD_HEIGHT_PX = 112;
+const BATTLEFIELD_BASE_MIN_HEIGHT_PX = 420;
+const BATTLEFIELD_CARD_LABEL_HEIGHT_PX = 22;
+const BATTLEFIELD_BOTTOM_PADDING_PX = 24;
 const BATTLEFIELD_NORMALIZED_MIN = 0.03;
 const BATTLEFIELD_NORMALIZED_MAX = 0.97;
 
@@ -174,6 +177,22 @@ const BATTLEFIELD_GRID_LAYOUT = {
     startX: 0.17,
     startY: 0.64
   }
+};
+
+const getBattlefieldLaneRows = (count, lane) => {
+  const columns = BATTLEFIELD_GRID_LAYOUT[lane]?.columns || 1;
+  return Math.ceil(count / columns);
+};
+
+const getBattlefieldLaneMinHeight = (rows, lane) => {
+  if (rows <= 0) return BATTLEFIELD_BASE_MIN_HEIGHT_PX;
+
+  const layout = BATTLEFIELD_GRID_LAYOUT[lane];
+  const lowestRowCenterY = clampBattlefieldNormalized(layout.startY + ((rows - 1) * layout.stepY));
+  const bottomRoomPx = (BATTLEFIELD_CARD_HEIGHT_PX / 2) + BATTLEFIELD_CARD_LABEL_HEIGHT_PX + BATTLEFIELD_BOTTOM_PADDING_PX;
+  const requiredHeight = bottomRoomPx / (1 - lowestRowCenterY);
+
+  return Math.ceil(Math.max(BATTLEFIELD_BASE_MIN_HEIGHT_PX, requiredHeight));
 };
 
 const getBattlefieldGridPosition = ({ card, existingBattlefieldCards = [], controllerId } = {}) => {
@@ -2457,6 +2476,25 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const oppBattlefield = gameCards.filter(c => c.controllerId !== viewAsPlayerId && c.zone === ZONES.BATTLEFIELD);
   const oppHand = gameCards.filter(c => c.controllerId !== viewAsPlayerId && c.zone === ZONES.HAND);
 
+  const myBattlefieldLandCount = myBattlefield.filter(isLandCard).length;
+  const myBattlefieldNonlandCount = myBattlefield.length - myBattlefieldLandCount;
+  const myBattlefieldLandRows = getBattlefieldLaneRows(myBattlefieldLandCount, 'land');
+  const myBattlefieldNonlandRows = getBattlefieldLaneRows(myBattlefieldNonlandCount, 'nonland');
+  const myBattlefieldMinHeightPx = Math.max(
+    getBattlefieldLaneMinHeight(myBattlefieldLandRows, 'land'),
+    getBattlefieldLaneMinHeight(myBattlefieldNonlandRows, 'nonland')
+  );
+
+  useEffect(() => {
+    console.log('[BATTLEFIELD_PANEL_SIZE]', {
+      landCount: myBattlefieldLandCount,
+      nonlandCount: myBattlefieldNonlandCount,
+      landRows: myBattlefieldLandRows,
+      nonlandRows: myBattlefieldNonlandRows,
+      minHeight: myBattlefieldMinHeightPx
+    });
+  }, [myBattlefieldLandCount, myBattlefieldNonlandCount, myBattlefieldLandRows, myBattlefieldNonlandRows, myBattlefieldMinHeightPx]);
+
   useEffect(() => {
     if (!gameId || !game?.cards?.length) return;
 
@@ -2954,7 +2992,11 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               </div>
             </div>
 
-            <div ref={myBattlefieldRef} className="w-full min-h-[420px] relative pt-2">
+            <div
+              ref={myBattlefieldRef}
+              className="w-full relative pt-2"
+              style={{ minHeight: `${myBattlefieldMinHeightPx}px` }}
+            >
               {myBattlefield.map(card => {
                 const isDragging = draggingCard?.card.instanceId === card.instanceId;
                 const normalized = getCardRenderPosition(card, false);

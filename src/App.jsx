@@ -7,9 +7,14 @@ import { X, ArrowRight, Clock, Shield, Skull, Layers, Eye, ChevronDown, ChevronU
 
 // --- Firebase Configuration ---
 // UPDATED: Using standard Vite env vars
+const resolvedAuthDomain =
+  typeof window !== 'undefined' && window.location.hostname === 'magicbypost.netlify.app'
+    ? 'magicbypost.netlify.app'
+    : import.meta.env.VITE_FIREBASE_AUTH_DOMAIN;
+
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  authDomain: resolvedAuthDomain,
   projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
   storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
   messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,

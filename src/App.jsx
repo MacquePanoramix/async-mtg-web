@@ -1168,6 +1168,10 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     width: BATTLEFIELD_DEFAULT_WIDTH_PX,
     height: BATTLEFIELD_BASE_MIN_HEIGHT_PX
   });
+  const [opponentBattlefieldSizePx, setOpponentBattlefieldSizePx] = useState({
+    width: BATTLEFIELD_DEFAULT_WIDTH_PX,
+    height: BATTLEFIELD_BASE_MIN_HEIGHT_PX
+  });
   const [battlefieldViewport, setBattlefieldViewport] = useState(() => ({
     width: typeof window !== 'undefined' ? window.innerWidth : BATTLEFIELD_DEFAULT_WIDTH_PX,
     height: typeof window !== 'undefined' ? window.innerHeight : BATTLEFIELD_BASE_MIN_HEIGHT_PX
@@ -1308,6 +1312,54 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       measuredBattlefieldWidth: layout?.battlefieldWidth ?? dimensions.widthPx,
       chosenColumns: layout?.columns,
       columnCentersPx: layout?.columnCentersPx?.map(centerX => Number(centerX.toFixed(1))) || []
+    });
+
+    return renderedPosition;
+  };
+
+
+  const getOpponentBattlefieldRenderPosition = (card, liveLayoutPosition, layout) => {
+    const positionMode = getCardPositionMode(card);
+    const source = positionMode === BATTLEFIELD_POSITION_MODE_AUTO && liveLayoutPosition
+      ? 'opponent live auto layout'
+      : 'opponent saved manual nx/ny';
+    const dimensions = {
+      widthPx: layout?.battlefieldWidth,
+      heightPx: layout?.battlefieldHeightPx,
+      cardWidthPx: layout?.cardWidthPx,
+      cardHeightPx: layout?.cardHeightPx
+    };
+    const renderedPosition = source === 'opponent live auto layout'
+      ? {
+          nx: clampBattlefieldCenterNormalized(
+            liveLayoutPosition.nx,
+            dimensions.widthPx,
+            dimensions.cardWidthPx || BATTLEFIELD_CARD_WIDTH_PX,
+            BATTLEFIELD_SIDE_PADDING_PX
+          ),
+          ny: clampBattlefieldCenterNormalized(
+            liveLayoutPosition.ny,
+            dimensions.heightPx,
+            dimensions.cardHeightPx || BATTLEFIELD_CARD_HEIGHT_PX
+          )
+        }
+      : getCardRenderPosition(card, false, dimensions);
+
+    console.log('[OPPONENT_BATTLEFIELD_RENDER_CARD]', {
+      opponentPanelMeasuredWidth: layout?.battlefieldWidth ?? dimensions.widthPx,
+      opponentBattlefieldHeightPx: layout?.battlefieldHeightPx ?? dimensions.heightPx,
+      chosenColumns: layout?.columns,
+      cardWidthPx: layout?.cardWidthPx ?? dimensions.cardWidthPx,
+      columnCentersPx: layout?.columnCentersPx?.map(centerX => Number(centerX.toFixed(1))) || [],
+      name: card?.name || 'Unknown card',
+      cardName: card?.name || 'Unknown card',
+      cardId: card?.instanceId,
+      positionMode,
+      renderedFrom: source,
+      nx: renderedPosition.nx,
+      ny: renderedPosition.ny,
+      renderedNx: renderedPosition.nx,
+      renderedNy: renderedPosition.ny
     });
 
     return renderedPosition;
@@ -1485,6 +1537,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       observer?.disconnect();
     };
   }, [gameId, viewAsPlayerId]);
+
 
   const getCurrentBattlefieldDimensionsPx = () => {
     const rect = myBattlefieldRef.current?.getBoundingClientRect?.();
@@ -2861,19 +2914,78 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const oppBattlefield = gameCards.filter(c => c.controllerId !== viewAsPlayerId && c.zone === ZONES.BATTLEFIELD);
   const oppHand = gameCards.filter(c => c.controllerId !== viewAsPlayerId && c.zone === ZONES.HAND);
 
+
+  useLayoutEffect(() => {
+    const element = opponentBattlefieldRef.current;
+    if (!element) return undefined;
+
+    let rafId = null;
+    const updateOpponentBattlefieldSize = () => {
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        const rect = element.getBoundingClientRect?.();
+        const width = rect?.width;
+        const height = rect?.height;
+        if (Number.isFinite(width) && width > 0) {
+          setOpponentBattlefieldSizePx(prev => {
+            const next = {
+              width: Math.round(width),
+              height: Number.isFinite(height) && height > 0 ? Math.round(height) : prev.height
+            };
+            return prev.width === next.width && prev.height === next.height ? prev : next;
+          });
+        }
+      });
+    };
+
+    updateOpponentBattlefieldSize();
+
+    const eventOptions = { passive: true };
+    window.addEventListener('resize', updateOpponentBattlefieldSize, eventOptions);
+    window.addEventListener('orientationchange', updateOpponentBattlefieldSize, eventOptions);
+    window.visualViewport?.addEventListener('resize', updateOpponentBattlefieldSize, eventOptions);
+
+    let observer = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      observer = new ResizeObserver(updateOpponentBattlefieldSize);
+      observer.observe(element);
+    }
+
+    return () => {
+      if (rafId) cancelAnimationFrame(rafId);
+      window.removeEventListener('resize', updateOpponentBattlefieldSize);
+      window.removeEventListener('orientationchange', updateOpponentBattlefieldSize);
+      window.visualViewport?.removeEventListener('resize', updateOpponentBattlefieldSize);
+      observer?.disconnect();
+    };
+  }, [gameId, viewAsPlayerId, oppBattlefield.length]);
+
   const myBattlefieldLandCount = myBattlefield.filter(isLandCard).length;
   const myBattlefieldNonlandCount = myBattlefield.length - myBattlefieldLandCount;
+  const oppBattlefieldLandCount = oppBattlefield.filter(isLandCard).length;
+  const oppBattlefieldNonlandCount = oppBattlefield.length - oppBattlefieldLandCount;
   const orderedMyBattlefieldForLayout = useMemo(() => [
     ...myBattlefield.filter(c => !isLandCard(c)),
     ...myBattlefield.filter(isLandCard)
   ], [myBattlefield]);
+  const orderedOppBattlefieldForLayout = useMemo(() => [
+    ...oppBattlefield.filter(c => !isLandCard(c)),
+    ...oppBattlefield.filter(isLandCard)
+  ], [oppBattlefield]);
   const myBattlefieldLayout = useMemo(() => calculateBattlefieldLayout({
     cards: orderedMyBattlefieldForLayout,
     containerWidth: myBattlefieldSizePx.width,
     isMobile: battlefieldViewport.width <= 900,
     debugLabel: 'MY_BATTLEFIELD_LAYOUT'
   }), [orderedMyBattlefieldForLayout, myBattlefieldSizePx.width, battlefieldViewport.width]);
+  const opponentBattlefieldLayout = useMemo(() => calculateBattlefieldLayout({
+    cards: orderedOppBattlefieldForLayout,
+    containerWidth: opponentBattlefieldSizePx.width,
+    isMobile: battlefieldViewport.width <= 900,
+    debugLabel: 'OPPONENT_BATTLEFIELD_LAYOUT'
+  }), [orderedOppBattlefieldForLayout, opponentBattlefieldSizePx.width, battlefieldViewport.width]);
   const myBattlefieldMinHeightPx = myBattlefieldLayout.battlefieldHeightPx;
+  const opponentBattlefieldMinHeightPx = opponentBattlefieldLayout.battlefieldHeightPx;
 
   useEffect(() => {
     console.log('[BATTLEFIELD_PANEL_SIZE]', {
@@ -2903,6 +3015,30 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       columnCentersPx: myBattlefieldLayout.columnCentersPx.map(centerX => Number(centerX.toFixed(1)))
     });
   }, [myBattlefieldLandCount, myBattlefieldNonlandCount, myBattlefieldLayout, battlefieldViewport, myBattlefieldSizePx]);
+
+
+  useEffect(() => {
+    console.log('[OPPONENT_BATTLEFIELD_PANEL_SIZE]', {
+      opponentPanelMeasuredWidth: opponentBattlefieldLayout.battlefieldWidth,
+      measuredOpponentBattlefieldPositioningLayerWidth: opponentBattlefieldSizePx.width,
+      opponentBattlefieldHeightPx: opponentBattlefieldLayout.battlefieldHeightPx,
+      landCount: oppBattlefieldLandCount,
+      nonlandCount: oppBattlefieldNonlandCount,
+      landRows: opponentBattlefieldLayout.landRows,
+      nonlandRows: opponentBattlefieldLayout.nonlandRows,
+      chosenColumns: opponentBattlefieldLayout.columns,
+      cardWidthPx: opponentBattlefieldLayout.cardWidthPx,
+      columnCentersPx: opponentBattlefieldLayout.columnCentersPx.map(centerX => Number(centerX.toFixed(1))),
+      orientation: battlefieldViewport.width <= battlefieldViewport.height ? 'portrait' : 'landscape',
+      windowWidthFallback: battlefieldViewport.width,
+      gapPx: opponentBattlefieldLayout.gapPx,
+      sidePaddingPx: opponentBattlefieldLayout.sidePaddingPx,
+      availableWidth: Number(opponentBattlefieldLayout.availableWidth?.toFixed?.(1) ?? 0),
+      calculatedMaxColumns: opponentBattlefieldLayout.calculatedMaxColumns,
+      rowWidth: Number(opponentBattlefieldLayout.rowWidth?.toFixed?.(1) ?? 0),
+      startX: Number(opponentBattlefieldLayout.startX?.toFixed?.(1) ?? 0)
+    });
+  }, [oppBattlefieldLandCount, oppBattlefieldNonlandCount, opponentBattlefieldLayout, battlefieldViewport, opponentBattlefieldSizePx]);
 
   useEffect(() => {
     if (!gameId || !game?.cards?.length) return;
@@ -3349,9 +3485,14 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               </div>
             )}
 
-            <div ref={opponentBattlefieldRef} className="border-t border-slate-700/70 pt-2 w-full min-h-[280px] relative">
+            <div
+              ref={opponentBattlefieldRef}
+              className="border-t border-slate-700/70 pt-2 w-full relative"
+              style={{ minHeight: `${opponentBattlefieldMinHeightPx}px`, height: `${opponentBattlefieldMinHeightPx}px` }}
+            >
               {oppBattlefield.map(card => {
-                const normalized = getCardRenderPosition(card, true);
+                const liveLayoutPosition = opponentBattlefieldLayout.tidyPositions.get(card.instanceId);
+                const normalized = getOpponentBattlefieldRenderPosition(card, liveLayoutPosition, opponentBattlefieldLayout);
                 return (
                   <div
                     key={card.instanceId}
@@ -3369,7 +3510,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                       targets={game.targets || []}
                       stack={stackCards}
                       isSelected={false}
-                      onMove={() => setZoomedCard(card)}
+                      onMove={() => targetingState ? toggleTarget(card) : setZoomedCard(card)}
                       onZoom={setZoomedCard}
                       displayName={getDisplayCardName(card)}
                       combatBadgeLabel={getCardCombatBadgeLabel(card.instanceId)}

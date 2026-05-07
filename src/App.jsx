@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged, GoogleAuthProvider, linkWithPopup, signInWithPopup, signInWithRedirect, getRedirectResult, signOut } from 'firebase/auth';
 import { getFirestore, doc, setDoc, collection, onSnapshot, updateDoc, arrayUnion, serverTimestamp, runTransaction, query, orderBy, deleteDoc, getDoc, addDoc } from 'firebase/firestore';
-import { X, ArrowRight, Clock, Shield, Skull, Layers, Eye, ChevronDown, ChevronUp, BookOpen, Shuffle, Plus, Copy, UserCheck, EyeOff, RotateCw, Search, Hexagon, Unlock, Lock, Move, Dices, Coins, LayoutGrid, LogOut, Users, User, Bug, Loader2, RefreshCw, AlertTriangle, Repeat, Check, ArrowUp, ArrowDown, MessageSquare, Trash2, Paperclip } from 'lucide-react';
+import { X, ArrowRight, Clock, Shield, Skull, Layers, Eye, ChevronDown, ChevronUp, BookOpen, Shuffle, Plus, Copy, UserCheck, EyeOff, RotateCw, Search, Hexagon, Unlock, Lock, Move, Dices, Coins, LayoutGrid, LogOut, Users, User, Bug, Loader2, RefreshCw, AlertTriangle, Repeat, Check, ArrowUp, ArrowDown, MessageSquare, Trash2, Paperclip, Crown } from 'lucide-react';
 
 // --- Firebase Configuration ---
 // UPDATED: Using standard Vite env vars
@@ -27,6 +27,28 @@ const db = getFirestore(app);
 // REMOVED: const appId... (no longer needed)
 
 // --- Constants & Types ---
+
+const GAME_MODES = {
+  REGULAR: 'regular',
+  COMMANDER: 'commander'
+};
+
+const getGameMode = (game) => game?.gameMode || GAME_MODES.REGULAR;
+const isCommanderGame = (game) => getGameMode(game) === GAME_MODES.COMMANDER;
+const getStartingLifeForMode = (gameMode) => gameMode === GAME_MODES.COMMANDER ? 40 : 20;
+
+const BUILT_IN_PLAYER_COUNTERS = ['poison', 'energy', 'experience'];
+const PLAYER_COUNTER_LABELS = {
+  poison: 'Poison',
+  energy: 'Energy',
+  experience: 'Experience',
+  monarch: 'Monarch',
+  ringTempted: 'Ring tempted'
+};
+
+const COMMANDER_SECTION_HEADERS = new Set(['commander', 'commanders']);
+const DECK_SECTION_HEADERS = new Set(['deck', 'main deck', 'mainboard']);
+
 const PHASES = [
   { id: 'untap', label: 'Untap' },
   { id: 'upkeep', label: 'Upkeep' },
@@ -1249,6 +1271,7 @@ const Lobby = ({
 }) => {
   const [name, setName] = useState('');
   const [gameTitle, setGameTitle] = useState('');
+  const [gameMode, setGameMode] = useState(GAME_MODES.REGULAR);
   const [code, setCode] = useState('');
   const [mode, setMode] = useState('menu');
   const [pendingDeleteGame, setPendingDeleteGame] = useState(null);
@@ -1329,7 +1352,7 @@ const Lobby = ({
             <div className="space-y-3">
               <div className="grid grid-cols-2 gap-3">
                 <button
-                  onClick={() => onCreate(effectiveName, gameTitle)}
+                  onClick={() => onCreate(effectiveName, gameTitle, gameMode)}
                   disabled={!effectiveName.trim() || isInitLoading || isActionLoading}
                   className="bg-purple-600 hover:bg-purple-700 disabled:opacity-50 disabled:cursor-wait text-white p-3 rounded-lg font-bold transition-colors flex justify-center items-center gap-2"
                 >
@@ -1353,6 +1376,25 @@ const Lobby = ({
                   placeholder="e.g. 'Mono-Red vs Elves'"
                   maxLength={80}
                 />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-400 mb-1">Game Mode</label>
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    { id: GAME_MODES.REGULAR, label: 'Regular', detail: '20 life' },
+                    { id: GAME_MODES.COMMANDER, label: 'Commander', detail: '40 life' }
+                  ].map((option) => (
+                    <button
+                      key={option.id}
+                      type="button"
+                      onClick={() => setGameMode(option.id)}
+                      className={`rounded-lg border p-3 text-left transition-colors ${gameMode === option.id ? 'border-purple-400 bg-purple-900/40 text-white' : 'border-slate-700 bg-slate-900 text-slate-300 hover:border-slate-500'}`}
+                    >
+                      <div className="text-sm font-bold">{option.label}</div>
+                      <div className="text-xs text-slate-400">{option.detail}</div>
+                    </button>
+                  ))}
+                </div>
               </div>
               <button
                 onClick={() => setMode('watch')}
@@ -1729,6 +1771,12 @@ const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isD
           </div>
         )}
 
+        {card.isCommander && !card.faceDown && (
+          <div className="absolute top-1 left-1 z-30 rounded-full border border-amber-300/70 bg-amber-500/90 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wide text-slate-950 shadow" title="Commander">
+            <span className="inline sm:hidden">♛</span><span className="hidden sm:inline">Commander</span>
+          </div>
+        )}
+
         <div className="absolute top-5 left-1 flex flex-col gap-1 pointer-events-none">
           {Object.entries(counters).map(([label, count]) => (
             count > 0 && (
@@ -1828,6 +1876,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const [searchLibraryOwner, setSearchLibraryOwner] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [playerStatsOpen, setPlayerStatsOpen] = useState(false);
+  const [commanderDamageSummaryPlayerId, setCommanderDamageSummaryPlayerId] = useState(null);
   const [peekCard, setPeekCard] = useState(null);
   const [diceMenuOpen, setDiceMenuOpen] = useState(false);
   const [customDieSize, setCustomDieSize] = useState('12');
@@ -2117,6 +2166,15 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const gameLogTurnKeys = Object.keys(gameLogByTurn).sort((a, b) => Number(b) - Number(a));
   // FIX: Safety check for players array
   const myPlayer = viewAsPlayer;
+  const commanderModeEnabled = isCommanderGame(game);
+  const getCommanderDamage = (card, targetPlayerId) => Math.max(0, card?.commanderDamage?.[targetPlayerId] || 0);
+  const getCommanderDamageRowsForPlayer = (playerId) => (game?.cards || [])
+    .filter((card) => card.isCommander && getCommanderDamage(card, playerId) > 0)
+    .map((card) => ({ card, amount: getCommanderDamage(card, playerId) }));
+  const getTotalCommanderDamageToPlayer = (playerId) => getCommanderDamageRowsForPlayer(playerId).reduce((sum, row) => sum + row.amount, 0);
+  const getVisiblePlayerCounters = (player) => Object.entries(player?.counters || {})
+    .filter(([key, value]) => key !== 'commanderTax' && Number(value) > 0)
+    .map(([key, value]) => ({ key, label: PLAYER_COUNTER_LABELS[key] || key, value }));
   const lastSeen = isSpectator ? spectatorLastSeenChatAt : (myPlayer?.lastSeenChatAt || 0);
   const unreadCount = chatMessages.filter(m => m.timestamp > lastSeen && m.playerId !== userId).length;
   useEffect(() => {
@@ -2893,6 +2951,41 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       updates.players = newPlayers;
       updates.log = arrayUnion(makeActionLog('PLAYER_COUNTER', `${actorName} ${payload.amount > 0 ? 'added' : 'removed'} a ${payload.counterType} counter.`, { category: 'counter' }));
 
+    } else if (actionType === 'SET_COMMANDER') {
+      if (!isCommanderGame(game)) return;
+      const card = game.cards.find(c => c.instanceId === payload.cardId);
+      if (!card || card.isToken) return;
+      updates.cards = game.cards.map(c => c.instanceId === payload.cardId ? { ...c, isCommander: true, commanderTax: Math.max(0, c.commanderTax || 0), commanderDamage: c.commanderDamage || {} } : c);
+      updates.log = arrayUnion(makeActionLog('SET_COMMANDER', `${actorName} set ${getSafeCardName(card)} as their commander.`, { category: 'commander', cardId: card.instanceId, cardName: getSafeCardName(card) }));
+
+    } else if (actionType === 'UNSET_COMMANDER') {
+      if (!isCommanderGame(game)) return;
+      const card = game.cards.find(c => c.instanceId === payload.cardId);
+      if (!card) return;
+      updates.cards = game.cards.map(c => c.instanceId === payload.cardId ? { ...c, isCommander: false } : c);
+      updates.log = arrayUnion(makeActionLog('UNSET_COMMANDER', `${actorName} unset ${getSafeCardName(card)} as commander.`, { category: 'commander', cardId: card.instanceId, cardName: getSafeCardName(card) }));
+
+    } else if (actionType === 'COMMANDER_TAX') {
+      if (!isCommanderGame(game)) return;
+      const card = game.cards.find(c => c.instanceId === payload.cardId && c.isCommander);
+      if (!card) return;
+      const currentTax = Math.max(0, card.commanderTax || 0);
+      const nextTax = payload.reset ? 0 : Math.max(0, currentTax + (payload.amount || 0));
+      updates.cards = game.cards.map(c => c.instanceId === payload.cardId ? { ...c, commanderTax: nextTax } : c);
+      updates.log = arrayUnion(makeActionLog('COMMANDER_TAX', payload.reset ? `${actorName} reset ${getSafeCardName(card)} commander tax.` : `${actorName} ${payload.amount > 0 ? 'increased' : 'decreased'} ${getSafeCardName(card)} commander tax to +${nextTax}.`, { category: 'commander', cardId: card.instanceId, cardName: getSafeCardName(card), commanderTax: nextTax }));
+
+    } else if (actionType === 'COMMANDER_DAMAGE') {
+      if (!isCommanderGame(game)) return;
+      const card = game.cards.find(c => c.instanceId === payload.cardId && c.isCommander);
+      const targetPlayer = game.players.find(p => p.id === payload.targetPlayerId);
+      if (!card || !targetPlayer) return;
+      const damageMap = { ...(card.commanderDamage || {}) };
+      const currentDamage = Math.max(0, damageMap[payload.targetPlayerId] || 0);
+      const nextDamage = payload.clear ? 0 : Math.max(0, currentDamage + (payload.amount || 0));
+      damageMap[payload.targetPlayerId] = nextDamage;
+      updates.cards = game.cards.map(c => c.instanceId === payload.cardId ? { ...c, commanderDamage: damageMap } : c);
+      updates.log = arrayUnion(makeActionLog('COMMANDER_DAMAGE', payload.clear ? `${actorName} cleared commander damage from ${getSafeCardName(card)} to ${targetPlayer.name || 'Player'}.` : `${actorName} marked ${payload.amount || 0} commander damage from ${getSafeCardName(card)} to ${targetPlayer.name || 'Player'}.`, { category: 'commander', cardId: card.instanceId, cardName: getSafeCardName(card), targetPlayerId: targetPlayer.id, damage: nextDamage }));
+
     } else if (actionType === 'CREATE_TOKEN') {
       const quantity = clamp(Number.parseInt(payload.quantity, 10) || 1, 1, 99);
       const name = String(payload.name || 'Token').trim() || 'Token';
@@ -3392,8 +3485,11 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       updates.cards = newCards;
       updates.combat = clearCombatAssignmentsForCard(game.combat || getEmptyCombatState(), payload.cardId);
       const movedCardName = movingCard?.isToken ? `${movingCard.name || 'Token'} token` : getSafeMoveCardName(movingCard, movingCard?.zone, payload.targetZone);
+      const moveMessage = payload.targetZone === ZONES.COMMAND && movingCard?.isCommander
+        ? `${actorName} moved ${movedCardName} to the command zone.`
+        : `${actorName} moved ${movedCardName} to ${getZoneLabel(payload.targetZone)}.`;
       updates.log = arrayUnion(
-        makeActionLog('MOVE_ZONE', `${actorName} moved ${movedCardName} to ${getZoneLabel(payload.targetZone)}.`, { category: 'zone', cardId: payload.cardId, cardName: movedCardName, fromZone: movingCard?.zone, toZone: payload.targetZone, tokenRemoved: tokenLeavesBattlefield }),
+        makeActionLog('MOVE_ZONE', moveMessage, { category: payload.targetZone === ZONES.COMMAND ? 'commander' : 'zone', cardId: payload.cardId, cardName: movedCardName, fromZone: movingCard?.zone, toZone: payload.targetZone, tokenRemoved: tokenLeavesBattlefield }),
         ...makeAttachmentLogs(attachmentCleanupMessages)
       );
 
@@ -3646,6 +3742,37 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     });
   }, [isAutoPassEnabled, game, canAct, waitingForPlayers, hasPriority, autoPassConfig, userId]);
 
+  const getImportDeckEntries = () => {
+    const entries = [];
+    let currentSection = 'deck';
+    const rawLines = deckInput.split('\n');
+    for (const rawLine of rawLines) {
+      const trimmed = rawLine.trim();
+      if (!trimmed) continue;
+      const withoutCommentSlashes = trimmed.replace(/^\/\/\s*/, '').trim();
+      const headerKey = withoutCommentSlashes.replace(/:$/, '').trim().toLowerCase();
+      if (COMMANDER_SECTION_HEADERS.has(headerKey)) {
+        currentSection = 'commander';
+        continue;
+      }
+      if (DECK_SECTION_HEADERS.has(headerKey)) {
+        currentSection = 'deck';
+        continue;
+      }
+      if (trimmed.startsWith('//')) continue;
+
+      let count = 1;
+      let name = trimmed;
+      const match = trimmed.match(/^(\d+)\s+(.+)/);
+      if (match) {
+        count = parseInt(match[1], 10);
+        name = match[2].trim();
+      }
+      if (name) entries.push({ count, name, isCommander: commanderModeEnabled && currentSection === 'commander' });
+    }
+    return entries;
+  };
+
   const importDeck = async () => {
     if (isSpectator) {
       setNotification("Spectators can't import decks.");
@@ -3653,24 +3780,19 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       return;
     }
     setImporting(true);
-    const lines = deckInput.split('\n').filter(l => l.trim());
+    const entries = getImportDeckEntries();
     const newCards = [...(game.cards || [])];
     let xOffset = 5, yOffset = 5;
+    let importedCount = 0;
+    let importedCommanderCount = 0;
 
-    for (const line of lines) {
-      let count = 1, name = line.trim();
-      const match = line.match(/^(\d+)\s+(.+)/);
-      if (match) {
-        count = parseInt(match[1]);
-        name = match[2];
-      }
-
+    for (const entry of entries) {
       try {
-        const res = await fetch(`https://api.scryfall.com/cards/named?fuzzy=${encodeURIComponent(name)}`);
+        const res = await fetch(`https://api.scryfall.com/cards/named?fuzzy=${encodeURIComponent(entry.name)}`);
         const data = await res.json();
         if (data && data.name) {
-          for (let i = 0; i < count; i++) {
-            newCards.push({
+          for (let i = 0; i < entry.count; i++) {
+            const importedCard = {
               instanceId: generateCardId(),
               scryfallId: data.id,
               name: data.name,
@@ -3679,19 +3801,23 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               image_uri: data.image_uris?.normal || data.card_faces?.[0]?.image_uris?.normal,
               ownerId: userId,
               controllerId: userId,
-              zone: ZONES.LIBRARY,
+              zone: entry.isCommander ? ZONES.COMMAND : ZONES.LIBRARY,
               tapped: false,
               counters: {},
               tempDamage: 0,
               faceDown: false,
               x: xOffset,
-              y: yOffset
-            });
+              y: yOffset,
+              ...(entry.isCommander ? { isCommander: true, commanderTax: 0, commanderDamage: {} } : {})
+            };
+            newCards.push(importedCard);
+            importedCount += 1;
+            if (entry.isCommander) importedCommanderCount += 1;
             xOffset = (xOffset + 5) % 80;
           }
         }
       } catch {
-        console.error("Failed to fetch", name);
+        console.error("Failed to fetch", entry.name);
       }
       await new Promise(r => setTimeout(r, 50));
     }
@@ -3704,7 +3830,9 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         playerName: myPlayer?.name || displayName || 'Unknown',
         type: 'IMPORT',
         category: 'setup',
-        message: `${myPlayer?.name || displayName || 'Unknown'} imported ${Math.max(0, newCards.length - (game.cards || []).length)} cards into their library.`
+        message: importedCommanderCount > 0
+          ? `${myPlayer?.name || displayName || 'Unknown'} imported ${importedCount} cards and moved ${importedCommanderCount} commander card${importedCommanderCount === 1 ? '' : 's'} to the command zone.`
+          : `${myPlayer?.name || displayName || 'Unknown'} imported ${importedCount} cards into their library.`
       }))
     });
 
@@ -4241,6 +4369,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const getZoneCount = (pid, zone) => (game.cards || []).filter(c => c.ownerId === pid && c.zone === zone).length;
   const myGYCount = getZoneCount(viewAsPlayerId, ZONES.GRAVEYARD);
   const myExileCount = getZoneCount(viewAsPlayerId, ZONES.EXILE);
+  const myCommandCount = getZoneCount(viewAsPlayerId, ZONES.COMMAND);
   const myLibraryCount = isPlayer ? getZoneCount(userId, ZONES.LIBRARY) : 0;
   const canDrawFromLibrary = canAct && myLibraryCount > 0;
   const handleDrawCard = () => handleAction('DRAW_CARD');
@@ -4249,7 +4378,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     ZONES.HAND,
     ZONES.BATTLEFIELD,
     ZONES.GRAVEYARD,
-    ZONES.EXILE
+    ZONES.EXILE,
+    ZONES.COMMAND
   ].some(zone => getZoneCount(viewAsPlayerId, zone) > 0);
   const noDeckLoaded = !hasDeckLoaded;
   const stackCards = game.stack || [];
@@ -4710,10 +4840,18 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                 )}
               </div>
               {opponent && (
-                <span className="bg-slate-700 px-2 py-0.5 rounded text-xs flex gap-2 h-fit">
-                  <span>Life: {opponent?.life}</span>
-                  {opponent?.counters?.poison > 0 && <span className="text-green-400">P:{opponent.counters.poison}</span>}
-                </span>
+                <div className="flex max-w-[55%] flex-wrap justify-end gap-1 text-xs">
+                  <span className="bg-slate-700 px-2 py-0.5 rounded h-fit">Life: {opponent?.life}</span>
+                  {getVisiblePlayerCounters(opponent).map((counter) => (
+                    <span key={counter.key} className="rounded bg-slate-700 px-2 py-0.5 text-slate-100" title={counter.label}>{counter.label}: {counter.value}</span>
+                  ))}
+                  {commanderModeEnabled && getTotalCommanderDamageToPlayer(opponent.id) > 0 && (
+                    <button onClick={() => setCommanderDamageSummaryPlayerId(opponent.id)} className="rounded border border-amber-500/50 bg-amber-900/50 px-2 py-0.5 font-bold text-amber-100">Cmd: {getTotalCommanderDamageToPlayer(opponent.id)}</button>
+                  )}
+                  {commanderModeEnabled && getZoneCount(opponent.id, ZONES.COMMAND) > 0 && (
+                    <button onClick={() => setViewZone({ zone: ZONES.COMMAND, ownerId: opponent.id })} className="rounded border border-amber-500/50 bg-slate-700 px-2 py-0.5 font-bold text-amber-100">CZ: {getZoneCount(opponent.id, ZONES.COMMAND)}</button>
+                  )}
+                </div>
               )}
             </div>
 
@@ -4958,11 +5096,14 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                 <button onClick={(e) => { e.stopPropagation(); handleAction('LIFE_CHANGE', { targetPlayerId: viewAsPlayerId, amount: 1 }); }} className="text-slate-500 hover:text-green-400"><ChevronUp size={12}/></button>
                 <button onClick={(e) => { e.stopPropagation(); handleAction('LIFE_CHANGE', { targetPlayerId: viewAsPlayerId, amount: -1 }); }} className="text-slate-500 hover:text-red-400"><ChevronDown size={12}/></button>
               </div>
-              {myPlayer?.counters?.poison > 0 && (
-                <div className="ml-2 bg-green-900 text-green-200 text-xs px-1 rounded flex items-center" title="Poison">
-                  <Skull size={10} className="mr-1"/> {myPlayer.counters.poison}
-                </div>
-              )}
+              <div className="ml-1 flex max-w-[11rem] flex-wrap gap-1">
+                {getVisiblePlayerCounters(myPlayer).map((counter) => (
+                  <span key={counter.key} className="rounded bg-slate-700 px-1.5 py-0.5 text-[10px] text-slate-100" title={counter.label}>{counter.label}: {counter.value}</span>
+                ))}
+                {commanderModeEnabled && getTotalCommanderDamageToPlayer(viewAsPlayerId) > 0 && (
+                  <button onClick={(e) => { e.stopPropagation(); setCommanderDamageSummaryPlayerId(viewAsPlayerId); }} className="rounded border border-amber-500/50 bg-amber-900/50 px-1.5 py-0.5 text-[10px] font-bold text-amber-100">Cmd: {getTotalCommanderDamageToPlayer(viewAsPlayerId)}</button>
+                )}
+              </div>
             </div>
 
             <div className="h-6 w-[1px] bg-slate-700"></div>
@@ -4987,6 +5128,11 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               <div className="flex items-center gap-1 cursor-pointer hover:text-white" onClick={() => { setViewZone({ zone: ZONES.EXILE, ownerId: viewAsPlayerId }); }}>
                 <RotateCw size={14} /> Ex: {myExileCount}
               </div>
+              {commanderModeEnabled && (
+                <div className="flex items-center gap-1 cursor-pointer hover:text-amber-200" onClick={() => { setViewZone({ zone: ZONES.COMMAND, ownerId: viewAsPlayerId }); }}>
+                  <Crown size={14} /> Cmd: {myCommandCount}
+                </div>
+              )}
             </div>
             </div>
 
@@ -5135,7 +5281,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         <div className="p-2 overflow-x-auto whitespace-nowrap hide-scrollbar flex gap-2 min-h-[140px] items-center px-4">
           {canAct && noDeckLoaded && (
             <button
-              onClick={() => setDeckInput('20 Mountain\n20 Lightning Bolt\n20 Llanowar Elves')}
+              onClick={() => setDeckInput(commanderModeEnabled ? "Commander\n1 Atraxa, Praetors' Voice\n\nDeck\n1 Sol Ring\n1 Command Tower" : '20 Mountain\n20 Lightning Bolt\n20 Llanowar Elves')}
               className="mx-auto text-sm text-slate-500 border border-slate-600 border-dashed rounded px-4 py-2 hover:text-white hover:border-slate-400"
             >
               Import Deck
@@ -5596,6 +5742,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             {game.cards.filter(c => c.ownerId === viewZone.ownerId && c.zone === viewZone.zone).map(c => (
               <div key={c.instanceId} className="relative" onClick={() => { setSelectedCard(c); setViewZone(null); }}>
                 <img src={c.image_uri} className="w-full rounded opacity-70 hover:opacity-100" />
+                {c.isCommander && <div className="absolute left-1 top-1 rounded-full bg-amber-500 px-1.5 py-0.5 text-[9px] font-black uppercase text-slate-950">Commander</div>}
               </div>
             ))}
           </div>
@@ -5852,9 +5999,9 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           <div className="bg-slate-800 p-6 rounded-xl w-full max-w-sm border border-slate-600" onClick={e => e.stopPropagation()}>
             <h3 className="text-xl font-bold mb-4 text-white">Player Counters</h3>
             <div className="space-y-4">
-              {['poison', 'energy', 'experience', 'commanderTax'].map(type => (
+              {[...BUILT_IN_PLAYER_COUNTERS, ...Object.keys(myPlayer?.counters || {}).filter(type => !BUILT_IN_PLAYER_COUNTERS.includes(type) && type !== 'commanderTax')].map(type => (
                 <div key={type} className="flex justify-between items-center bg-slate-700 p-3 rounded">
-                  <span className="capitalize text-slate-300 font-medium">{type}</span>
+                  <span className="capitalize text-slate-300 font-medium">{PLAYER_COUNTER_LABELS[type] || type}</span>
                   <div className="flex items-center gap-3">
                     <button onClick={() => handleAction('PLAYER_COUNTER', { counterType: type, amount: -1 })} className="w-8 h-8 rounded bg-slate-900 text-red-400 font-bold">-</button>
                     <span className="w-6 text-center font-bold text-white">{myPlayer?.counters?.[type] || 0}</span>
@@ -5862,10 +6009,47 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                   </div>
                 </div>
               ))}
+              <button
+                onClick={() => {
+                  const label = window.prompt('Custom player counter name');
+                  const counterType = label?.trim();
+                  if (counterType) handleAction('PLAYER_COUNTER', { counterType, amount: 1 });
+                }}
+                className="w-full rounded-lg border border-dashed border-slate-500 bg-slate-900/50 px-3 py-2 text-sm font-bold text-blue-200 hover:border-blue-400 hover:text-white"
+              >
+                Add Custom Player Counter
+              </button>
             </div>
           </div>
         </div>
       )}
+
+      {/* Commander Damage Summary */}
+      {commanderDamageSummaryPlayerId && (() => {
+        const targetPlayer = (game.players || []).find((player) => player.id === commanderDamageSummaryPlayerId);
+        const rows = getCommanderDamageRowsForPlayer(commanderDamageSummaryPlayerId);
+        return (
+          <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4" onClick={() => setCommanderDamageSummaryPlayerId(null)}>
+            <div className="w-full max-w-sm rounded-xl border border-amber-500/40 bg-slate-800 p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+              <div className="mb-4 flex items-center justify-between gap-2">
+                <h3 className="flex items-center gap-2 text-lg font-bold text-white"><Crown size={18} className="text-amber-300"/> Commander Damage</h3>
+                <button onClick={() => setCommanderDamageSummaryPlayerId(null)}><X className="text-slate-400" /></button>
+              </div>
+              <div className="mb-3 text-sm text-slate-300">Commander damage to <span className="font-bold text-white">{targetPlayer?.name || 'Player'}</span>:</div>
+              <div className="space-y-2">
+                {rows.length === 0 ? (
+                  <div className="rounded bg-slate-900/60 p-3 text-sm text-slate-400">No commander damage marked.</div>
+                ) : rows.map(({ card, amount }) => (
+                  <div key={card.instanceId} className="flex items-center justify-between rounded bg-slate-900/70 px-3 py-2 text-sm">
+                    <span className="font-semibold text-slate-100">{card.name || 'Commander'}</span>
+                    <span className="font-black text-amber-200">{amount} / 21</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Peek Modal */}
       {peekCard && (
@@ -6076,6 +6260,61 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                 </section>
               )}
 
+              {commanderModeEnabled && selectedCard.controllerId === viewAsPlayerId && (
+                <section className="space-y-2 rounded-lg border border-amber-500/40 bg-amber-950/20 p-3">
+                  <h3 className="flex items-center gap-1 text-[11px] font-bold uppercase tracking-wider text-amber-200"><Crown size={12}/> Commander</h3>
+                  {selectedCard.isCommander && <div className="inline-flex rounded-full border border-amber-300/50 bg-amber-500/20 px-2 py-0.5 text-[10px] font-black uppercase text-amber-100">Commander</div>}
+                  {selectedCard.isToken && <p className="text-xs text-amber-100/80">Tokens cannot be commanders.</p>}
+                  {canAct && !selectedCard.isToken && (
+                    <div className="grid grid-cols-2 gap-2">
+                      {selectedCard.isCommander ? (
+                        <button onClick={() => { handleAction('UNSET_COMMANDER', { cardId: selectedCard.instanceId }); setSelectedCard(null); }} className="min-h-10 rounded-lg bg-slate-700 p-2 text-sm font-bold text-slate-100 hover:bg-slate-600">Unset Commander</button>
+                      ) : (
+                        <button onClick={() => { handleAction('SET_COMMANDER', { cardId: selectedCard.instanceId }); setSelectedCard(null); }} className="min-h-10 rounded-lg bg-amber-600 p-2 text-sm font-bold text-slate-950 hover:bg-amber-500">Set as Commander</button>
+                      )}
+                      {selectedCard.isCommander && selectedCard.zone !== ZONES.COMMAND && (
+                        <button onClick={() => { handleAction('MOVE_ZONE', { cardId: selectedCard.instanceId, targetZone: ZONES.COMMAND }); setSelectedCard(null); }} className="min-h-10 rounded-lg bg-amber-900/70 p-2 text-sm font-bold text-amber-100 hover:bg-amber-800">Move to Command Zone</button>
+                      )}
+                    </div>
+                  )}
+                  {selectedCard.isCommander && (
+                    <>
+                      <div className="flex items-center justify-between rounded-lg bg-slate-900/60 px-3 py-2 text-sm">
+                        <span className="text-slate-300">Commander Tax</span>
+                        <span className="font-black text-amber-200">+{Math.max(0, getLiveCard(selectedCard)?.commanderTax || selectedCard.commanderTax || 0)}</span>
+                      </div>
+                      {canAct && (
+                        <div className="grid grid-cols-3 gap-2">
+                          <button onClick={() => handleAction('COMMANDER_TAX', { cardId: selectedCard.instanceId, amount: 2 })} className="min-h-9 rounded bg-amber-700 text-sm font-bold text-white">+2</button>
+                          <button onClick={() => handleAction('COMMANDER_TAX', { cardId: selectedCard.instanceId, amount: -2 })} className="min-h-9 rounded bg-slate-700 text-sm font-bold text-white">-2</button>
+                          <button onClick={() => handleAction('COMMANDER_TAX', { cardId: selectedCard.instanceId, reset: true })} className="min-h-9 rounded bg-slate-700 text-xs font-bold text-white">Reset</button>
+                        </div>
+                      )}
+                      <div className="space-y-2 border-t border-amber-500/20 pt-2">
+                        <div className="text-[11px] font-bold uppercase tracking-wider text-amber-200">Commander Damage</div>
+                        {(game.players || []).map((player) => {
+                          const damage = getCommanderDamage(getLiveCard(selectedCard), player.id);
+                          return (
+                            <div key={player.id} className="space-y-1 rounded-lg bg-slate-900/50 p-2">
+                              <div className="flex justify-between text-xs text-slate-200"><span>Damage to {player.name || 'Player'}</span><span className="font-black">{damage} / 21</span></div>
+                              {canAct && (
+                                <div className="grid grid-cols-5 gap-1">
+                                  <button onClick={() => handleAction('COMMANDER_DAMAGE', { cardId: selectedCard.instanceId, targetPlayerId: player.id, amount: 1 })} className="min-h-8 rounded bg-red-700 text-xs font-bold text-white">+1</button>
+                                  <button onClick={() => handleAction('COMMANDER_DAMAGE', { cardId: selectedCard.instanceId, targetPlayerId: player.id, amount: 2 })} className="min-h-8 rounded bg-red-700 text-xs font-bold text-white">+2</button>
+                                  <button onClick={() => handleAction('COMMANDER_DAMAGE', { cardId: selectedCard.instanceId, targetPlayerId: player.id, amount: 3 })} className="min-h-8 rounded bg-red-700 text-xs font-bold text-white">+3</button>
+                                  <button onClick={() => handleAction('COMMANDER_DAMAGE', { cardId: selectedCard.instanceId, targetPlayerId: player.id, amount: -1 })} className="min-h-8 rounded bg-slate-700 text-xs font-bold text-white">-1</button>
+                                  <button onClick={() => handleAction('COMMANDER_DAMAGE', { cardId: selectedCard.instanceId, targetPlayerId: player.id, clear: true })} className="min-h-8 rounded bg-slate-700 text-[10px] font-bold text-white">Clear</button>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </>
+                  )}
+                </section>
+              )}
+
               {selectedCard.zone === ZONES.BATTLEFIELD && canAct && selectedCard.controllerId === viewAsPlayerId && (
                 <section className="space-y-2 rounded-lg border border-slate-700/80 bg-slate-900/30 p-3">
                   <h3 className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Counters</h3>
@@ -6236,13 +6475,19 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       {deckInput !== '' && !importing && noDeckLoaded && (
         <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
           <div className="bg-slate-800 w-full max-w-md rounded-xl p-6 shadow-2xl border border-slate-600">
-            <h3 className="text-xl font-bold mb-4">Import Deck</h3>
+            <h3 className="text-xl font-bold mb-2">Import Deck</h3>
+            {commanderModeEnabled && (
+              <div className="mb-3 rounded-lg border border-amber-500/40 bg-amber-950/30 p-3 text-xs text-amber-100">
+                <div className="font-bold">Commander import tips</div>
+                <p>Normal decklists work. After importing, tap a card and choose <span className="font-bold">Set as Commander</span>.</p>
+                <p className="mt-1">Section headers like <span className="font-mono">Commander</span> / <span className="font-mono">Deck</span> or <span className="font-mono">// Commander</span> / <span className="font-mono">// Deck</span> will mark commander cards and put them in the command zone.</p>
+              </div>
+            )}
             <textarea
               value={deckInput}
               onChange={e => setDeckInput(e.target.value)}
               className="w-full h-40 bg-slate-900 text-slate-300 p-3 rounded border border-slate-700 font-mono text-sm"
-              placeholder="4 Lightning Bolt
-20 Mountain"
+              placeholder={commanderModeEnabled ? "Commander\n1 Atraxa, Praetors' Voice\n\nDeck\n1 Sol Ring\n1 Command Tower" : "4 Lightning Bolt\n20 Mountain"}
             />
             <div className="flex gap-3 mt-4">
               <button onClick={() => setDeckInput('')} className="flex-1 bg-slate-700 py-2 rounded">Cancel</button>
@@ -6309,6 +6554,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           >
             <div className="flex flex-col items-center gap-3">
               <div className="text-sm font-semibold text-slate-100">{getDisplayCardName(zoomedCard)}</div>
+              {zoomedCard.isCommander && <div className="inline-flex items-center gap-1 rounded-full border border-amber-300/60 bg-amber-500/20 px-2 py-1 text-xs font-black uppercase text-amber-100"><Crown size={12}/> Commander</div>}
               {zoomedCard.isToken ? (
                 <TokenCardPreview token={zoomedCard} size="large" />
               ) : (
@@ -6634,27 +6880,30 @@ export default function App() {
     console.log('currentUser providerData', user.providerData);
   }, [user]);
 
-  const createGame = async (playerNameInput, gameTitleInput) => {
+  const createGame = async (playerNameInput, gameTitleInput, selectedGameMode = GAME_MODES.REGULAR) => {
     if (!user) return;
     setIsActionLoading(true);
     setInitError(null);
     const safeName = (playerNameInput || '').trim();
     const safeTitle = (gameTitleInput || '').trim();
+    const safeGameMode = selectedGameMode === GAME_MODES.COMMANDER ? GAME_MODES.COMMANDER : GAME_MODES.REGULAR;
+    const startingLife = getStartingLifeForMode(safeGameMode);
     setPlayerName(safeName);
     try {
       const initialData = {
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
         hostId: user.uid,
+        gameMode: safeGameMode,
         ...(safeTitle ? { title: safeTitle } : {}),
         allowSpectators: true,
         spectatorIds: [],
         players: [{
           id: user.uid,
           name: safeName,
-          life: 20,
+          life: startingLife,
           turnOrder: 0,
-          counters: { poison: 0, energy: 0, commanderTax: 0, experience: 0 },
+          counters: { poison: 0, energy: 0, experience: 0 },
           handRevealed: false,
           lastSeenChatAt: Date.now()
         }],
@@ -6677,7 +6926,7 @@ export default function App() {
           playerName: safeName || 'Unknown',
           type: 'GAME_CREATE',
           category: 'setup',
-          message: `${safeName || 'Unknown'} created the game.`
+          message: `${safeName || 'Unknown'} created the ${safeGameMode === GAME_MODES.COMMANDER ? 'Commander' : 'Regular'} game.`
         })]
       };
 
@@ -6721,9 +6970,9 @@ export default function App() {
           const newPlayer = {
             id: user.uid,
             name: safeName,
-            life: 20,
+            life: getStartingLifeForMode(getGameMode(gameData)),
             turnOrder: players.length,
-            counters: { poison: 0, energy: 0, commanderTax: 0, experience: 0 },
+            counters: { poison: 0, energy: 0, experience: 0 },
             handRevealed: false,
             lastSeenChatAt: Date.now()
           };

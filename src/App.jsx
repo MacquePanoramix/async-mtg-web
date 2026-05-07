@@ -1548,15 +1548,18 @@ const TokenCardPreview = ({ token, size = 'small' }) => {
   const isLarge = size === 'large';
   const frameClasses = isLarge
     ? 'h-[min(72vh,34rem)] w-[min(88vw,24rem)] rounded-2xl border-4 p-4 text-base shadow-2xl'
-    : 'h-full w-full p-1.5 text-xs';
-  const headerPipClasses = isLarge ? 'h-5 w-5' : 'h-3 w-3';
-  const tokenBadgeClasses = isLarge ? 'px-2.5 py-1 text-[11px]' : 'px-1.5 py-0.5 text-[8px]';
-  const titleClasses = isLarge ? 'text-3xl' : 'text-[13px]';
+    : 'h-full w-full p-1 text-xs';
+  const headerPipClasses = isLarge ? 'h-5 w-5' : 'h-2.5 w-2.5';
+  const tokenBadgeClasses = isLarge ? 'px-2.5 py-1 text-[11px]' : 'px-1.5 py-0.5 text-[7px]';
+  const titleClasses = isLarge ? 'text-3xl' : 'text-[12px]';
   const colorClasses = isLarge ? 'text-xs' : 'text-[7px]';
-  const typeClasses = isLarge ? 'px-3 py-1.5 text-sm' : 'px-1 py-0.5 text-[8px]';
-  const textClasses = isLarge ? 'min-h-28 px-3 py-3 text-base' : 'min-h-[1.45rem] px-1 py-0.5 text-[8px]';
-  const ptClasses = isLarge ? 'bottom-4 right-4 px-4 py-1.5 text-2xl' : 'bottom-1 right-1 px-1.5 py-0.5 text-[10px]';
-  const bottomPadding = showPowerToughness ? (isLarge ? 'pb-16' : 'pb-7') : 'pb-1';
+  const typeClasses = isLarge ? 'px-3 py-1.5 text-sm' : 'px-1 py-0.5 text-[7px]';
+  const textClasses = isLarge ? 'min-h-28 px-3 py-3 text-base' : 'min-h-[1.1rem] px-1 py-0.5 text-[8px]';
+  const ptClasses = isLarge ? 'bottom-4 right-4 px-4 py-1.5 text-2xl' : 'px-1.5 py-0.5 text-[10px]';
+  const contentPadding = showPowerToughness && isLarge ? 'pb-16' : 'pb-1';
+  const contentGapClasses = isLarge ? 'gap-1.5' : 'gap-1';
+  const contentMarginClasses = isLarge ? 'mt-1' : 'mt-0.5';
+  const nameBoxClasses = isLarge ? 'px-2 py-1' : 'px-1.5 py-0.5';
 
   return (
     <div className={`relative flex flex-col overflow-hidden bg-gradient-to-br text-center ${accent.frame} ${frameClasses}`}>
@@ -1565,8 +1568,8 @@ const TokenCardPreview = ({ token, size = 'small' }) => {
         <span className={`rounded-full bg-black/35 font-black uppercase tracking-wider text-white/90 ${tokenBadgeClasses}`}>Token</span>
       </div>
 
-      <div className={`mt-1 flex min-h-0 flex-1 flex-col gap-1.5 ${bottomPadding}`}>
-        <div className="rounded bg-black/30 px-2 py-1 shadow-inner">
+      <div className={`${contentMarginClasses} flex min-h-0 flex-1 flex-col ${contentGapClasses} ${contentPadding}`}>
+        <div className={`rounded bg-black/30 shadow-inner ${nameBoxClasses}`}>
           <div className={`break-words font-black leading-tight ${titleClasses}`}>{token.name || 'Token'}</div>
           <div className={`mt-0.5 font-bold uppercase tracking-wider opacity-80 ${colorClasses}`}>{colorLabel}</div>
         </div>
@@ -1578,9 +1581,17 @@ const TokenCardPreview = ({ token, size = 'small' }) => {
         <div className={`flex-1 rounded border border-white/15 bg-black/25 font-semibold leading-snug text-white/90 shadow-inner ${textClasses}`}>
           {rulesText ? <div className="whitespace-pre-wrap break-words">{rulesText}</div> : <div className="opacity-45">&nbsp;</div>}
         </div>
+
+        {!isLarge && showPowerToughness && (
+          <div className="flex h-4 shrink-0 items-end justify-end" aria-label="Power and toughness">
+            <span className={`rounded-md border border-white/40 bg-black/75 font-black leading-none text-white shadow-lg ${ptClasses}`}>
+              {token.power}/{token.toughness}
+            </span>
+          </div>
+        )}
       </div>
 
-      {showPowerToughness && (
+      {isLarge && showPowerToughness && (
         <span className={`absolute rounded-md border border-white/40 bg-black/75 font-black leading-none text-white shadow-lg ${ptClasses}`}>
           {token.power}/{token.toughness}
         </span>

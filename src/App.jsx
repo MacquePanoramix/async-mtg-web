@@ -66,6 +66,70 @@ const ZONE_LABELS = {
 };
 
 const PUBLIC_ZONES = new Set([ZONES.BATTLEFIELD, ZONES.GRAVEYARD, ZONES.EXILE, ZONES.COMMAND, 'stack_zone']);
+
+const TOKEN_COLOR_OPTIONS = ['Colorless', 'White', 'Blue', 'Black', 'Red', 'Green', 'Gold'];
+
+const TOKEN_COLOR_ACCENTS = {
+  white: {
+    frame: 'from-amber-100 via-stone-100 to-yellow-200 border-amber-300/80 text-slate-950',
+    band: 'bg-amber-200/80 text-slate-900 border-amber-500/40',
+    pip: 'bg-amber-200 border-amber-400'
+  },
+  blue: {
+    frame: 'from-sky-950 via-sky-800 to-blue-950 border-sky-300/70 text-sky-50',
+    band: 'bg-sky-900/85 text-sky-50 border-sky-300/40',
+    pip: 'bg-sky-400 border-sky-100'
+  },
+  black: {
+    frame: 'from-zinc-950 via-slate-900 to-neutral-950 border-zinc-400/70 text-zinc-50',
+    band: 'bg-black/80 text-zinc-50 border-zinc-300/40',
+    pip: 'bg-zinc-700 border-zinc-300'
+  },
+  red: {
+    frame: 'from-red-950 via-rose-900 to-orange-950 border-red-300/70 text-red-50',
+    band: 'bg-red-950/85 text-red-50 border-red-300/40',
+    pip: 'bg-red-500 border-red-100'
+  },
+  green: {
+    frame: 'from-emerald-950 via-green-900 to-lime-950 border-green-300/70 text-green-50',
+    band: 'bg-green-950/85 text-green-50 border-green-300/40',
+    pip: 'bg-green-500 border-green-100'
+  },
+  gold: {
+    frame: 'from-yellow-900 via-amber-700 to-orange-900 border-yellow-200/80 text-yellow-50',
+    band: 'bg-yellow-900/85 text-yellow-50 border-yellow-200/50',
+    pip: 'bg-yellow-400 border-yellow-100'
+  },
+  colorless: {
+    frame: 'from-slate-800 via-slate-700 to-slate-900 border-slate-300/60 text-slate-50',
+    band: 'bg-slate-900/80 text-slate-50 border-slate-300/30',
+    pip: 'bg-slate-400 border-slate-100'
+  }
+};
+
+const TOKEN_PRESETS = [
+  { id: 'treasure', label: 'Treasure', name: 'Treasure', color: 'Colorless', typeLine: 'Token Artifact — Treasure', power: '', toughness: '', quantity: 1, tapped: false },
+  { id: 'food', label: 'Food', name: 'Food', color: 'Colorless', typeLine: 'Token Artifact — Food', power: '', toughness: '', quantity: 1, tapped: false },
+  { id: 'clue', label: 'Clue', name: 'Clue', color: 'Colorless', typeLine: 'Token Artifact — Clue', power: '', toughness: '', quantity: 1, tapped: false },
+  { id: 'soldier', label: '1/1 Soldier', name: 'Soldier', color: 'White', typeLine: 'Token Creature — Soldier', power: '1', toughness: '1', quantity: 1, tapped: false },
+  { id: 'saproling', label: '1/1 Saproling', name: 'Saproling', color: 'Green', typeLine: 'Token Creature — Saproling', power: '1', toughness: '1', quantity: 1, tapped: false },
+  { id: 'zombie', label: '2/2 Zombie', name: 'Zombie', color: 'Black', typeLine: 'Token Creature — Zombie', power: '2', toughness: '2', quantity: 1, tapped: false },
+  { id: 'spirit', label: '1/1 Spirit flying', name: 'Spirit', color: 'White', typeLine: 'Token Creature — Spirit', power: '1', toughness: '1', quantity: 1, tapped: false, rulesText: 'Flying' }
+];
+
+const getDefaultCustomToken = () => ({
+  name: 'Saproling',
+  color: 'Green',
+  typeLine: 'Token Creature — Saproling',
+  power: '1',
+  toughness: '1',
+  quantity: 1,
+  tapped: false
+});
+
+const normalizeTokenColorKey = (color) => String(color || 'Colorless').trim().toLowerCase() || 'colorless';
+const getTokenColorAccent = (color) => TOKEN_COLOR_ACCENTS[normalizeTokenColorKey(color)] || TOKEN_COLOR_ACCENTS.colorless;
+const isCreatureTypeLine = (typeLine) => String(typeLine || '').toLowerCase().includes('creature');
 const getZoneLabel = (zone) => ZONE_LABELS[zone] || zone || 'unknown zone';
 const isPublicZone = (zone) => PUBLIC_ZONES.has(zone);
 const getSafeCardName = (card, fallback = 'a card') => {
@@ -1507,7 +1571,32 @@ const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isD
           </div>
         ) : card.image_uri ? (
           <img src={card.image_uri} alt={card.name} className="w-full h-full object-cover" />
-        ) : (
+        ) : card.isToken ? (() => {
+          const accent = getTokenColorAccent(card.color);
+          const showPowerToughness = isCreatureTypeLine(card.type_line) && card.power !== undefined && card.power !== '' && card.toughness !== undefined && card.toughness !== '';
+          return (
+            <div className={`w-full h-full p-1.5 flex flex-col text-center text-xs bg-gradient-to-br ${accent.frame}`}>
+              <div className="flex items-center justify-between gap-1">
+                <span className={`h-3 w-3 rounded-full border ${accent.pip}`} />
+                <span className="rounded-full bg-black/35 px-1.5 py-0.5 text-[8px] font-black uppercase tracking-wider text-white/90">Token</span>
+              </div>
+              <div className="flex flex-1 flex-col items-center justify-center gap-1 min-h-0">
+                <div className="max-w-full rounded bg-black/30 px-1.5 py-1 shadow-inner">
+                  <div className="break-words text-[13px] font-black leading-tight">{card.name || 'Token'}</div>
+                </div>
+                <div className={`max-w-full rounded border px-1 py-0.5 text-[8px] font-bold leading-tight ${accent.band}`}>
+                  {card.type_line || 'Token'}
+                </div>
+                {card.rulesText && (
+                  <div className="max-w-full rounded bg-black/25 px-1 py-0.5 text-[8px] font-semibold leading-tight text-white/90">
+                    {card.rulesText}
+                  </div>
+                )}
+              </div>
+              {showPowerToughness && <span className="absolute bottom-1 right-1 rounded border border-white/30 bg-black/70 px-1.5 py-0.5 text-[10px] font-black text-white">{card.power}/{card.toughness}</span>}
+            </div>
+          );
+        })() : (
           <div className="w-full h-full p-1 flex flex-col items-center justify-center text-center text-xs bg-slate-800">
             <span className="font-bold text-white leading-tight">{card.name}</span>
             <span className="text-slate-400 text-[9px] mt-1">{card.mana_cost}</span>
@@ -1652,7 +1741,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const [reorderModal, setReorderModal] = useState(null); // { ownerId, n, orderedIds }
   const [customCounterModal, setCustomCounterModal] = useState(null); // { cardId, label, amount }
   const [damageModal, setDamageModal] = useState(null); // { cardId, amount }
-  const [tokenModal, setTokenModal] = useState(null); // { name, power, toughness }
+  const [tokenModal, setTokenModal] = useState(null); // Token Tools panel custom form
   const [revealsOpen, setRevealsOpen] = useState(false);
   const [stackDetailOpen, setStackDetailOpen] = useState(false);
   const [selectedStackItemId, setSelectedStackItemId] = useState(null);
@@ -2541,34 +2630,52 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       updates.log = arrayUnion(makeActionLog('PLAYER_COUNTER', `${actorName} ${payload.amount > 0 ? 'added' : 'removed'} a ${payload.counterType} counter.`, { category: 'counter' }));
 
     } else if (actionType === 'CREATE_TOKEN') {
-      const tokenBase = {
-        instanceId: generateCardId(),
-        name: payload.name || "Token",
-        power: payload.power || "1",
-        toughness: payload.toughness || "1",
-        type_line: "Token Creature",
-        ownerId: userId,
-        controllerId: userId,
-        zone: ZONES.BATTLEFIELD,
-        tapped: false,
-        counters: {},
-        tempDamage: 0,
-        isToken: true
-      };
-      const spawnPosition = getBattlefieldGridPosition({
-        card: tokenBase,
-        existingBattlefieldCards: game.cards,
-        controllerId: userId,
-        containerWidth: getCurrentBattlefieldWidthPx(),
-        isMobile: battlefieldViewport.width <= 900
-      });
-      const newToken = {
-        ...tokenBase,
-        ...getBattlefieldPositionCoordinates(spawnPosition)
-      };
-      logBattlefieldEntry(newToken, 'CREATE_TOKEN', spawnPosition);
-      updates.cards = [...game.cards, newToken];
-      updates.log = arrayUnion(makeActionLog('CREATE_TOKEN', `${actorName} created a ${newToken.power}/${newToken.toughness} ${newToken.name} token.`, { category: 'token', cardId: newToken.instanceId, cardName: newToken.name }));
+      const quantity = clamp(Number.parseInt(payload.quantity, 10) || 1, 1, 99);
+      const name = String(payload.name || 'Token').trim() || 'Token';
+      const typeLine = String(payload.typeLine || payload.type_line || (payload.power || payload.toughness ? 'Token Creature' : 'Token')).trim() || 'Token';
+      const isCreatureToken = isCreatureTypeLine(typeLine);
+      const color = String(payload.color || 'Colorless').trim() || 'Colorless';
+      const createdTokens = [];
+      let existingCardsForLayout = [...game.cards];
+
+      for (let i = 0; i < quantity; i += 1) {
+        const tokenBase = {
+          instanceId: generateCardId(),
+          name,
+          power: isCreatureToken ? String(payload.power ?? '1') : '',
+          toughness: isCreatureToken ? String(payload.toughness ?? '1') : '',
+          type_line: typeLine,
+          color,
+          rulesText: payload.rulesText || '',
+          ownerId: userId,
+          controllerId: userId,
+          zone: ZONES.BATTLEFIELD,
+          tapped: Boolean(payload.tapped),
+          counters: {},
+          tempDamage: 0,
+          isToken: true
+        };
+        const spawnPosition = getBattlefieldGridPosition({
+          card: tokenBase,
+          existingBattlefieldCards: existingCardsForLayout,
+          controllerId: userId,
+          containerWidth: getCurrentBattlefieldWidthPx(),
+          isMobile: battlefieldViewport.width <= 900
+        });
+        const newToken = {
+          ...tokenBase,
+          ...getBattlefieldPositionCoordinates(spawnPosition)
+        };
+        logBattlefieldEntry(newToken, 'CREATE_TOKEN', spawnPosition);
+        createdTokens.push(newToken);
+        existingCardsForLayout = [...existingCardsForLayout, newToken];
+      }
+
+      const firstToken = createdTokens[0];
+      const singlePrefix = isCreatureToken && firstToken?.power && firstToken?.toughness ? `${firstToken.power}/${firstToken.toughness} ` : '';
+      const tokenLabel = quantity === 1 ? `${singlePrefix}${name} token` : `${name} tokens`;
+      updates.cards = [...game.cards, ...createdTokens];
+      updates.log = arrayUnion(makeActionLog('CREATE_TOKEN', `${actorName} created ${quantity === 1 ? 'a' : quantity} ${tokenLabel}.`, { category: 'token', cardId: firstToken?.instanceId, cardName: name, quantity }));
 
     } else if (actionType === 'CLONE_CARD') {
       const original = game.cards.find(c => c.instanceId === payload.cardId);
@@ -2965,6 +3072,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
     } else if (actionType === 'MOVE_ZONE') {
       const movingCard = game.cards.find(c => c.instanceId === payload.cardId);
+      const tokenLeavesBattlefield = Boolean(movingCard?.isToken && movingCard.zone === ZONES.BATTLEFIELD && payload.targetZone !== ZONES.BATTLEFIELD);
       const battlefieldMovingCard = movingCard ? { ...movingCard, zone: ZONES.BATTLEFIELD, controllerId: movingCard.ownerId } : null;
       const spawnPosition = payload.targetZone === ZONES.BATTLEFIELD
         ? getBattlefieldGridPosition({
@@ -2975,35 +3083,40 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             isMobile: battlefieldViewport.width <= 900
           })
         : null;
-      const newCards = game.cards.map(c =>
-        c.instanceId === payload.cardId
-          ? {
-              ...c,
-              zone: payload.targetZone,
-              tapped: false,
-              tempDamage: 0,
-              controllerId: c.ownerId,
-              ...(spawnPosition ? getBattlefieldPositionCoordinates(spawnPosition) : { x: 10, y: 10, positionMode: BATTLEFIELD_POSITION_MODE_AUTO })
-            }
-          : c
-      );
+      const newCards = tokenLeavesBattlefield
+        ? game.cards.filter(c => c.instanceId !== payload.cardId)
+        : game.cards.map(c =>
+            c.instanceId === payload.cardId
+              ? {
+                  ...c,
+                  zone: payload.targetZone,
+                  tapped: false,
+                  tempDamage: 0,
+                  controllerId: c.ownerId,
+                  ...(spawnPosition ? getBattlefieldPositionCoordinates(spawnPosition) : { x: 10, y: 10, positionMode: BATTLEFIELD_POSITION_MODE_AUTO })
+                }
+              : c
+          );
       if (spawnPosition) logBattlefieldEntry(battlefieldMovingCard, 'MOVE_ZONE', spawnPosition);
       updates.cards = newCards;
       updates.combat = clearCombatAssignmentsForCard(game.combat || getEmptyCombatState(), payload.cardId);
-      updates.log = arrayUnion(makeActionLog('MOVE_ZONE', `${actorName} moved ${getSafeMoveCardName(movingCard, movingCard?.zone, payload.targetZone)} to ${getZoneLabel(payload.targetZone)}.`, { category: 'zone', cardId: payload.cardId, cardName: getSafeMoveCardName(movingCard, movingCard?.zone, payload.targetZone), fromZone: movingCard?.zone, toZone: payload.targetZone }));
+      const movedCardName = movingCard?.isToken ? `${movingCard.name || 'Token'} token` : getSafeMoveCardName(movingCard, movingCard?.zone, payload.targetZone);
+      updates.log = arrayUnion(makeActionLog('MOVE_ZONE', `${actorName} moved ${movedCardName} to ${getZoneLabel(payload.targetZone)}.`, { category: 'zone', cardId: payload.cardId, cardName: movedCardName, fromZone: movingCard?.zone, toZone: payload.targetZone, tokenRemoved: tokenLeavesBattlefield }));
 
     } else if (actionType === 'MOVE_TO_LIBRARY') {
       const cardToMove = game.cards.find(c => c.instanceId === payload.cardId);
       const otherCards = game.cards.filter(c => c.instanceId !== payload.cardId);
-      const updatedCard = { ...cardToMove, zone: ZONES.LIBRARY, tapped: false, tempDamage: 0, faceDown: false, counters: {}, x: 5, y: 5 };
+      const tokenLeavesBattlefield = Boolean(cardToMove?.isToken && cardToMove.zone === ZONES.BATTLEFIELD);
 
-      if (payload.position === 'TOP') {
-        updates.cards = [updatedCard, ...otherCards];
+      if (tokenLeavesBattlefield) {
+        updates.cards = otherCards;
       } else {
-        updates.cards = [...otherCards, updatedCard];
+        const updatedCard = { ...cardToMove, zone: ZONES.LIBRARY, tapped: false, tempDamage: 0, faceDown: false, counters: {}, x: 5, y: 5 };
+        updates.cards = payload.position === 'TOP' ? [updatedCard, ...otherCards] : [...otherCards, updatedCard];
       }
       updates.combat = clearCombatAssignmentsForCard(game.combat || getEmptyCombatState(), payload.cardId);
-      updates.log = arrayUnion(makeActionLog('MOVE_TO_LIBRARY', `${actorName} moved ${getSafeCardName(cardToMove)} to the ${payload.position === 'TOP' ? 'top' : 'bottom'} of library.`, { category: 'zone', cardId: updatedCard.instanceId, cardName: getSafeCardName(cardToMove), fromZone: cardToMove?.zone, toZone: ZONES.LIBRARY }));
+      const movedCardName = cardToMove?.isToken ? `${cardToMove.name || 'Token'} token` : getSafeCardName(cardToMove);
+      updates.log = arrayUnion(makeActionLog('MOVE_TO_LIBRARY', `${actorName} moved ${movedCardName} to the ${payload.position === 'TOP' ? 'top' : 'bottom'} of library.`, { category: 'zone', cardId: payload.cardId, cardName: movedCardName, fromZone: cardToMove?.zone, toZone: ZONES.LIBRARY, tokenRemoved: tokenLeavesBattlefield }));
 
     } else if (actionType === 'REORDER_TOP_LIBRARY') {
       const ownerId = payload.ownerId;
@@ -3346,7 +3459,30 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       return;
     }
     setLibraryMenuOpen(false);
-    setTokenModal({ name: "Token", power: "1", toughness: "1" });
+    setTokenModal(getDefaultCustomToken());
+  };
+
+  const submitTokenPreset = async (preset) => {
+    if (!preset) return;
+    await handleAction('CREATE_TOKEN', preset);
+    setTokenModal(null);
+  };
+
+  const submitCustomToken = async () => {
+    if (!tokenModal) return;
+    const quantity = clamp(Number.parseInt(tokenModal.quantity, 10) || 1, 1, 99);
+    const typeLine = tokenModal.typeLine?.trim() || 'Token';
+    const isCreature = isCreatureTypeLine(typeLine);
+    await handleAction('CREATE_TOKEN', {
+      name: tokenModal.name?.trim() || 'Token',
+      color: tokenModal.color || 'Colorless',
+      typeLine,
+      power: isCreature ? (tokenModal.power?.toString() || '1') : '',
+      toughness: isCreature ? (tokenModal.toughness?.toString() || '1') : '',
+      quantity,
+      tapped: Boolean(tokenModal.tapped)
+    });
+    setTokenModal(null);
   };
 
   const addCustomCounter = () => {
@@ -5038,31 +5174,95 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         </div>
       )}
 
-      {/* Token Modal */}
+      {/* Token Tools Panel */}
       {tokenModal && (
-        <div className="fixed inset-0 bg-black/80 z-[70] flex items-center justify-center p-4" onClick={() => setTokenModal(null)}>
-          <div className="bg-slate-800 p-6 rounded-xl w-full max-w-sm border border-slate-600 space-y-4" onClick={e => e.stopPropagation()}>
-            <h3 className="text-xl font-bold text-white">Create Token</h3>
-            <div>
-              <label className="block text-xs text-slate-400 mb-1">Name</label>
-              <input type="text" value={tokenModal.name} onChange={e => setTokenModal({...tokenModal, name: e.target.value})} className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white" placeholder="e.g. Goblin" />
-            </div>
-            <div className="flex gap-4">
-              <div className="flex-1">
-                <label className="block text-xs text-slate-400 mb-1">Power</label>
-                <input type="number" value={tokenModal.power} onChange={e => setTokenModal({...tokenModal, power: e.target.value})} className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white" />
+        <div className="fixed inset-0 bg-black/80 z-[70] flex items-end justify-center p-2 sm:items-center sm:p-4" onClick={() => setTokenModal(null)}>
+          <div className="max-h-[88vh] w-full max-w-md overflow-y-auto rounded-t-2xl border border-slate-600 bg-slate-800 shadow-2xl sm:rounded-2xl" onClick={e => e.stopPropagation()}>
+            <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-700 bg-slate-800/95 px-4 py-3 backdrop-blur">
+              <div>
+                <h3 className="text-lg font-extrabold text-white">Token Tools</h3>
+                <p className="text-xs text-slate-400">Quick presets first, custom token below.</p>
               </div>
-              <div className="flex-1">
-                <label className="block text-xs text-slate-400 mb-1">Toughness</label>
-                <input type="number" value={tokenModal.toughness} onChange={e => setTokenModal({...tokenModal, toughness: e.target.value})} className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white" />
-              </div>
+              <button
+                onClick={() => setTokenModal(null)}
+                className="rounded-full bg-slate-700 p-2 text-slate-200 hover:bg-slate-600"
+                aria-label="Close token tools"
+              >
+                <X size={18} />
+              </button>
             </div>
-            <div className="flex gap-3 pt-2">
-              <button onClick={() => setTokenModal(null)} className="flex-1 bg-slate-700 py-2 rounded text-white hover:bg-slate-600">Cancel</button>
-              <button onClick={() => {
-                handleAction('CREATE_TOKEN', { name: tokenModal.name.trim() || "Token", power: tokenModal.power.toString() || "1", toughness: tokenModal.toughness.toString() || "1" });
-                setTokenModal(null);
-              }} className="flex-1 bg-green-600 py-2 rounded text-white hover:bg-green-500 font-bold">Create</button>
+
+            <div className="space-y-4 p-4">
+              <div>
+                <div className="mb-2 text-[11px] font-black uppercase tracking-widest text-slate-400">Presets</div>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  {TOKEN_PRESETS.map((preset) => {
+                    const accent = getTokenColorAccent(preset.color);
+                    return (
+                      <button
+                        key={preset.id}
+                        onClick={() => submitTokenPreset(preset)}
+                        className={`min-h-12 rounded-xl border px-3 py-2 text-left text-sm font-bold shadow-sm bg-gradient-to-br ${accent.frame} active:scale-[0.98]`}
+                      >
+                        <div className="leading-tight">{preset.label}</div>
+                        <div className="mt-0.5 text-[10px] font-semibold opacity-75">Tap to create</div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-slate-700 bg-slate-900/55 p-3">
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <div>
+                    <div className="text-[11px] font-black uppercase tracking-widest text-slate-400">Custom token</div>
+                    <div className="text-[11px] text-slate-500">Choose quantity and tapped state before creating.</div>
+                  </div>
+                  <button
+                    onClick={() => setTokenModal(getDefaultCustomToken())}
+                    className="rounded-lg bg-slate-700 px-2 py-1 text-xs font-bold text-slate-200 hover:bg-slate-600"
+                  >
+                    Reset
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div className="sm:col-span-2">
+                    <label className="mb-1 block text-xs font-semibold text-slate-300">Name</label>
+                    <input type="text" value={tokenModal.name} onChange={e => setTokenModal({...tokenModal, name: e.target.value})} className="min-h-11 w-full rounded-lg border border-slate-700 bg-slate-950 p-2 text-white" placeholder="Saproling" />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs font-semibold text-slate-300">Color</label>
+                    <select value={tokenModal.color} onChange={e => setTokenModal({...tokenModal, color: e.target.value})} className="min-h-11 w-full rounded-lg border border-slate-700 bg-slate-950 p-2 text-white">
+                      {TOKEN_COLOR_OPTIONS.map(color => <option key={color} value={color}>{color}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs font-semibold text-slate-300">Quantity</label>
+                    <input type="number" min="1" max="99" value={tokenModal.quantity} onChange={e => setTokenModal({...tokenModal, quantity: e.target.value})} className="min-h-11 w-full rounded-lg border border-slate-700 bg-slate-950 p-2 text-white" />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="mb-1 block text-xs font-semibold text-slate-300">Type line</label>
+                    <input type="text" value={tokenModal.typeLine} onChange={e => setTokenModal({...tokenModal, typeLine: e.target.value})} className="min-h-11 w-full rounded-lg border border-slate-700 bg-slate-950 p-2 text-white" placeholder="Token Creature — Saproling" />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs font-semibold text-slate-300">Power</label>
+                    <input type="text" inputMode="numeric" value={tokenModal.power} onChange={e => setTokenModal({...tokenModal, power: e.target.value})} className="min-h-11 w-full rounded-lg border border-slate-700 bg-slate-950 p-2 text-white" placeholder="1" />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs font-semibold text-slate-300">Toughness</label>
+                    <input type="text" inputMode="numeric" value={tokenModal.toughness} onChange={e => setTokenModal({...tokenModal, toughness: e.target.value})} className="min-h-11 w-full rounded-lg border border-slate-700 bg-slate-950 p-2 text-white" placeholder="1" />
+                  </div>
+                  <label className="sm:col-span-2 flex min-h-11 items-center justify-between gap-3 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm font-bold text-slate-200">
+                    <span>Create tapped</span>
+                    <input type="checkbox" checked={Boolean(tokenModal.tapped)} onChange={e => setTokenModal({...tokenModal, tapped: e.target.checked})} className="h-5 w-5 accent-green-500" />
+                  </label>
+                </div>
+
+                <button onClick={submitCustomToken} className="mt-4 min-h-12 w-full rounded-xl bg-green-600 py-2 text-base font-black text-white hover:bg-green-500">
+                  Create Custom Token{Number.parseInt(tokenModal.quantity, 10) > 1 ? `s (${clamp(Number.parseInt(tokenModal.quantity, 10) || 1, 1, 99)})` : ''}
+                </button>
+              </div>
             </div>
           </div>
         </div>

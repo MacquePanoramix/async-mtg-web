@@ -67,7 +67,15 @@ const ZONE_LABELS = {
 
 const PUBLIC_ZONES = new Set([ZONES.BATTLEFIELD, ZONES.GRAVEYARD, ZONES.EXILE, ZONES.COMMAND, 'stack_zone']);
 
-const TOKEN_COLOR_OPTIONS = ['Colorless', 'White', 'Blue', 'Black', 'Red', 'Green', 'Gold'];
+const TOKEN_COLOR_SYMBOLS = [
+  { symbol: 'W', name: 'White', chip: 'bg-amber-100 text-slate-950 border-amber-300' },
+  { symbol: 'U', name: 'Blue', chip: 'bg-sky-500 text-white border-sky-200' },
+  { symbol: 'B', name: 'Black', chip: 'bg-zinc-900 text-white border-zinc-400' },
+  { symbol: 'R', name: 'Red', chip: 'bg-red-600 text-white border-red-200' },
+  { symbol: 'G', name: 'Green', chip: 'bg-green-600 text-white border-green-200' }
+];
+const TOKEN_COLOR_NAMES = Object.fromEntries(TOKEN_COLOR_SYMBOLS.map(({ symbol, name }) => [symbol, name]));
+const TOKEN_COLOR_NAME_TO_SYMBOL = Object.fromEntries(TOKEN_COLOR_SYMBOLS.map(({ symbol, name }) => [name.toLowerCase(), symbol]));
 
 const TOKEN_COLOR_ACCENTS = {
   white: {
@@ -95,6 +103,16 @@ const TOKEN_COLOR_ACCENTS = {
     band: 'bg-green-950/85 text-green-50 border-green-300/40',
     pip: 'bg-green-500 border-green-100'
   },
+  multicolor: {
+    frame: 'from-slate-900 via-amber-800 to-slate-900 border-amber-200/80 text-amber-50',
+    band: 'bg-amber-950/85 text-amber-50 border-amber-200/50',
+    pip: 'bg-gradient-to-br from-amber-200 via-sky-300 to-green-400 border-amber-100'
+  },
+  fiveColor: {
+    frame: 'from-amber-100 via-sky-700 to-rose-900 border-yellow-200/80 text-white',
+    band: 'bg-slate-950/80 text-white border-yellow-200/50',
+    pip: 'bg-gradient-to-br from-amber-200 via-sky-300 via-red-400 to-green-400 border-white'
+  },
   gold: {
     frame: 'from-yellow-900 via-amber-700 to-orange-900 border-yellow-200/80 text-yellow-50',
     band: 'bg-yellow-900/85 text-yellow-50 border-yellow-200/50',
@@ -120,15 +138,40 @@ const TOKEN_PRESETS = [
 const getDefaultCustomToken = () => ({
   name: 'Saproling',
   color: 'Green',
+  colorIdentity: ['G'],
   typeLine: 'Token Creature — Saproling',
   power: '1',
   toughness: '1',
+  rulesText: '',
   quantity: 1,
   tapped: false
 });
 
 const normalizeTokenColorKey = (color) => String(color || 'Colorless').trim().toLowerCase() || 'colorless';
-const getTokenColorAccent = (color) => TOKEN_COLOR_ACCENTS[normalizeTokenColorKey(color)] || TOKEN_COLOR_ACCENTS.colorless;
+const normalizeTokenColorIdentity = (colorIdentity, color = 'Colorless') => {
+  if (Array.isArray(colorIdentity)) {
+    return TOKEN_COLOR_SYMBOLS.map(({ symbol }) => symbol).filter((symbol) => colorIdentity.includes(symbol));
+  }
+  const colorText = String(color || 'Colorless').trim();
+  const key = normalizeTokenColorKey(colorText);
+  if (!colorText || key === 'colorless') return [];
+  if (key === 'five-color' || key === 'five color' || key === 'fivecolor') return TOKEN_COLOR_SYMBOLS.map(({ symbol }) => symbol);
+  if (key === 'gold' || key === 'multicolor' || key === 'multicolor / gold') return ['W', 'U'];
+  return colorText.split(/[\s,/-]+/).map((part) => TOKEN_COLOR_NAME_TO_SYMBOL[part.toLowerCase()]).filter(Boolean);
+};
+const getTokenColorLabel = (colorIdentity, color = 'Colorless') => {
+  const symbols = normalizeTokenColorIdentity(colorIdentity, color);
+  if (symbols.length === 0) return 'Colorless';
+  if (symbols.length === TOKEN_COLOR_SYMBOLS.length) return 'Five-color';
+  return symbols.map((symbol) => TOKEN_COLOR_NAMES[symbol]).join('-');
+};
+const getTokenColorAccent = (color, colorIdentity) => {
+  const symbols = normalizeTokenColorIdentity(colorIdentity, color);
+  if (symbols.length === 0) return TOKEN_COLOR_ACCENTS.colorless;
+  if (symbols.length === TOKEN_COLOR_SYMBOLS.length) return TOKEN_COLOR_ACCENTS.fiveColor;
+  if (symbols.length > 1) return TOKEN_COLOR_ACCENTS.multicolor;
+  return TOKEN_COLOR_ACCENTS[normalizeTokenColorKey(TOKEN_COLOR_NAMES[symbols[0]])] || TOKEN_COLOR_ACCENTS.colorless;
+};
 const isCreatureTypeLine = (typeLine) => String(typeLine || '').toLowerCase().includes('creature');
 const getZoneLabel = (zone) => ZONE_LABELS[zone] || zone || 'unknown zone';
 const isPublicZone = (zone) => PUBLIC_ZONES.has(zone);
@@ -1495,6 +1538,57 @@ const DamageBadge = ({ amount, className = '' }) => {
   );
 };
 
+
+const TokenCardPreview = ({ token, size = 'small' }) => {
+  const accent = getTokenColorAccent(token.color, token.colorIdentity);
+  const colorLabel = getTokenColorLabel(token.colorIdentity, token.color);
+  const typeLine = token.type_line || token.typeLine || 'Token';
+  const showPowerToughness = isCreatureTypeLine(typeLine) && token.power !== undefined && token.power !== '' && token.toughness !== undefined && token.toughness !== '';
+  const rulesText = String(token.rulesText || '').trim();
+  const isLarge = size === 'large';
+  const frameClasses = isLarge
+    ? 'h-[min(72vh,34rem)] w-[min(88vw,24rem)] rounded-2xl border-4 p-4 text-base shadow-2xl'
+    : 'h-full w-full p-1.5 text-xs';
+  const headerPipClasses = isLarge ? 'h-5 w-5' : 'h-3 w-3';
+  const tokenBadgeClasses = isLarge ? 'px-2.5 py-1 text-[11px]' : 'px-1.5 py-0.5 text-[8px]';
+  const titleClasses = isLarge ? 'text-3xl' : 'text-[13px]';
+  const colorClasses = isLarge ? 'text-xs' : 'text-[7px]';
+  const typeClasses = isLarge ? 'px-3 py-1.5 text-sm' : 'px-1 py-0.5 text-[8px]';
+  const textClasses = isLarge ? 'min-h-28 px-3 py-3 text-base' : 'min-h-[1.45rem] px-1 py-0.5 text-[8px]';
+  const ptClasses = isLarge ? 'bottom-4 right-4 px-4 py-1.5 text-2xl' : 'bottom-1 right-1 px-1.5 py-0.5 text-[10px]';
+  const bottomPadding = showPowerToughness ? (isLarge ? 'pb-16' : 'pb-7') : 'pb-1';
+
+  return (
+    <div className={`relative flex flex-col overflow-hidden bg-gradient-to-br text-center ${accent.frame} ${frameClasses}`}>
+      <div className="flex items-center justify-between gap-2">
+        <span className={`rounded-full border ${accent.pip} ${headerPipClasses}`} aria-hidden="true" />
+        <span className={`rounded-full bg-black/35 font-black uppercase tracking-wider text-white/90 ${tokenBadgeClasses}`}>Token</span>
+      </div>
+
+      <div className={`mt-1 flex min-h-0 flex-1 flex-col gap-1.5 ${bottomPadding}`}>
+        <div className="rounded bg-black/30 px-2 py-1 shadow-inner">
+          <div className={`break-words font-black leading-tight ${titleClasses}`}>{token.name || 'Token'}</div>
+          <div className={`mt-0.5 font-bold uppercase tracking-wider opacity-80 ${colorClasses}`}>{colorLabel}</div>
+        </div>
+
+        <div className={`rounded border font-bold leading-tight ${accent.band} ${typeClasses}`}>
+          {typeLine}
+        </div>
+
+        <div className={`flex-1 rounded border border-white/15 bg-black/25 font-semibold leading-snug text-white/90 shadow-inner ${textClasses}`}>
+          {rulesText ? <div className="whitespace-pre-wrap break-words">{rulesText}</div> : <div className="opacity-45">&nbsp;</div>}
+        </div>
+      </div>
+
+      {showPowerToughness && (
+        <span className={`absolute rounded-md border border-white/40 bg-black/75 font-black leading-none text-white shadow-lg ${ptClasses}`}>
+          {token.power}/{token.toughness}
+        </span>
+      )}
+    </div>
+  );
+};
+
 const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isDraggable, targets = [], stack = [], isSelected = false, combatBadgeLabel = null, combatBadges = null, displayName = null, markedDamage = null, targetInfo = null }) => {
   const isTapped = card.tapped;
   const isFaceDown = card.faceDown;
@@ -1571,32 +1665,9 @@ const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isD
           </div>
         ) : card.image_uri ? (
           <img src={card.image_uri} alt={card.name} className="w-full h-full object-cover" />
-        ) : card.isToken ? (() => {
-          const accent = getTokenColorAccent(card.color);
-          const showPowerToughness = isCreatureTypeLine(card.type_line) && card.power !== undefined && card.power !== '' && card.toughness !== undefined && card.toughness !== '';
-          return (
-            <div className={`w-full h-full p-1.5 flex flex-col text-center text-xs bg-gradient-to-br ${accent.frame}`}>
-              <div className="flex items-center justify-between gap-1">
-                <span className={`h-3 w-3 rounded-full border ${accent.pip}`} />
-                <span className="rounded-full bg-black/35 px-1.5 py-0.5 text-[8px] font-black uppercase tracking-wider text-white/90">Token</span>
-              </div>
-              <div className="flex flex-1 flex-col items-center justify-center gap-1 min-h-0">
-                <div className="max-w-full rounded bg-black/30 px-1.5 py-1 shadow-inner">
-                  <div className="break-words text-[13px] font-black leading-tight">{card.name || 'Token'}</div>
-                </div>
-                <div className={`max-w-full rounded border px-1 py-0.5 text-[8px] font-bold leading-tight ${accent.band}`}>
-                  {card.type_line || 'Token'}
-                </div>
-                {card.rulesText && (
-                  <div className="max-w-full rounded bg-black/25 px-1 py-0.5 text-[8px] font-semibold leading-tight text-white/90">
-                    {card.rulesText}
-                  </div>
-                )}
-              </div>
-              {showPowerToughness && <span className="absolute bottom-1 right-1 rounded border border-white/30 bg-black/70 px-1.5 py-0.5 text-[10px] font-black text-white">{card.power}/{card.toughness}</span>}
-            </div>
-          );
-        })() : (
+        ) : card.isToken ? (
+          <TokenCardPreview token={card} />
+        ) : (
           <div className="w-full h-full p-1 flex flex-col items-center justify-center text-center text-xs bg-slate-800">
             <span className="font-bold text-white leading-tight">{card.name}</span>
             <span className="text-slate-400 text-[9px] mt-1">{card.mana_cost}</span>
@@ -2634,7 +2705,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       const name = String(payload.name || 'Token').trim() || 'Token';
       const typeLine = String(payload.typeLine || payload.type_line || (payload.power || payload.toughness ? 'Token Creature' : 'Token')).trim() || 'Token';
       const isCreatureToken = isCreatureTypeLine(typeLine);
-      const color = String(payload.color || 'Colorless').trim() || 'Colorless';
+      const colorIdentity = normalizeTokenColorIdentity(payload.colorIdentity, payload.color);
+      const color = getTokenColorLabel(colorIdentity, payload.color);
       const createdTokens = [];
       let existingCardsForLayout = [...game.cards];
 
@@ -2646,6 +2718,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           toughness: isCreatureToken ? String(payload.toughness ?? '1') : '',
           type_line: typeLine,
           color,
+          colorIdentity,
           rulesText: payload.rulesText || '',
           ownerId: userId,
           controllerId: userId,
@@ -3475,10 +3548,12 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     const isCreature = isCreatureTypeLine(typeLine);
     await handleAction('CREATE_TOKEN', {
       name: tokenModal.name?.trim() || 'Token',
-      color: tokenModal.color || 'Colorless',
+      colorIdentity: normalizeTokenColorIdentity(tokenModal.colorIdentity, tokenModal.color),
+      color: getTokenColorLabel(tokenModal.colorIdentity, tokenModal.color),
       typeLine,
       power: isCreature ? (tokenModal.power?.toString() || '1') : '',
       toughness: isCreature ? (tokenModal.toughness?.toString() || '1') : '',
+      rulesText: tokenModal.rulesText || '',
       quantity,
       tapped: Boolean(tokenModal.tapped)
     });
@@ -5197,7 +5272,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                 <div className="mb-2 text-[11px] font-black uppercase tracking-widest text-slate-400">Presets</div>
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                   {TOKEN_PRESETS.map((preset) => {
-                    const accent = getTokenColorAccent(preset.color);
+                    const accent = getTokenColorAccent(preset.color, preset.colorIdentity);
                     return (
                       <button
                         key={preset.id}
@@ -5232,10 +5307,30 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                     <input type="text" value={tokenModal.name} onChange={e => setTokenModal({...tokenModal, name: e.target.value})} className="min-h-11 w-full rounded-lg border border-slate-700 bg-slate-950 p-2 text-white" placeholder="Saproling" />
                   </div>
                   <div>
-                    <label className="mb-1 block text-xs font-semibold text-slate-300">Color</label>
-                    <select value={tokenModal.color} onChange={e => setTokenModal({...tokenModal, color: e.target.value})} className="min-h-11 w-full rounded-lg border border-slate-700 bg-slate-950 p-2 text-white">
-                      {TOKEN_COLOR_OPTIONS.map(color => <option key={color} value={color}>{color}</option>)}
-                    </select>
+                    <label className="mb-1 block text-xs font-semibold text-slate-300">Colors</label>
+                    <div className="rounded-lg border border-slate-700 bg-slate-950 p-2">
+                      <div className="flex flex-wrap gap-1.5">
+                        {TOKEN_COLOR_SYMBOLS.map(({ symbol, name, chip }) => {
+                          const selectedColors = normalizeTokenColorIdentity(tokenModal.colorIdentity, tokenModal.color);
+                          const isSelected = selectedColors.includes(symbol);
+                          const nextColors = isSelected ? selectedColors.filter((colorSymbol) => colorSymbol !== symbol) : [...selectedColors, symbol];
+                          return (
+                            <button
+                              key={symbol}
+                              type="button"
+                              title={name}
+                              onClick={() => setTokenModal({ ...tokenModal, colorIdentity: nextColors, color: getTokenColorLabel(nextColors) })}
+                              className={`h-9 w-9 rounded-full border text-sm font-black transition ${isSelected ? `${chip} shadow ring-2 ring-white/40` : 'border-slate-600 bg-slate-800 text-slate-300 hover:bg-slate-700'}`}
+                            >
+                              {symbol}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <div className="mt-2 text-xs font-bold text-slate-300">
+                        {getTokenColorLabel(tokenModal.colorIdentity, tokenModal.color)}
+                      </div>
+                    </div>
                   </div>
                   <div>
                     <label className="mb-1 block text-xs font-semibold text-slate-300">Quantity</label>
@@ -5244,6 +5339,10 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                   <div className="sm:col-span-2">
                     <label className="mb-1 block text-xs font-semibold text-slate-300">Type line</label>
                     <input type="text" value={tokenModal.typeLine} onChange={e => setTokenModal({...tokenModal, typeLine: e.target.value})} className="min-h-11 w-full rounded-lg border border-slate-700 bg-slate-950 p-2 text-white" placeholder="Token Creature — Saproling" />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="mb-1 block text-xs font-semibold text-slate-300">Abilities / rules text</label>
+                    <textarea value={tokenModal.rulesText || ''} onChange={e => setTokenModal({...tokenModal, rulesText: e.target.value})} className="min-h-20 w-full rounded-lg border border-slate-700 bg-slate-950 p-2 text-white" placeholder="Flying" />
                   </div>
                   <div>
                     <label className="mb-1 block text-xs font-semibold text-slate-300">Power</label>
@@ -5404,6 +5503,26 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             </div>
 
             <div className="space-y-3">
+              {selectedCard.isToken && (
+                <section className="space-y-2 rounded-lg border border-amber-400/30 bg-slate-900/40 p-3">
+                  <h3 className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Token details</h3>
+                  <div className="grid grid-cols-[6rem_1fr] gap-x-3 gap-y-1 text-sm">
+                    <div className="text-slate-400">Color</div>
+                    <div className="font-semibold text-slate-100">{getTokenColorLabel(selectedCard.colorIdentity, selectedCard.color)}</div>
+                    <div className="text-slate-400">Type</div>
+                    <div className="font-semibold text-slate-100">{selectedCard.type_line || 'Token'}</div>
+                    {isCreatureTypeLine(selectedCard.type_line) && (
+                      <>
+                        <div className="text-slate-400">P/T</div>
+                        <div className="font-black text-slate-100">{selectedCard.power || '0'}/{selectedCard.toughness || '0'}</div>
+                      </>
+                    )}
+                    <div className="text-slate-400">Abilities</div>
+                    <div className="whitespace-pre-wrap font-semibold text-slate-100">{selectedCard.rulesText || '—'}</div>
+                  </div>
+                </section>
+              )}
+
               {canAct && selectedCard.controllerId === viewAsPlayerId && (
                 <section className="space-y-2 rounded-lg border border-slate-700/80 bg-slate-900/30 p-3">
                   <h3 className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Status</h3>
@@ -5706,7 +5825,11 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           >
             <div className="flex flex-col items-center gap-3">
               <div className="text-sm font-semibold text-slate-100">{getDisplayCardName(zoomedCard)}</div>
-              <img src={zoomedCard.image_uri} alt={zoomedCard.name} className="max-w-full max-h-[80vh] rounded-xl shadow-2xl" />
+              {zoomedCard.isToken ? (
+                <TokenCardPreview token={zoomedCard} size="large" />
+              ) : (
+                <img src={zoomedCard.image_uri} alt={zoomedCard.name} className="max-w-full max-h-[80vh] rounded-xl shadow-2xl" />
+              )}
             </div>
             {(hasAnyCombatInfo(getCardCombatInfo(zoomedCard, game, allBattlefieldDisplayNames)) || getCardMarkedDamage(zoomedCard) > 0 || getTargetInfoRows(getTargetInfoFor(zoomedCard)).length > 0) && (
               <div className="w-full max-w-xs lg:w-64 bg-slate-900/90 border border-slate-600 rounded-xl p-3 shadow-xl text-sm space-y-3">

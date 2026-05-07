@@ -309,7 +309,8 @@ const UNDOABLE_ACTION_TYPES = new Set([
   'SET_COMMANDER',
   'UNSET_COMMANDER',
   'COMMANDER_TAX',
-  'COMMANDER_DAMAGE'
+  'COMMANDER_DAMAGE',
+  'DECK_DELETE'
 ]);
 
 const cloneUndoValue = (value) => {
@@ -4171,23 +4172,42 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         ZONES.GRAVEYARD,
         ZONES.EXILE
       ]);
+      const gameRef = doc(db, 'games_v3', gameId);
 
-      const playerDeckCards = (game.cards || []).filter(card => card.ownerId === userId && deckZonesToClear.has(card.zone));
-      const deckCardIds = new Set(playerDeckCards.map(card => card.instanceId));
-      const nextCards = (game.cards || []).filter(card => !deckCardIds.has(card.instanceId));
-      const nextReveals = (game.reveals || []).filter(entry => entry.revealerId !== userId && !deckCardIds.has(entry.cardId));
+      await runTransaction(db, async (transaction) => {
+        const snap = await transaction.get(gameRef);
+        if (!snap.exists()) return;
+        const currentGame = snap.data();
+        const currentPlayers = currentGame.players || [];
+        const currentPlayer = currentPlayers.find((player) => player.id === userId);
+        if (!currentPlayer) return;
 
-      await updateDoc(doc(db, 'games_v3', gameId), {
-        cards: nextCards,
-        reveals: nextReveals,
-        log: arrayUnion(buildGameLogEntry({
-          currentGame: game,
-          playerId: userId,
-          playerName: myPlayer?.name || displayName || 'Unknown',
-          type: 'DECK_DELETE',
-          category: 'setup',
-          message: `${myPlayer?.name || displayName || 'Unknown'} deleted their deck.`
-        }))
+        const deckDeleteActorName = currentPlayer.name || myPlayer?.name || displayName || 'Unknown';
+        const deckDeleteMessage = `${deckDeleteActorName} deleted their deck.`;
+        const playerDeckCards = (currentGame.cards || []).filter(card => card.ownerId === userId && deckZonesToClear.has(card.zone));
+        const deckCardIds = new Set(playerDeckCards.map(card => card.instanceId));
+        const nextCards = (currentGame.cards || []).filter(card => !deckCardIds.has(card.instanceId));
+        const nextReveals = (currentGame.reveals || []).filter(entry => entry.revealerId !== userId && !deckCardIds.has(entry.cardId));
+
+        transaction.update(gameRef, {
+          cards: nextCards,
+          reveals: nextReveals,
+          log: arrayUnion(buildGameLogEntry({
+            currentGame,
+            playerId: userId,
+            playerName: deckDeleteActorName,
+            type: 'DECK_DELETE',
+            category: 'setup',
+            message: deckDeleteMessage
+          })),
+          undoStack: appendUndoEntry(currentGame, buildUndoEntry({
+            currentGame,
+            actorId: userId,
+            actorName: deckDeleteActorName,
+            actionLabel: normalizeUndoActionLabel(deckDeleteMessage, deckDeleteActorName)
+          })),
+          updatedAt: serverTimestamp()
+        });
       });
 
       setDeleteDeckConfirmOpen(false);

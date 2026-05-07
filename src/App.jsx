@@ -1092,7 +1092,7 @@ const Lobby = ({
   );
 };
 
-const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isDraggable, targets = [], stack = [], isSelected = false, combatBadgeLabel = null, displayName = null }) => {
+const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isDraggable, targets = [], stack = [], isSelected = false, combatBadgeLabel = null, combatBadges = null, displayName = null }) => {
   const isTapped = card.tapped;
   const isFaceDown = card.faceDown;
   const counters = card.counters || {};
@@ -1109,7 +1109,10 @@ const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isD
 
   // Count how many times this card is targeted
   const targetCount = targets.filter(t => t.targetId === card.instanceId).length + stack.filter(s => s.targetIds && s.targetIds.includes(card.instanceId)).length;
-  const hasCombatBadge = typeof combatBadgeLabel === 'string' && combatBadgeLabel.length > 0;
+  const normalizedCombatBadges = Array.isArray(combatBadges)
+    ? combatBadges.filter((badge) => badge && typeof badge.label === 'string' && badge.label.length > 0)
+    : (typeof combatBadgeLabel === 'string' && combatBadgeLabel.length > 0 ? [{ label: combatBadgeLabel, tone: 'neutral' }] : []);
+  const hasCombatBadge = normalizedCombatBadges.length > 0;
 
   let rotateClass = isTapped ? 'rotate-90' : '';
   const positionClass = zone === ZONES.BATTLEFIELD ? 'absolute' : 'relative';
@@ -1169,22 +1172,28 @@ const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isD
           </div>
         )}
 
-        <div className="badgeStack absolute inset-x-1 top-1 z-20 pointer-events-none flex items-start justify-between">
-          <div className="min-w-0">
-            {hasCombatBadge && (
-              <div className="bg-slate-900/90 text-slate-100 text-[9px] px-1.5 py-0.5 rounded border border-slate-400/50 shadow-sm whitespace-nowrap font-semibold">
-                {combatBadgeLabel}
-              </div>
-            )}
+        {tempDamage > 0 && (
+          <div className="absolute top-1 right-1 z-20 pointer-events-none bg-red-800/90 text-red-100 text-[9px] px-1.5 py-0.5 rounded border border-red-300/60 shadow-sm whitespace-nowrap font-bold">
+            DMG: {tempDamage}
           </div>
-          <div className="min-w-0">
-            {tempDamage > 0 && (
-              <div className="bg-red-800/90 text-red-100 text-[9px] px-1.5 py-0.5 rounded border border-red-300/60 shadow-sm whitespace-nowrap font-bold">
-                DMG: {tempDamage}
-              </div>
-            )}
+        )}
+
+        {hasCombatBadge && (
+          <div className="absolute inset-x-1 bottom-1 z-20 pointer-events-none flex flex-col items-start gap-0.5">
+            {normalizedCombatBadges.map((badge, index) => {
+              const toneClass = badge.tone === 'attack'
+                ? 'bg-red-950/95 text-red-50 border-red-300/70'
+                : badge.tone === 'block'
+                  ? 'bg-blue-950/95 text-blue-50 border-blue-300/70'
+                  : 'bg-slate-950/90 text-slate-100 border-slate-300/60';
+              return (
+                <div key={`${badge.label}-${index}`} className={`max-w-full truncate text-[9px] leading-tight px-1.5 py-0.5 rounded border shadow-md whitespace-nowrap font-extrabold ${toneClass}`}>
+                  {badge.label}
+                </div>
+              );
+            })}
           </div>
-        </div>
+        )}
 
         <div className="absolute top-5 left-1 flex flex-col gap-1 pointer-events-none">
           {Object.entries(counters).map(([label, count]) => (
@@ -3224,12 +3233,6 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     return allBattlefieldDisplayNames.get(card.instanceId) || card.name || 'Unknown';
   };
 
-  const getDisplayCardNameOrNull = (cardOrId) => {
-    const card = typeof cardOrId === 'string' ? cardsMap.get(cardOrId) : cardOrId;
-    if (!card) return null;
-    return getDisplayCardName(card);
-  };
-
   if (loading) return <div className="text-white p-10 flex justify-center"><RotateCw className="animate-spin"/></div>;
   if (!game) return <div className="text-white p-10">Game not found</div>;
 
@@ -3255,39 +3258,80 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const combat = game.combat || getEmptyCombatState();
   const combatAttackers = combat.attackers || {};
   const combatBlockers = combat.blockers || {};
-  const activePlayerId = (game.players || [])[game.activePlayerIndex]?.id || game.turnPlayerId;
   const attackingCards = Object.keys(combatAttackers)
     .map((id) => cardsMap.get(id))
     .filter((c) => c && c.zone === ZONES.BATTLEFIELD);
-  const activeAttackers = attackingCards.filter((c) => c.controllerId === activePlayerId);
+  const validBlockerCandidates = myBattlefield.filter((c) => (c.type_line || '').toLowerCase().includes('creature'));
+  const validBlockTargetAttackers = attackingCards.filter((c) => c.controllerId !== viewAsPlayerId);
+  const activeAttackers = validBlockTargetAttackers;
+  const combatParticipantIds = new Set([
+    ...Object.keys(combatAttackers),
+    ...Object.keys(combatBlockers),
+    ...Object.values(combatBlockers).flatMap((ids) => Array.isArray(ids) ? ids : [])
+  ]);
+  const combatDisplayNameMap = buildSectionDisplayNameMap(
+    [...combatParticipantIds].map((id) => cardsMap.get(id)).filter(Boolean)
+  );
+  const getCombatDisplayCardName = (cardOrId) => {
+    const card = typeof cardOrId === 'string' ? cardsMap.get(cardOrId) : cardOrId;
+    if (!card) return 'Unknown';
+    return combatDisplayNameMap.get(card.instanceId) || getDisplayCardName(card);
+  };
+  const getCombatDisplayCardNameOrNull = (cardOrId) => {
+    const card = typeof cardOrId === 'string' ? cardsMap.get(cardOrId) : cardOrId;
+    if (!card) return null;
+    return getCombatDisplayCardName(card);
+  };
   const getAttackTargetLabel = (attackTarget) => {
     if (!attackTarget || typeof attackTarget !== 'object') return null;
     if (attackTarget.type === 'player') {
       const playerName = (game.players || []).find((p) => p.id === attackTarget.targetId)?.name || 'Player';
       return playerName;
     }
-    if (attackTarget.type === 'planeswalker') return `PW: ${getDisplayCardName(attackTarget.targetId)}`;
+    if (attackTarget.type === 'planeswalker') return `PW: ${getCombatDisplayCardName(attackTarget.targetId)}`;
+    if (attackTarget.name) return attackTarget.name;
     return null;
   };
   const getCardAttackTargetLabel = (cardId) => {
     if (!Object.prototype.hasOwnProperty.call(combatAttackers, cardId)) return null;
     return getAttackTargetLabel(combatAttackers[cardId]);
   };
-  const getCardCombatBadgeLabel = (cardId) => {
+  const getBlockingAssignmentsForAttacker = (attackerId) => Object.entries(combatBlockers)
+    .filter(([, blockedIds]) => Array.isArray(blockedIds) && blockedIds.includes(attackerId))
+    .map(([blockerId]) => blockerId);
+  const getCardCombatBadges = (cardId) => {
+    const badges = [];
     const attackTargetLabel = getCardAttackTargetLabel(cardId);
-    if (attackTargetLabel) return `ATTACKING → ${attackTargetLabel}`;
+    if (attackTargetLabel) {
+      badges.push({ label: `ATK → ${attackTargetLabel}`, tone: 'attack' });
+      if (getBlockingAssignmentsForAttacker(cardId).length > 0) {
+        badges.push({ label: 'Blocked', tone: 'neutral' });
+      }
+    }
 
     const blockedIds = Array.isArray(combatBlockers[cardId]) ? combatBlockers[cardId] : [];
     if (blockedIds.length > 0) {
-      const firstBlockedName = getDisplayCardNameOrNull(blockedIds[0]);
-      return `BLOCKING (${blockedIds.length})${firstBlockedName ? ` ${firstBlockedName}` : ''}`;
+      const blockedNames = blockedIds.map((id) => getCombatDisplayCardNameOrNull(id)).filter(Boolean);
+      const blockedLabel = blockedNames.length > 0 ? blockedNames.join(', ') : `${blockedIds.length} attacker${blockedIds.length === 1 ? '' : 's'}`;
+      badges.push({ label: `BLK → ${blockedLabel}`, tone: 'block' });
     }
 
-    return null;
+    return badges;
   };
   const getBlockedAttackersForBlocker = (blockerId) => (combatBlockers[blockerId] || [])
     .map((id) => cardsMap.get(id))
     .filter(Boolean);
+
+  console.log('[COMBAT_DEBUG]', {
+    phase: game.phase,
+    currentPlayerId: viewAsPlayerId,
+    attackersMap: combatAttackers,
+    blockersMap: combatBlockers,
+    validBlockerCandidates: validBlockerCandidates.map((card) => ({ id: card.instanceId, name: getCombatDisplayCardName(card), controllerId: card.controllerId })),
+    validAttackerTargetsDuringBlockSelection: validBlockTargetAttackers.map((card) => ({ id: card.instanceId, name: getCombatDisplayCardName(card), controllerId: card.controllerId, attackTarget: getCardAttackTargetLabel(card.instanceId) })),
+    selectedBlockerId: blockPickerCard?.instanceId || null,
+    selectedAttackerId: null
+  });
   const playerOne = (game.players || [])[0];
   const playerTwo = (game.players || [])[1];
 
@@ -3599,7 +3643,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                       onMove={() => targetingState ? toggleTarget(card) : setZoomedCard(card)}
                       onZoom={setZoomedCard}
                       displayName={getDisplayCardName(card)}
-                      combatBadgeLabel={getCardCombatBadgeLabel(card.instanceId)}
+                      combatBadges={getCardCombatBadges(card.instanceId)}
                     />
                   </div>
                 );
@@ -3635,14 +3679,14 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               <div>
                 <div className="text-red-300 font-semibold">Attackers</div>
                 {attackingCards.length === 0 ? <div className="text-slate-400">None</div> : attackingCards.map((attacker) => (
-                  <div key={attacker.instanceId} className="text-slate-200">{getDisplayCardName(attacker)}: {getCardAttackTargetLabel(attacker.instanceId) || 'Defender'}</div>
+                  <div key={attacker.instanceId} className="text-slate-200">{getCombatDisplayCardName(attacker)} → {getCardAttackTargetLabel(attacker.instanceId) || 'Defender'}</div>
                 ))}
               </div>
               <div>
                 <div className="text-blue-300 font-semibold">Blockers</div>
                 {Object.keys(combatBlockers).length === 0 ? <div className="text-slate-400">None</div> : Object.entries(combatBlockers).map(([blockerId, blockedIds]) => (
                   <div key={blockerId} className="text-slate-200">
-                    {(getDisplayCardName(blockerId) || 'Blocker')} → {(blockedIds || []).map((id) => getDisplayCardName(id) || 'Attacker').join(', ')}
+                    {(getCombatDisplayCardName(blockerId) || 'Blocker')} blocks {(blockedIds || []).map((id) => getCombatDisplayCardName(id) || 'Attacker').join(', ')}
                   </div>
                 ))}
               </div>
@@ -3727,7 +3771,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                       onZoom={setZoomedCard}
                       onPeek={(c) => setPeekCard(c)}
                       displayName={getDisplayCardName(card)}
-                      combatBadgeLabel={getCardCombatBadgeLabel(card.instanceId)}
+                      combatBadges={getCardCombatBadges(card.instanceId)}
                     />
                   </div>
                 );
@@ -4343,7 +4387,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                     <div className="col-span-2 text-xs px-2 py-1 rounded bg-red-900/30 border border-red-700/40 text-red-100">ATK → {getCardAttackTargetLabel(selectedCard.instanceId) || 'Defender'}</div>
                   )}
                   {(combatBlockers[selectedCard.instanceId] || []).length > 0 && (
-                    <div className="col-span-2 text-xs px-2 py-1 rounded bg-blue-900/30 border border-blue-700/40 text-blue-100">Blocking: {getBlockedAttackersForBlocker(selectedCard.instanceId).map(c => getDisplayCardName(c)).join(', ')}</div>
+                    <div className="col-span-2 text-xs px-2 py-1 rounded bg-blue-900/30 border border-blue-700/40 text-blue-100">Blocking: {getBlockedAttackersForBlocker(selectedCard.instanceId).map(c => getCombatDisplayCardName(c)).join(', ')}</div>
                   )}
                   <div className="col-span-2 flex flex-col bg-slate-700 rounded-lg p-2 gap-2">
                     <div className="flex justify-between items-center border-b border-slate-600 pb-1">
@@ -4419,10 +4463,22 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                 return (
                   <button
                     key={attacker.instanceId}
-                    onClick={() => canAct && toggleBlockTarget(blockPickerCard.instanceId, attacker.instanceId)}
+                    onClick={() => {
+                      console.log('[COMBAT_BLOCK_SELECTION]', {
+                        phase: game.phase,
+                        currentPlayerId: viewAsPlayerId,
+                        attackersMap: combatAttackers,
+                        blockersMap: combatBlockers,
+                        validBlockerCandidates: validBlockerCandidates.map((card) => ({ id: card.instanceId, name: getCombatDisplayCardName(card), controllerId: card.controllerId })),
+                        validAttackerTargetsDuringBlockSelection: validBlockTargetAttackers.map((card) => ({ id: card.instanceId, name: getCombatDisplayCardName(card), controllerId: card.controllerId, attackTarget: getCardAttackTargetLabel(card.instanceId) })),
+                        selectedBlockerId: blockPickerCard.instanceId,
+                        selectedAttackerId: attacker.instanceId
+                      });
+                      if (canAct) toggleBlockTarget(blockPickerCard.instanceId, attacker.instanceId);
+                    }}
                     className={`w-full text-left px-3 py-2 rounded text-sm border ${active ? 'bg-blue-900/50 border-blue-500 text-blue-100' : 'bg-slate-700 border-slate-600 text-slate-100'}`}
                   >
-                    <div className="font-medium">{getDisplayCardName(attacker)}</div>
+                    <div className="font-medium">{getCombatDisplayCardName(attacker)}</div>
                     <div className="text-[11px] text-slate-300">ATK → {getCardAttackTargetLabel(attacker.instanceId) || 'Defender'}</div>
                   </button>
                 );

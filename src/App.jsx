@@ -685,6 +685,130 @@ const buildDuplicateDisplayNameMap = (cards = []) => {
   return labels;
 };
 
+
+
+const TARGET_PLAYER_PREFIX = 'player:';
+const getPlayerTargetIdFromRaw = (value) => typeof value === 'string' && value.startsWith(TARGET_PLAYER_PREFIX) ? value.slice(TARGET_PLAYER_PREFIX.length) : null;
+
+const getPublicTargetDisplayName = (targetId, currentGame, displayNameMap = null, fallback = 'a target') => {
+  const playerId = getPlayerTargetIdFromRaw(targetId);
+  if (playerId) return getPlayerNameById(currentGame, playerId, 'Player');
+
+  const card = (currentGame?.cards || []).find((candidate) => candidate.instanceId === targetId);
+  if (!card) return fallback;
+  if (card.faceDown) return 'a face-down card';
+  if (!isPublicZone(card.zone)) return fallback;
+
+  const publicDisplayNames = displayNameMap || buildDuplicateDisplayNameMap(
+    (currentGame?.cards || []).filter((candidate) => isPublicZone(candidate.zone))
+  );
+  return publicDisplayNames.get(card.instanceId) || card.name || fallback;
+};
+
+const getPublicSourceDisplayName = (sourceId, currentGame, displayNameMap = null, fallback = 'a source') => {
+  const stackItem = (currentGame?.stack || []).find((item) => item?.id === sourceId || item?.sourceId === sourceId);
+  if (stackItem?.name) return stackItem.name;
+
+  const sourceCard = (currentGame?.cards || []).find((candidate) => candidate.instanceId === sourceId);
+  if (!sourceCard) return fallback;
+  if (sourceCard.faceDown) return 'a face-down card';
+  if (!isPublicZone(sourceCard.zone)) return fallback;
+
+  const publicDisplayNames = displayNameMap || buildDuplicateDisplayNameMap(
+    (currentGame?.cards || []).filter((candidate) => isPublicZone(candidate.zone))
+  );
+  return publicDisplayNames.get(sourceCard.instanceId) || sourceCard.name || fallback;
+};
+
+const getStackItemTargets = (item) => [
+  ...((item?.targetIds || []).map((targetId) => ({ targetId, targetType: 'card' }))),
+  ...((item?.targetPlayerIds || []).map((playerId) => ({ targetId: `${TARGET_PLAYER_PREFIX}${playerId}`, targetType: 'player' })))
+];
+
+const getCardTargetInfo = (cardOrStackItem, currentGame, displayNameMap = null) => {
+  const targetEntries = currentGame?.targets || [];
+  const stackItems = currentGame?.stack || [];
+  const isStackItem = Boolean(cardOrStackItem?.sourceId && (cardOrStackItem?.targetIds || cardOrStackItem?.targetPlayerIds || cardOrStackItem?.itemType || cardOrStackItem?.type));
+  const cardId = isStackItem ? cardOrStackItem?.sourceId : cardOrStackItem?.instanceId;
+  const stackItemId = isStackItem ? cardOrStackItem?.id : null;
+
+  const publicDisplayNames = displayNameMap || buildDuplicateDisplayNameMap(
+    (currentGame?.cards || []).filter((candidate) => isPublicZone(candidate.zone))
+  );
+
+  const chosenTargets = [];
+  const addChosenTarget = (targetId, sourceType = 'manual') => {
+    if (!targetId) return;
+    chosenTargets.push({
+      targetId,
+      targetType: getPlayerTargetIdFromRaw(targetId) ? 'player' : 'card',
+      displayName: getPublicTargetDisplayName(targetId, currentGame, publicDisplayNames),
+      sourceType
+    });
+  };
+
+  if (isStackItem) {
+    getStackItemTargets(cardOrStackItem).forEach(({ targetId }) => addChosenTarget(targetId, 'stack'));
+  } else if (cardId) {
+    targetEntries
+      .filter((entry) => entry?.sourceId === cardId)
+      .forEach((entry) => addChosenTarget(entry.targetId, 'manual'));
+
+    stackItems
+      .filter((item) => item?.sourceId === cardId)
+      .forEach((item) => getStackItemTargets(item).forEach(({ targetId }) => addChosenTarget(targetId, 'stack')));
+  }
+
+  const targetedBy = [];
+  const addTargetedBy = ({ sourceId, stackItem = null, controllerId = null, sourceType = 'manual' }) => {
+    if (!sourceId && !stackItem?.sourceId) return;
+    const resolvedSourceId = sourceId || stackItem?.sourceId;
+    targetedBy.push({
+      sourceId: resolvedSourceId,
+      stackItemId: stackItem?.id || null,
+      displayName: stackItem?.name || getPublicSourceDisplayName(resolvedSourceId, currentGame, publicDisplayNames),
+      controllerId: controllerId || stackItem?.controllerId || null,
+      controllerName: getPlayerNameById(currentGame, controllerId || stackItem?.controllerId, 'Player'),
+      sourceType
+    });
+  };
+
+  if (cardId && !isStackItem) {
+    targetEntries
+      .filter((entry) => entry?.targetId === cardId)
+      .forEach((entry) => addTargetedBy({ sourceId: entry.sourceId, controllerId: entry.controllerId, sourceType: 'manual' }));
+
+    stackItems.forEach((item) => {
+      if ((item?.targetIds || []).includes(cardId)) {
+        addTargetedBy({ stackItem: item, sourceType: 'stack' });
+      }
+    });
+  } else if (stackItemId) {
+    targetEntries
+      .filter((entry) => entry?.targetId === stackItemId)
+      .forEach((entry) => addTargetedBy({ sourceId: entry.sourceId, controllerId: entry.controllerId, sourceType: 'manual' }));
+  }
+
+  return {
+    cardId: cardId || stackItemId || null,
+    targetsChosenByThisCard: chosenTargets,
+    targetDisplayNames: chosenTargets.map((target) => target.displayName),
+    targetedByCards: targetedBy,
+    targetedByDisplayNames: targetedBy.map((source) => source.displayName),
+    targetedByPlayers: targetedBy.map((source) => ({ playerId: source.controllerId, name: source.controllerName })).filter((player) => player.playerId),
+    hasTargets: chosenTargets.length > 0,
+    isTargeted: targetedBy.length > 0
+  };
+};
+
+const formatTargetListInline = (names = [], maxItems = 2) => {
+  const cleanNames = names.filter(Boolean);
+  if (cleanNames.length === 0) return '';
+  const shown = cleanNames.slice(0, maxItems).join(', ');
+  const remaining = cleanNames.length - maxItems;
+  return remaining > 0 ? `${shown} +${remaining}` : shown;
+};
+
 const getCombatDisplayName = (cardOrId, currentGame, displayNameMap = null) => {
   const card = typeof cardOrId === 'string'
     ? (currentGame?.cards || []).find((candidate) => candidate.instanceId === cardOrId)
@@ -1278,7 +1402,7 @@ const DamageBadge = ({ amount }) => {
   );
 };
 
-const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isDraggable, targets = [], stack = [], isSelected = false, combatBadgeLabel = null, combatBadges = null, displayName = null, markedDamage = null }) => {
+const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isDraggable, targets = [], stack = [], isSelected = false, combatBadgeLabel = null, combatBadges = null, displayName = null, markedDamage = null, targetInfo = null }) => {
   const isTapped = card.tapped;
   const isFaceDown = card.faceDown;
   const counters = card.counters || {};
@@ -1290,11 +1414,17 @@ const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isD
   const stackSource = stack.some(s => s.sourceId === card.instanceId);
   const stackTarget = stack.some(s => s.targetIds && s.targetIds.includes(card.instanceId));
 
-  const isSource = persistentSource || stackSource;
-  const isTarget = persistentTarget || stackTarget;
+  const isSource = targetInfo?.hasTargets ?? (persistentSource || stackSource);
+  const isTarget = targetInfo?.isTargeted ?? (persistentTarget || stackTarget);
 
   // Count how many times this card is targeted
-  const targetCount = targets.filter(t => t.targetId === card.instanceId).length + stack.filter(s => s.targetIds && s.targetIds.includes(card.instanceId)).length;
+  const targetCount = targetInfo?.targetedByDisplayNames?.length ?? (targets.filter(t => t.targetId === card.instanceId).length + stack.filter(s => s.targetIds && s.targetIds.includes(card.instanceId)).length);
+  const targetBadgeLabel = targetInfo?.targetedByDisplayNames?.length
+    ? `Targeted by ${formatTargetListInline(targetInfo.targetedByDisplayNames, 1)}`
+    : (isTarget ? '🎯 Targeted' : null);
+  const sourceTargetLabel = targetInfo?.targetDisplayNames?.length
+    ? `Targets: ${formatTargetListInline(targetInfo.targetDisplayNames, 1)}`
+    : null;
   const normalizedCombatBadges = Array.isArray(combatBadges)
     ? combatBadges.filter((badge) => badge && typeof badge.label === 'string' && badge.label.length > 0)
     : (typeof combatBadgeLabel === 'string' && combatBadgeLabel.length > 0 ? [{ label: combatBadgeLabel, tone: 'neutral' }] : []);
@@ -1328,18 +1458,6 @@ const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isD
     >
       <div className={`w-full h-full rounded-lg overflow-hidden border-2 shadow-md relative bg-slate-800 pointer-events-none ${borderStyle} ${zone === ZONES.BATTLEFIELD ? 'shadow-lg' : ''}`}>
         
-        {/* FIX 1: Bigger, bolder badges */}
-        {isSource && (
-          <div className="absolute -top-3 -right-3 z-40 text-lg bg-red-600 text-white rounded-full w-8 h-8 flex items-center justify-center border-2 border-white shadow-xl font-bold animate-in zoom-in">
-            🎯
-          </div>
-        )}
-        {isTarget && (
-          <div className="absolute -top-3 -left-3 z-40 text-lg bg-blue-600 text-white rounded-full w-8 h-8 flex items-center justify-center border-2 border-white shadow-xl font-bold animate-in zoom-in">
-            🎯
-            {targetCount > 1 && <span className="absolute -bottom-1 -right-1 text-[10px] bg-black text-white px-1 rounded-full border border-white leading-tight">{targetCount}</span>}
-          </div>
-        )}
 
         {isFaceDown ? (
           <div className="w-full h-full bg-slate-700 flex flex-col items-center justify-center p-1 border-4 border-slate-600">
@@ -1367,6 +1485,21 @@ const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isD
             )
           ))}
         </div>
+
+        {zone === ZONES.BATTLEFIELD && (targetBadgeLabel || sourceTargetLabel) && (
+          <div className="absolute bottom-1 left-1 z-30 pointer-events-none flex max-w-[calc(100%-0.5rem)] flex-col items-start gap-0.5">
+            {targetBadgeLabel && (
+              <div className="max-w-full truncate rounded-md border border-sky-200/80 bg-sky-700/95 px-1.5 py-0.5 text-[9px] font-black leading-none text-white shadow-[0_1px_6px_rgba(0,0,0,0.65)]">
+                {targetBadgeLabel}{targetCount > 1 ? ` (${targetCount})` : ''}
+              </div>
+            )}
+            {sourceTargetLabel && (
+              <div className="max-w-full truncate rounded-md border border-amber-200/80 bg-amber-700/95 px-1.5 py-0.5 text-[9px] font-black leading-none text-white shadow-[0_1px_6px_rgba(0,0,0,0.65)]">
+                {sourceTargetLabel}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
 
@@ -2035,6 +2168,15 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       message,
       ...extra
     });
+    const getActionTargetDisplayNames = (targetIds = [], targetPlayerIds = []) => [
+      ...(targetIds || []).map((targetId) => getPublicTargetDisplayName(targetId, game, allBattlefieldDisplayNames, 'a target')),
+      ...(targetPlayerIds || []).map((playerId) => getPlayerNameById(game, playerId, 'Player'))
+    ].filter(Boolean);
+    const formatActionTargetSuffix = (targetIds = [], targetPlayerIds = []) => {
+      const names = getActionTargetDisplayNames(targetIds, targetPlayerIds);
+      if (names.length === 0) return '';
+      return ` targeting ${names.join(', ')}`;
+    };
     const logEntry = makeActionLog(actionType, payload.desc || actionType);
 
     let updates = { log: arrayUnion(logEntry) };
@@ -2593,7 +2735,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         consecutivePasses: 0,
         priorityPlayerId: userId,
         priorityIndex: userIndex !== -1 ? userIndex : game.priorityIndex,
-        log: arrayUnion(makeActionLog('CAST_SPELL', `${actorName} cast ${getSafeCardName(card, payload.cardName || 'a spell')}.`, { category: 'stack', cardId: card?.instanceId || payload.cardId, cardName: getSafeCardName(card, payload.cardName || 'a spell') }))
+        log: arrayUnion(makeActionLog('CAST_SPELL', `${actorName} cast ${getSafeCardName(card, payload.cardName || 'a spell')}${formatActionTargetSuffix(payload.targetIds, payload.targetPlayerIds)}.`, { category: 'stack', cardId: card?.instanceId || payload.cardId, cardName: getSafeCardName(card, payload.cardName || 'a spell'), targetNames: getActionTargetDisplayNames(payload.targetIds, payload.targetPlayerIds) }))
       };
 
     } else if (actionType === 'ACTIVATE_ABILITY') {
@@ -2632,7 +2774,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       const userIndex = game.players.findIndex(p => p.id === userId);
       updates.stack = arrayUnion(stackItem);
       updates.consecutivePasses = 0;
-      updates.log = arrayUnion(makeActionLog('ACTIVATE_ABILITY', `${actorName} activated ${getSafeCardName(sourceCard, 'an ability')}.`, { category: 'stack', cardId: sourceCard?.instanceId, cardName: getSafeCardName(sourceCard, 'an ability') }));
+      updates.log = arrayUnion(makeActionLog('ACTIVATE_ABILITY', `${actorName} activated ${getSafeCardName(sourceCard, 'an ability')}${formatActionTargetSuffix(payload.targetIds, payload.targetPlayerIds)}.`, { category: 'stack', cardId: sourceCard?.instanceId, cardName: getSafeCardName(sourceCard, 'an ability'), targetNames: getActionTargetDisplayNames(payload.targetIds, payload.targetPlayerIds) }));
       updates.priorityPlayerId = userId;
       updates.priorityIndex = userIndex !== -1 ? userIndex : game.priorityIndex;
 
@@ -3120,9 +3262,10 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             playerName: myPlayer?.name || 'Unknown',
             type: 'TARGET',
             category: 'target',
-            message: `${myPlayer?.name || 'Unknown'} targeted ${selectedIds.length} object${selectedIds.length === 1 ? '' : 's'} with ${getSafeCardName(source)}.`,
+            message: `${myPlayer?.name || 'Unknown'} chose ${selectedIds.map((targetId) => getPublicTargetDisplayName(targetId, game, allBattlefieldDisplayNames, 'a target')).join(', ')} as target${selectedIds.length === 1 ? '' : 's'} for ${getSafeCardName(source)}.`,
             cardId: source.instanceId,
             cardName: getSafeCardName(source),
+            targetNames: selectedIds.map((targetId) => getPublicTargetDisplayName(targetId, game, allBattlefieldDisplayNames, 'a target')),
             targetCount: selectedIds.length
           }))
         });
@@ -3150,7 +3293,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           playerName: myPlayer?.name || 'Unknown',
           type: 'CLEAR_TARGETS',
           category: 'target',
-          message: `${myPlayer?.name || 'Unknown'} cleared targets for ${getSafeCardName(card)}.`,
+          message: `${myPlayer?.name || 'Unknown'} cleared targets from ${getSafeCardName(card)}.`,
           cardId: card.instanceId,
           cardName: getSafeCardName(card)
         }))
@@ -3442,6 +3585,18 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     return allBattlefieldDisplayNames.get(card.instanceId) || card.name || 'Unknown';
   };
 
+  const getTargetInfoFor = (cardOrStackItem) => getCardTargetInfo(cardOrStackItem, game, allBattlefieldDisplayNames);
+  const getTargetInfoRows = (targetInfo) => {
+    const rows = [];
+    if (targetInfo?.targetDisplayNames?.length) {
+      rows.push({ label: targetInfo.targetDisplayNames.length === 1 ? 'Targeting' : 'Targeting', values: targetInfo.targetDisplayNames });
+    }
+    if (targetInfo?.targetedByDisplayNames?.length) {
+      rows.push({ label: 'Targeted by', values: targetInfo.targetedByDisplayNames });
+    }
+    return rows;
+  };
+
   if (loading) return <div className="text-white p-10 flex justify-center"><RotateCw className="animate-spin"/></div>;
   if (!game) return <div className="text-white p-10">Game not found</div>;
 
@@ -3489,14 +3644,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     const typeLine = (item?.typeLine || (isPublicZone(sourceCard?.zone) ? sourceCard?.type_line : '') || '').trim();
     return typeLine || null;
   };
-  const getStackTargetDisplayNames = (item) => {
-    const cardTargets = (item?.targetIds || []).map((targetId) => {
-      const targetCard = cardsMap.get(targetId);
-      return getSafePublicCardName(targetCard, 'a card');
-    });
-    const playerTargets = (item?.targetPlayerIds || []).map((playerId) => getPlayerNameById(game, playerId, 'Player'));
-    return [...cardTargets, ...playerTargets].filter(Boolean);
-  };
+  const getStackTargetDisplayNames = (item) => getCardTargetInfo(item, game, allBattlefieldDisplayNames).targetDisplayNames;
   const priorityHolderName = getPlayerNameById(game, game.priorityPlayerId, 'Unknown');
   const priorityPassCount = Math.max(0, Math.min(game.consecutivePasses || 0, (game.players || []).length));
   const passedPriorityPlayers = (game.players || []).length > 1 && priorityPassCount > 0
@@ -3515,6 +3663,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     typeLabel: getStackItemTypeLabel(item),
     typeLine: getStackItemTypeLine(item),
     targets: getStackTargetDisplayNames(item),
+    targetInfo: getTargetInfoFor(item),
     isTop: index === 0
   }));
   const getLiveCard = (cardOrId) => {
@@ -3910,6 +4059,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                       displayName={getDisplayCardName(card)}
                       markedDamage={getCardMarkedDamage(card)}
                       combatBadges={getCardCombatBadges(card, 'opponent battlefield')}
+                      targetInfo={getTargetInfoFor(card)}
                     />
                   </div>
                 );
@@ -3924,18 +4074,28 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                   <Layers size={12} /> The Stack
                 </div>
                 <div className="space-y-1">
-                  {[...stackCards].reverse().map((item) => (
-                    <div
-                      key={item.id}
-                      onClick={() => openStackItem(item)}
-                      className="bg-black/60 p-2 rounded border-l-2 border-yellow-500 flex justify-between items-center gap-4 cursor-pointer hover:bg-black/80 transition-colors"
-                    >
-                      <span className="text-sm font-medium text-yellow-100">{item.name}</span>
-                      <span className="text-[10px] text-slate-400">
-                        {game.players.find(p => p.id === item.controllerId)?.name}
-                      </span>
-                    </div>
-                  ))}
+                  {[...stackCards].reverse().map((item) => {
+                    const itemTargetInfo = getTargetInfoFor(item);
+                    return (
+                      <div
+                        key={item.id}
+                        onClick={() => openStackItem(item)}
+                        className="bg-black/60 p-2 rounded border-l-2 border-yellow-500 flex justify-between items-start gap-4 cursor-pointer hover:bg-black/80 transition-colors"
+                      >
+                        <div className="min-w-0">
+                          <div className="text-sm font-medium text-yellow-100 break-words">{item.name}</div>
+                          {itemTargetInfo.targetDisplayNames.length > 0 && (
+                            <div className="mt-0.5 text-[11px] text-yellow-200 break-words">
+                              Targeting: {formatTargetListInline(itemTargetInfo.targetDisplayNames, 2)}
+                            </div>
+                          )}
+                        </div>
+                        <span className="shrink-0 text-[10px] text-slate-400">
+                          {game.players.find(p => p.id === item.controllerId)?.name}
+                        </span>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             ) : <div />}
@@ -4039,6 +4199,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                       displayName={getDisplayCardName(card)}
                       markedDamage={getCardMarkedDamage(card)}
                       combatBadges={getCardCombatBadges(card, 'own battlefield')}
+                      targetInfo={getTargetInfoFor(card)}
                     />
                   </div>
                 );
@@ -4231,6 +4392,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               isSelected={targetingState?.selectedIds.includes(card.instanceId)}
               onMove={() => setSelectedCard(card)}
               onZoom={setZoomedCard}
+              targetInfo={getTargetInfoFor(card)}
             />
           ))}
           {myHand.length > 0 && (
@@ -4318,7 +4480,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                 <div className="rounded-xl border border-dashed border-slate-700 bg-slate-800/40 p-6 text-center text-slate-300">
                   Stack is empty.
                 </div>
-              ) : stackDetailItems.map(({ item, name, casterName, typeLabel, typeLine, targets, isTop }) => (
+              ) : stackDetailItems.map(({ item, name, casterName, typeLabel, typeLine, targets, targetInfo, isTop }) => (
                 <div key={item.id || `${item.sourceId}-${item.timestamp}`} className={`rounded-xl border p-3 shadow-lg ${isTop ? 'border-yellow-500/60 bg-yellow-950/30' : 'border-slate-700 bg-slate-800/70'}`}>
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
@@ -4333,22 +4495,29 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                   </div>
                   {typeLine && <div className="mt-2 text-xs italic text-slate-400 break-words">{typeLine}</div>}
                   {targets.length > 0 && (
-                    <div className="mt-3 space-y-1">
-                      {targets.map((targetName, targetIndex) => (
-                        <div key={`${item.id || item.sourceId}-target-${targetIndex}`} className="text-sm text-yellow-100 break-words">
-                          <span className="text-slate-400">Target:</span> {targetName}
-                        </div>
-                      ))}
+                    <div className="mt-3 rounded-lg border border-yellow-500/30 bg-yellow-950/20 p-2">
+                      <div className="text-[11px] font-bold uppercase tracking-wider text-yellow-200">
+                        {targets.length === 1 ? 'Target' : 'Targets'}
+                      </div>
+                      {targets.length === 1 ? (
+                        <div className="mt-1 text-sm text-yellow-50 break-words">{targets[0]}</div>
+                      ) : (
+                        <ul className="mt-1 list-disc pl-4 text-sm text-yellow-50 space-y-0.5">
+                          {targets.map((targetName, targetIndex) => (
+                            <li key={`${item.id || item.sourceId}-target-${targetIndex}`} className="break-words">{targetName}</li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  )}
+                  {targetInfo?.targetedByDisplayNames?.length > 0 && (
+                    <div className="mt-2 text-xs text-sky-200 break-words">
+                      Targeted by: {targetInfo.targetedByDisplayNames.join(', ')}
                     </div>
                   )}
                   <div className="mt-3 text-xs text-slate-400">
-                    {isTop ? 'Waiting for priority' : 'Below top item'}
+                    {isTop && waitingPriorityPlayers.length > 0 ? `Waiting for: ${waitingPriorityPlayers.map((player) => player.name || 'Player').join(', ')}` : (isTop ? 'Top stack item' : 'Below top item')}
                   </div>
-                  {isTop && waitingPriorityPlayers.length > 0 && (
-                    <div className="mt-1 text-xs font-semibold text-yellow-200">
-                      Waiting for: {waitingPriorityPlayers.map((player) => player.name || 'Player').join(', ')}
-                    </div>
-                  )}
                 </div>
               ))}
             </div>
@@ -4832,16 +5001,46 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                 </section>
               )}
 
-              {selectedCard.zone === ZONES.BATTLEFIELD && canAct && selectedCard.controllerId === viewAsPlayerId && (
+              {selectedCard.zone === ZONES.BATTLEFIELD && (
                 <section className="space-y-2 rounded-lg border border-slate-700/80 bg-slate-900/30 p-3">
                   <h3 className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Targets / Abilities</h3>
-                  <div className="grid grid-cols-2 gap-2">
-                    <button onClick={() => { if (!canAct) return; setTargetingState({ source: selectedCard, mode: 'ABILITY', selectedIds: [] }); setSelectedCard(null); }} className="min-h-10 bg-blue-900/50 hover:bg-blue-800 text-blue-100 p-2 rounded-lg text-sm flex items-center justify-center gap-2 border border-blue-800">Ability 🎯</button>
-                    <button onClick={() => { if (!canAct) return; setTargetingState({ source: selectedCard, mode: 'MANUAL', selectedIds: [] }); setSelectedCard(null); }} className="min-h-10 bg-slate-700 hover:bg-slate-600 text-slate-300 p-2 rounded-lg text-sm flex items-center justify-center gap-2 border border-slate-600">Target... 🎯</button>
-                    <button onClick={() => clearTargets(selectedCard)} className="col-span-2 min-h-10 bg-slate-700 hover:bg-slate-600 text-slate-300 p-2 rounded-lg text-sm flex items-center justify-center gap-2">✖ Clear Targets</button>
-                    <button onClick={() => { handleAction('CLONE_CARD', { cardId: selectedCard.instanceId }); setSelectedCard(null); }} className="min-h-10 bg-slate-700 text-slate-300 p-2 rounded-lg text-sm flex items-center justify-center gap-2"><Copy size={12}/> Clone</button>
-                    <button onClick={() => { handleAction('CHANGE_CONTROL', { cardId: selectedCard.instanceId, cardName: selectedCard.name }); setSelectedCard(null); }} className="min-h-10 bg-slate-700 text-slate-300 p-2 rounded-lg text-sm flex items-center justify-center gap-2"><UserCheck size={12}/> Give Control</button>
-                  </div>
+                  {(() => {
+                    const selectedTargetInfo = getTargetInfoFor(selectedCard);
+                    const clearableTargets = (game.targets || []).filter(t => ((t.sourceId === selectedCard.instanceId || t.targetId === selectedCard.instanceId) && t.controllerId === userId));
+                    return (
+                      <>
+                        <div className="space-y-2 rounded-lg border border-slate-700/70 bg-slate-950/40 p-2 text-sm">
+                          <div>
+                            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Current targets</div>
+                            {selectedTargetInfo.targetDisplayNames.length > 0 ? (
+                              <ul className="mt-1 list-disc pl-4 text-slate-100 space-y-0.5">
+                                {selectedTargetInfo.targetDisplayNames.map((name, index) => <li key={`current-target-${index}`}>{name}</li>)}
+                              </ul>
+                            ) : <div className="mt-1 text-slate-500">None</div>}
+                          </div>
+                          <div>
+                            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Targeted by</div>
+                            {selectedTargetInfo.targetedByDisplayNames.length > 0 ? (
+                              <ul className="mt-1 list-disc pl-4 text-sky-100 space-y-0.5">
+                                {selectedTargetInfo.targetedByCards.map((source, index) => (
+                                  <li key={`targeted-by-${source.sourceId || index}`}>{source.displayName}{source.controllerName ? ` (${source.controllerName})` : ''}</li>
+                                ))}
+                              </ul>
+                            ) : <div className="mt-1 text-slate-500">None</div>}
+                          </div>
+                        </div>
+                        {canAct && selectedCard.controllerId === viewAsPlayerId && (
+                          <div className="grid grid-cols-2 gap-2">
+                            <button onClick={() => { if (!canAct) return; setTargetingState({ source: selectedCard, mode: 'ABILITY', selectedIds: [] }); setSelectedCard(null); }} className="min-h-10 bg-blue-900/50 hover:bg-blue-800 text-blue-100 p-2 rounded-lg text-sm flex items-center justify-center gap-2 border border-blue-800">Ability 🎯</button>
+                            <button onClick={() => { if (!canAct) return; setTargetingState({ source: selectedCard, mode: 'MANUAL', selectedIds: [] }); setSelectedCard(null); }} className="min-h-10 bg-slate-700 hover:bg-slate-600 text-slate-300 p-2 rounded-lg text-sm flex items-center justify-center gap-2 border border-slate-600">Target... 🎯</button>
+                            <button disabled={clearableTargets.length === 0} onClick={() => clearTargets(selectedCard)} className={`col-span-2 min-h-10 p-2 rounded-lg text-sm flex items-center justify-center gap-2 ${clearableTargets.length === 0 ? 'bg-slate-800/60 text-slate-500 cursor-not-allowed border border-slate-700' : 'bg-slate-700 hover:bg-slate-600 text-slate-300'}`}>✖ Clear Targets</button>
+                            <button onClick={() => { handleAction('CLONE_CARD', { cardId: selectedCard.instanceId }); setSelectedCard(null); }} className="min-h-10 bg-slate-700 text-slate-300 p-2 rounded-lg text-sm flex items-center justify-center gap-2"><Copy size={12}/> Clone</button>
+                            <button onClick={() => { handleAction('CHANGE_CONTROL', { cardId: selectedCard.instanceId, cardName: selectedCard.name }); setSelectedCard(null); }} className="min-h-10 bg-slate-700 text-slate-300 p-2 rounded-lg text-sm flex items-center justify-center gap-2"><UserCheck size={12}/> Give Control</button>
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
                 </section>
               )}
 
@@ -5010,8 +5209,21 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               <div className="text-sm font-semibold text-slate-100">{getDisplayCardName(zoomedCard)}</div>
               <img src={zoomedCard.image_uri} alt={zoomedCard.name} className="max-w-full max-h-[80vh] rounded-xl shadow-2xl" />
             </div>
-            {(hasAnyCombatInfo(getCardCombatInfo(zoomedCard, game, allBattlefieldDisplayNames)) || getCardMarkedDamage(zoomedCard) > 0) && (
+            {(hasAnyCombatInfo(getCardCombatInfo(zoomedCard, game, allBattlefieldDisplayNames)) || getCardMarkedDamage(zoomedCard) > 0 || getTargetInfoRows(getTargetInfoFor(zoomedCard)).length > 0) && (
               <div className="w-full max-w-xs lg:w-64 bg-slate-900/90 border border-slate-600 rounded-xl p-3 shadow-xl text-sm space-y-3">
+                {getTargetInfoRows(getTargetInfoFor(zoomedCard)).length > 0 && (
+                  <div className="rounded-lg border border-sky-500/40 bg-sky-950/30 p-2">
+                    <div className="font-bold text-sky-100 uppercase tracking-wide text-xs mb-2">Targets</div>
+                    <div className="space-y-2">
+                      {getTargetInfoRows(getTargetInfoFor(zoomedCard)).map((row) => (
+                        <div key={`${row.label}-${row.values.join('|')}`} className="text-sky-50">
+                          <div className="text-[11px] uppercase tracking-wide text-sky-300">{row.label}</div>
+                          <div className="font-medium leading-snug">{row.values.join(', ')}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 {hasAnyCombatInfo(getCardCombatInfo(zoomedCard, game, allBattlefieldDisplayNames)) && (
                   <div>
                     <div className="font-bold text-slate-100 uppercase tracking-wide text-xs mb-2">Combat</div>

@@ -1762,7 +1762,7 @@ const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isD
         </button>
       )}
       {zone === ZONES.BATTLEFIELD && displayName && (
-        <div className="absolute -bottom-5 left-0 right-0 text-center pointer-events-none">
+        <div className={`absolute ${card.isToken ? '-bottom-6' : '-bottom-5'} left-0 right-0 text-center pointer-events-none`}>
           <span className="bg-black/75 text-[9px] text-slate-100 px-1.5 py-0.5 rounded border border-slate-500/40 truncate inline-block max-w-full">
             {displayName}
           </span>

@@ -1391,12 +1391,41 @@ const Lobby = ({
   );
 };
 
-const DamageBadge = ({ amount }) => {
+const getBattlefieldBadgeLayout = ({
+  hasCombatBadge = false,
+  hasTargetBadge = false,
+  hasSourceBadge = false,
+  hasDamageBadge = false,
+  targetLabel = null,
+  targetCount = 0
+} = {}) => {
+  const compactTargetLabel = targetCount > 1 ? `🎯${targetCount}` : '🎯';
+
+  return {
+    combatBadges: {
+      show: hasCombatBadge,
+      className: 'absolute inset-x-0 top-1 z-30 pointer-events-none flex flex-col items-start gap-0.5 px-1'
+    },
+    targetBadges: {
+      show: hasTargetBadge || hasSourceBadge,
+      targetLabel: hasTargetBadge && hasDamageBadge ? compactTargetLabel : targetLabel,
+      showTargetCountSuffix: hasTargetBadge && !hasDamageBadge && targetCount > 1,
+      className: `absolute bottom-1 left-1 z-30 pointer-events-none flex flex-col items-start gap-0.5 ${hasDamageBadge ? 'max-w-[1.75rem]' : 'max-w-[calc(100%-0.5rem)]'}`,
+      badgeClassName: hasDamageBadge ? 'max-w-full min-w-[1.75rem] text-center' : 'max-w-full truncate'
+    },
+    damageBadge: {
+      show: hasDamageBadge,
+      className: 'absolute bottom-1 right-1 z-40 pointer-events-none max-w-[3.25rem] rounded-md border border-red-100/90 bg-red-700 text-white px-1.5 py-0.5 text-[10px] font-black leading-none shadow-[0_1px_6px_rgba(0,0,0,0.65)] whitespace-nowrap'
+    }
+  };
+};
+
+const DamageBadge = ({ amount, className = '' }) => {
   const damageAmount = Math.max(0, Number(amount) || 0);
   if (damageAmount <= 0) return null;
 
   return (
-    <div className="absolute bottom-1 right-1 z-30 pointer-events-none max-w-[calc(100%-0.5rem)] rounded-md border border-red-100/90 bg-red-700 text-white px-1.5 py-0.5 text-[10px] font-black leading-none shadow-[0_1px_6px_rgba(0,0,0,0.65)] whitespace-nowrap">
+    <div className={className || getBattlefieldBadgeLayout({ hasDamageBadge: true }).damageBadge.className}>
       DMG {damageAmount}
     </div>
   );
@@ -1429,6 +1458,16 @@ const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isD
     ? combatBadges.filter((badge) => badge && typeof badge.label === 'string' && badge.label.length > 0)
     : (typeof combatBadgeLabel === 'string' && combatBadgeLabel.length > 0 ? [{ label: combatBadgeLabel, tone: 'neutral' }] : []);
   const hasCombatBadge = normalizedCombatBadges.length > 0;
+  const battlefieldBadgeLayout = zone === ZONES.BATTLEFIELD
+    ? getBattlefieldBadgeLayout({
+        hasCombatBadge,
+        hasTargetBadge: Boolean(targetBadgeLabel),
+        hasSourceBadge: Boolean(sourceTargetLabel),
+        hasDamageBadge: tempDamage > 0,
+        targetLabel: targetBadgeLabel,
+        targetCount
+      })
+    : null;
 
   let rotateClass = isTapped ? 'rotate-90' : '';
   const positionClass = zone === ZONES.BATTLEFIELD ? 'absolute' : 'relative';
@@ -1486,11 +1525,11 @@ const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isD
           ))}
         </div>
 
-        {zone === ZONES.BATTLEFIELD && (targetBadgeLabel || sourceTargetLabel) && (
-          <div className="absolute bottom-1 left-1 z-30 pointer-events-none flex max-w-[calc(100%-0.5rem)] flex-col items-start gap-0.5">
+        {battlefieldBadgeLayout?.targetBadges.show && (
+          <div className={battlefieldBadgeLayout.targetBadges.className}>
             {targetBadgeLabel && (
-              <div className="max-w-full truncate rounded-md border border-sky-200/80 bg-sky-700/95 px-1.5 py-0.5 text-[9px] font-black leading-none text-white shadow-[0_1px_6px_rgba(0,0,0,0.65)]">
-                {targetBadgeLabel}{targetCount > 1 ? ` (${targetCount})` : ''}
+              <div className={`${battlefieldBadgeLayout.targetBadges.badgeClassName} rounded-md border border-sky-200/80 bg-sky-700/95 px-1.5 py-0.5 text-[9px] font-black leading-none text-white shadow-[0_1px_6px_rgba(0,0,0,0.65)]`}>
+                {battlefieldBadgeLayout.targetBadges.targetLabel}{battlefieldBadgeLayout.targetBadges.showTargetCountSuffix ? ` (${targetCount})` : ''}
               </div>
             )}
             {sourceTargetLabel && (
@@ -1503,10 +1542,10 @@ const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isD
       </div>
 
 
-      <DamageBadge amount={tempDamage} />
+      <DamageBadge amount={tempDamage} className={battlefieldBadgeLayout?.damageBadge.className} />
 
-      {hasCombatBadge && (
-        <div className="absolute inset-x-0 top-1 z-30 pointer-events-none flex flex-col items-start gap-0.5 px-1">
+      {battlefieldBadgeLayout?.combatBadges.show && (
+        <div className={battlefieldBadgeLayout.combatBadges.className}>
           {normalizedCombatBadges.slice(0, 2).map((badge, index) => {
             const toneClass = badge.tone === 'attack'
               ? 'bg-red-950/95 text-red-50 border-red-300/70'

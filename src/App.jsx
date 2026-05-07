@@ -1604,8 +1604,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const [playerStatsOpen, setPlayerStatsOpen] = useState(false);
   const [peekCard, setPeekCard] = useState(null);
   const [diceMenuOpen, setDiceMenuOpen] = useState(false);
+  const [customDieSize, setCustomDieSize] = useState('12');
   const [libraryMenuOpen, setLibraryMenuOpen] = useState(false);
-  const [diceMenuPos, setDiceMenuPos] = useState(null);
   const [libraryMenuPos, setLibraryMenuPos] = useState(null);
   const [notification, setNotification] = useState(null);
   const [boardUnlocked, setBoardUnlocked] = useState(false);
@@ -1613,7 +1613,6 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const [spectatorLastSeenChatAt, setSpectatorLastSeenChatAt] = useState(0);
   const myBattlefieldRef = useRef(null);
   const opponentBattlefieldRef = useRef(null);
-  const diceButtonRef = useRef(null);
   const libraryButtonRef = useRef(null);
   const battlefieldScrollRef = useRef(null);
   const opponentSectionRef = useRef(null);
@@ -1822,27 +1821,6 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   };
 
   useLayoutEffect(() => {
-    if (!diceMenuOpen) {
-      setDiceMenuPos(null);
-      return;
-    }
-
-    const updatePosition = () => {
-      if (!diceButtonRef.current) return;
-      const rect = diceButtonRef.current.getBoundingClientRect();
-      setDiceMenuPos({ top: rect.top, right: rect.right });
-    };
-
-    updatePosition();
-    window.addEventListener('resize', updatePosition);
-    window.addEventListener('scroll', updatePosition, true);
-    return () => {
-      window.removeEventListener('resize', updatePosition);
-      window.removeEventListener('scroll', updatePosition, true);
-    };
-  }, [diceMenuOpen]);
-
-  useLayoutEffect(() => {
     if (!libraryMenuOpen) {
       setLibraryMenuPos(null);
       return;
@@ -1875,8 +1853,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
           if (data.log && data.log.length > 0) {
             const lastLog = data.log[data.log.length - 1];
-            if ((lastLog.type === 'ROLL_DICE' || lastLog.type === 'FLIP_COIN') && Date.now() - lastLog.timestamp < 5000) {
-              setNotification(lastLog.desc);
+            if ((lastLog.type === 'ROLL_DICE' || lastLog.type === 'FLIP_COIN' || lastLog.type === 'DISCARD_RANDOM') && Date.now() - lastLog.timestamp < 5000) {
+              setNotification(lastLog.resultLabel || lastLog.desc);
               setTimeout(() => setNotification(null), 3000);
             }
           }
@@ -2187,6 +2165,19 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     };
   }, [autoPassMenuOpen]);
 
+  const runCustomDieRoll = () => {
+    const trimmedDieSize = customDieSize.trim();
+    const dieSize = /^\d+$/.test(trimmedDieSize) ? Number.parseInt(trimmedDieSize, 10) : NaN;
+    if (!Number.isInteger(dieSize) || dieSize < 2 || dieSize > 1000) {
+      setNotification('Choose a die size from 2 to 1000.');
+      setTimeout(() => setNotification(null), 2500);
+      return;
+    }
+
+    handleAction('ROLL_DICE', { diceType: 'custom', dieSize });
+    setDiceMenuOpen(false);
+  };
+
   const handleAction = async (actionType, payload = {}) => {
     if (!game) return;
     if (isSpectator && actionType !== 'SEND_CHAT') {
@@ -2342,20 +2333,75 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       return;
     }
 
-    if (actionType === 'ROLL_DICE') {
+    if (actionType === 'DISCARD_RANDOM') {
+      let emptyHand = false;
+      await runTransaction(db, async (transaction) => {
+        const snap = await transaction.get(gameRef);
+        if (!snap.exists()) return;
+        const currentGame = snap.data();
+        const currentPlayers = currentGame.players || [];
+        const transactionActorName = currentPlayers.find(p => p.id === userId)?.name || actorName;
+        const handCards = (currentGame.cards || []).filter(c => c.controllerId === userId && c.zone === ZONES.HAND);
 
+        if (handCards.length === 0) {
+          emptyHand = true;
+          return;
+        }
+
+        const randomCard = handCards[Math.floor(Math.random() * handCards.length)];
+        const discardedName = randomCard.name || 'a card';
+        const nextCards = (currentGame.cards || []).map(c => (
+          c.instanceId === randomCard.instanceId ? { ...c, zone: ZONES.GRAVEYARD, faceDown: false } : c
+        ));
+        const discardLogEntry = buildGameLogEntry({
+          currentGame,
+          playerId: userId,
+          playerName: transactionActorName,
+          type: 'DISCARD_RANDOM',
+          category: 'random',
+          message: `${transactionActorName} randomly discarded ${discardedName}.`,
+          cardId: randomCard.instanceId,
+          cardName: discardedName,
+          resultLabel: `Random discard → ${discardedName}`
+        });
+
+        transaction.update(gameRef, {
+          cards: nextCards,
+          log: [...(currentGame.log || []), discardLogEntry]
+        });
+      });
+
+      if (emptyHand) {
+        setNotification('Random discard → no cards in hand');
+        setTimeout(() => setNotification(null), 2500);
+      }
+      return;
+    }
+
+    if (actionType === 'ROLL_DICE') {
       const { diceType } = payload;
-      let result = 0, msg = '';
+
       if (diceType === 'coin') {
-        result = Math.random() > 0.5 ? 1 : 0;
-        msg = result === 1 ? 'HEADS' : 'TAILS';
-        updates.log = arrayUnion(makeActionLog('FLIP_COIN', `${actorName} flipped a coin: ${msg}.`, { category: 'random' }));
-      } else if (diceType === 'd6') {
-        result = Math.ceil(Math.random() * 6);
-        updates.log = arrayUnion(makeActionLog('ROLL_DICE', `${actorName} rolled a D6: ${result}.`, { category: 'random' }));
-      } else if (diceType === 'd20') {
-        result = Math.ceil(Math.random() * 20);
-        updates.log = arrayUnion(makeActionLog('ROLL_DICE', `${actorName} rolled a D20: ${result}.`, { category: 'random' }));
+        const result = Math.random() < 0.5 ? 'Heads' : 'Tails';
+        updates.log = arrayUnion(makeActionLog('FLIP_COIN', `${actorName} flipped a coin: ${result}.`, {
+          category: 'random',
+          resultLabel: `Coin → ${result}`
+        }));
+      } else {
+        const dieSize = Number.isInteger(payload.dieSize) ? payload.dieSize : (diceType === 'd6' ? 6 : diceType === 'd20' ? 20 : null);
+        if (!Number.isInteger(dieSize) || dieSize < 2 || dieSize > 1000) {
+          setNotification('Choose a die size from 2 to 1000.');
+          setTimeout(() => setNotification(null), 2500);
+          return;
+        }
+
+        const result = Math.floor(Math.random() * dieSize) + 1;
+        updates.log = arrayUnion(makeActionLog('ROLL_DICE', `${actorName} rolled a d${dieSize}: ${result}.`, {
+          category: 'random',
+          dieSize,
+          result,
+          resultLabel: `d${dieSize} → ${result}`
+        }));
       }
     } else if (actionType === 'SEND_CHAT') {
       const chatEntry = {
@@ -4410,7 +4456,6 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             {/* Dice/Coin Menu */}
             <div className="relative">
               <button
-                ref={diceButtonRef}
                 onClick={canAct ? () => setDiceMenuOpen(!diceMenuOpen) : undefined}
                 className={`p-2 rounded-full ${diceMenuOpen ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-white'} ${canAct ? '' : 'opacity-40 cursor-not-allowed'}`}
               >
@@ -4432,14 +4477,69 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           </div>
         </div>
       </div>
-        {diceMenuOpen && diceMenuPos && createPortal(
-          <div
-            className="fixed z-[100] bg-slate-800 border border-slate-600 rounded shadow-xl p-1 flex flex-col gap-1 w-32"
-            style={{ top: diceMenuPos.top - 8, left: diceMenuPos.right, transform: 'translate(-100%, -100%)' }}
-          >
-            <button onClick={() => {handleAction('ROLL_DICE', {diceType: 'coin'}); setDiceMenuOpen(false);}} className="text-left px-3 py-2 hover:bg-slate-700 rounded text-sm flex items-center gap-2"><Coins size={12}/> Flip Coin</button>
-            <button onClick={() => {handleAction('ROLL_DICE', {diceType: 'd6'}); setDiceMenuOpen(false);}} className="text-left px-3 py-2 hover:bg-slate-700 rounded text-sm flex items-center gap-2"><Hexagon size={12}/> Roll D6</button>
-            <button onClick={() => {handleAction('ROLL_DICE', {diceType: 'd20'}); setDiceMenuOpen(false);}} className="text-left px-3 py-2 hover:bg-slate-700 rounded text-sm flex items-center gap-2"><Dices size={12}/> Roll D20</button>
+        {diceMenuOpen && createPortal(
+          <div className="fixed inset-0 z-[100] flex items-end justify-center bg-black/45 p-3 sm:items-center" onMouseDown={() => setDiceMenuOpen(false)}>
+            <div
+              className="w-full max-w-sm rounded-2xl border border-slate-600 bg-slate-900 text-slate-100 shadow-2xl overflow-hidden"
+              onMouseDown={(event) => event.stopPropagation()}
+            >
+              <div className="flex items-center justify-between border-b border-slate-700 bg-slate-800/90 px-4 py-3">
+                <div>
+                  <h3 className="text-sm font-extrabold uppercase tracking-widest text-white">Random Tools</h3>
+                  <p className="text-xs text-slate-400">Results are public in the game log.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setDiceMenuOpen(false)}
+                  className="rounded-full p-2 text-slate-300 hover:bg-slate-700 hover:text-white"
+                  aria-label="Close random tools"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 p-4">
+                <button onClick={() => { handleAction('ROLL_DICE', { diceType: 'd6' }); setDiceMenuOpen(false); }} className="min-h-12 rounded-xl bg-slate-800 px-3 py-3 text-left text-sm font-bold hover:bg-slate-700 active:scale-[0.98]"><Hexagon size={16} className="mb-1 text-purple-300"/> Roll d6</button>
+                <button onClick={() => { handleAction('ROLL_DICE', { diceType: 'd20' }); setDiceMenuOpen(false); }} className="min-h-12 rounded-xl bg-slate-800 px-3 py-3 text-left text-sm font-bold hover:bg-slate-700 active:scale-[0.98]"><Dices size={16} className="mb-1 text-blue-300"/> Roll d20</button>
+                <button onClick={() => { handleAction('ROLL_DICE', { diceType: 'coin' }); setDiceMenuOpen(false); }} className="min-h-12 rounded-xl bg-slate-800 px-3 py-3 text-left text-sm font-bold hover:bg-slate-700 active:scale-[0.98]"><Coins size={16} className="mb-1 text-yellow-300"/> Flip coin</button>
+                <button onClick={() => { handleAction('DISCARD_RANDOM'); setDiceMenuOpen(false); }} className="min-h-12 rounded-xl bg-red-950/60 px-3 py-3 text-left text-sm font-bold text-red-100 hover:bg-red-900/70 active:scale-[0.98]"><Shuffle size={16} className="mb-1 text-red-300"/> Random discard</button>
+              </div>
+
+              <div className="border-t border-slate-700 p-4 pt-3">
+                <label htmlFor="custom-die-size" className="mb-2 block text-xs font-bold uppercase tracking-widest text-slate-400">Custom die size</label>
+                <div className="flex gap-2">
+                  <input
+                    id="custom-die-size"
+                    inputMode="numeric"
+                    min="2"
+                    max="1000"
+                    value={customDieSize}
+                    onChange={(event) => setCustomDieSize(event.target.value)}
+                    placeholder="12"
+                    className="min-h-11 w-full rounded-xl border border-slate-600 bg-slate-950 px-3 text-base text-white outline-none focus:border-purple-400"
+                  />
+                  <button
+                    type="button"
+                    onClick={runCustomDieRoll}
+                    className="min-h-11 rounded-xl bg-purple-600 px-4 text-sm font-extrabold text-white hover:bg-purple-500 active:scale-[0.98]"
+                  >
+                    Roll
+                  </button>
+                </div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {[4, 8, 10, 12, 100].map(size => (
+                    <button
+                      key={size}
+                      type="button"
+                      onClick={() => setCustomDieSize(String(size))}
+                      className="rounded-full border border-slate-600 px-3 py-1.5 text-xs font-bold text-slate-300 hover:border-purple-400 hover:text-white"
+                    >
+                      d{size}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
           </div>,
           document.body
         )}
@@ -4524,11 +4624,9 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               targetInfo={getTargetInfoFor(card)}
             />
           ))}
-          {myHand.length > 0 && (
-            <button onClick={canAct ? () => handleAction('DISCARD_RANDOM') : undefined} className={`ml-4 px-2 py-8 border-l border-slate-700 text-slate-600 hover:text-red-400 flex flex-col items-center justify-center text-[10px] ${canAct ? '' : 'opacity-40 cursor-not-allowed'}`}>
-              <Shuffle size={14} className="mb-1"/> Discard<br/>Random
-            </button>
-          )}
+          <button onClick={canAct ? () => setDiceMenuOpen(true) : undefined} className={`ml-4 px-3 py-8 border-l border-slate-700 text-slate-500 hover:text-purple-300 flex flex-col items-center justify-center text-[10px] font-bold ${canAct ? '' : 'opacity-40 cursor-not-allowed'}`}>
+            <Shuffle size={14} className="mb-1"/> Random<br/>Tools
+          </button>
         </div>
       </div>
 

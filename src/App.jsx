@@ -1249,6 +1249,7 @@ const Lobby = ({
 }) => {
   const [name, setName] = useState('');
   const [gameTitle, setGameTitle] = useState('');
+  const [gameMode, setGameMode] = useState('regular');
   const [code, setCode] = useState('');
   const [mode, setMode] = useState('menu');
   const [pendingDeleteGame, setPendingDeleteGame] = useState(null);
@@ -1329,7 +1330,7 @@ const Lobby = ({
             <div className="space-y-3">
               <div className="grid grid-cols-2 gap-3">
                 <button
-                  onClick={() => onCreate(effectiveName, gameTitle)}
+                  onClick={() => onCreate(effectiveName, gameTitle, gameMode)}
                   disabled={!effectiveName.trim() || isInitLoading || isActionLoading}
                   className="bg-purple-600 hover:bg-purple-700 disabled:opacity-50 disabled:cursor-wait text-white p-3 rounded-lg font-bold transition-colors flex justify-center items-center gap-2"
                 >
@@ -1353,6 +1354,25 @@ const Lobby = ({
                   placeholder="e.g. 'Mono-Red vs Elves'"
                   maxLength={80}
                 />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-400 mb-2">Game Mode</label>
+                <div className="grid grid-cols-2 gap-2 rounded-lg bg-slate-900 p-1 border border-slate-700">
+                  {[
+                    { id: 'regular', label: 'Regular', desc: '20 life' },
+                    { id: 'commander', label: 'Commander', desc: '40 life' }
+                  ].map((option) => (
+                    <button
+                      key={option.id}
+                      type="button"
+                      onClick={() => setGameMode(option.id)}
+                      className={`rounded-md px-3 py-2 text-sm font-bold transition-colors ${gameMode === option.id ? 'bg-purple-600 text-white' : 'text-slate-300 hover:bg-slate-800'}`}
+                    >
+                      <div>{option.label}</div>
+                      <div className="text-[10px] font-medium opacity-80">{option.desc}</div>
+                    </button>
+                  ))}
+                </div>
               </div>
               <button
                 onClick={() => setMode('watch')}
@@ -1643,7 +1663,7 @@ const TokenCardPreview = ({ token, size = 'small' }) => {
   );
 };
 
-const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isDraggable, targets = [], stack = [], isSelected = false, combatBadgeLabel = null, combatBadges = null, displayName = null, markedDamage = null, targetInfo = null, attachmentLabel = null, attachedCount = 0 }) => {
+const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isDraggable, targets = [], stack = [], isSelected = false, combatBadgeLabel = null, combatBadges = null, displayName = null, markedDamage = null, targetInfo = null, attachmentLabel = null, attachedCount = 0, showCommanderBadge = false }) => {
   const isTapped = card.tapped;
   const isFaceDown = card.faceDown;
   const counters = card.counters || {};
@@ -1742,6 +1762,12 @@ const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isD
         {zone === ZONES.BATTLEFIELD && attachmentLabel && (
           <div className="absolute top-1 right-1 z-30 pointer-events-none max-w-[calc(100%-0.5rem)] truncate rounded-md border border-fuchsia-200/80 bg-fuchsia-800/95 px-1.5 py-0.5 text-[8px] font-black leading-none text-white shadow-[0_1px_6px_rgba(0,0,0,0.65)]">
             {attachmentLabel}
+          </div>
+        )}
+
+        {showCommanderBadge && (zone === ZONES.BATTLEFIELD || zone === ZONES.COMMAND) && (
+          <div className="absolute right-1 top-1 z-30 pointer-events-none rounded-md border border-amber-200/80 bg-amber-700/95 px-1.5 py-0.5 text-[8px] font-black uppercase leading-none text-white shadow-[0_1px_6px_rgba(0,0,0,0.65)]" title="Commander">
+            ♛ Cmdr
           </div>
         )}
 
@@ -3346,6 +3372,70 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       updates.cards = game.cards.map(c => c.instanceId === payload.cardId ? { ...c, tempDamage: nextDamage } : c);
       updates.log = arrayUnion(makeActionLog('TEMP_DAMAGE', payload.clear ? `${actorName} cleared damage from ${getSafeCardName(card)}.` : `${actorName} marked ${payload.amount || 0} damage on ${getSafeCardName(card)}.`, { category: 'damage', cardId: card.instanceId, cardName: getSafeCardName(card), damage: nextDamage }));
 
+    } else if (actionType === 'SET_COMMANDER') {
+      if ((game.gameMode || 'regular') !== 'commander') return;
+      const card = game.cards.find(c => c.instanceId === payload.cardId);
+      if (!card || card.isToken || (card.ownerId !== userId && card.controllerId !== userId)) return;
+      const commanderState = game.commander || { enabled: true, commanders: {}, commanderDamage: {} };
+      const commanders = { ...(commanderState.commanders || {}) };
+      const ownerCommanders = Array.isArray(commanders[userId]) ? commanders[userId] : [];
+      const alreadyCommander = ownerCommanders.some(entry => entry.instanceId === card.instanceId);
+      const nextEntry = alreadyCommander ? null : { instanceId: card.instanceId, name: card.name || 'Commander', tax: 0 };
+      commanders[userId] = alreadyCommander ? ownerCommanders : [...ownerCommanders, nextEntry];
+      updates.commander = { enabled: true, commanders, commanderDamage: commanderState.commanderDamage || {} };
+      updates.cards = game.cards.map(c => c.instanceId === card.instanceId ? { ...c, isCommander: true, commanderTax: alreadyCommander ? (ownerCommanders.find(entry => entry.instanceId === c.instanceId)?.tax || c.commanderTax || 0) : 0 } : c);
+      updates.log = arrayUnion(makeActionLog('SET_COMMANDER', `${actorName} set ${getSafeCardName(card)} as a commander.`, { category: 'commander', cardId: card.instanceId, cardName: getSafeCardName(card) }));
+
+    } else if (actionType === 'UNSET_COMMANDER') {
+      if ((game.gameMode || 'regular') !== 'commander') return;
+      const card = game.cards.find(c => c.instanceId === payload.cardId);
+      if (!card || (card.ownerId !== userId && card.controllerId !== userId)) return;
+      const commanderState = game.commander || { enabled: true, commanders: {}, commanderDamage: {} };
+      const commanders = { ...(commanderState.commanders || {}) };
+      commanders[userId] = (Array.isArray(commanders[userId]) ? commanders[userId] : []).filter(entry => entry.instanceId !== card.instanceId);
+      const commanderDamage = Object.fromEntries(Object.entries(commanderState.commanderDamage || {}).map(([defenderId, damageByCommander]) => {
+        const nextDamage = { ...(damageByCommander || {}) };
+        delete nextDamage[card.instanceId];
+        return [defenderId, nextDamage];
+      }));
+      updates.commander = { enabled: true, commanders, commanderDamage };
+      updates.cards = game.cards.map(c => c.instanceId === card.instanceId ? { ...c, isCommander: false, commanderTax: 0 } : c);
+      updates.log = arrayUnion(makeActionLog('UNSET_COMMANDER', `${actorName} unset ${getSafeCardName(card)} as a commander.`, { category: 'commander', cardId: card.instanceId, cardName: getSafeCardName(card) }));
+
+    } else if (actionType === 'COMMANDER_TAX') {
+      if ((game.gameMode || 'regular') !== 'commander') return;
+      const card = game.cards.find(c => c.instanceId === payload.cardId);
+      if (!card || (card.ownerId !== userId && card.controllerId !== userId)) return;
+      const commanderState = game.commander || { enabled: true, commanders: {}, commanderDamage: {} };
+      const commanders = { ...(commanderState.commanders || {}) };
+      const ownerCommanders = Array.isArray(commanders[card.ownerId]) ? commanders[card.ownerId] : [];
+      const currentEntry = ownerCommanders.find(entry => entry.instanceId === card.instanceId);
+      if (!currentEntry && !card.isCommander) return;
+      const currentTax = Math.max(0, currentEntry?.tax || card.commanderTax || 0);
+      const nextTax = payload.reset ? 0 : Math.max(0, currentTax + (payload.amount || 0));
+      commanders[card.ownerId] = ownerCommanders.map(entry => entry.instanceId === card.instanceId ? { ...entry, name: entry.name || card.name || 'Commander', tax: nextTax } : entry);
+      if (!currentEntry) commanders[card.ownerId] = [...ownerCommanders, { instanceId: card.instanceId, name: card.name || 'Commander', tax: nextTax }];
+      updates.commander = { enabled: true, commanders, commanderDamage: commanderState.commanderDamage || {} };
+      updates.cards = game.cards.map(c => c.instanceId === card.instanceId ? { ...c, isCommander: true, commanderTax: nextTax } : c);
+      updates.log = arrayUnion(makeActionLog('COMMANDER_TAX', payload.reset ? `${actorName} reset ${getSafeCardName(card)} commander tax.` : `${actorName} ${payload.amount > 0 ? 'increased' : 'decreased'} ${getSafeCardName(card)} commander tax to +${nextTax}.`, { category: 'commander', cardId: card.instanceId, cardName: getSafeCardName(card), commanderTax: nextTax }));
+
+    } else if (actionType === 'COMMANDER_DAMAGE') {
+      if ((game.gameMode || 'regular') !== 'commander') return;
+      const card = game.cards.find(c => c.instanceId === payload.cardId);
+      const defendingPlayer = (game.players || []).find(player => player.id === payload.defendingPlayerId);
+      if (!card || !defendingPlayer || !(card.isCommander || Object.values(game.commander?.commanders || {}).some(list => (Array.isArray(list) ? list : []).some(entry => entry.instanceId === card.instanceId)))) return;
+      const commanderState = game.commander || { enabled: true, commanders: {}, commanderDamage: {} };
+      const commanderDamage = { ...(commanderState.commanderDamage || {}) };
+      const defenderDamage = { ...(commanderDamage[defendingPlayer.id] || {}) };
+      const currentDamage = Math.max(0, defenderDamage[card.instanceId] || 0);
+      const nextDamage = payload.clear ? 0 : Math.max(0, currentDamage + (payload.amount || 0));
+      defenderDamage[card.instanceId] = nextDamage;
+      commanderDamage[defendingPlayer.id] = defenderDamage;
+      updates.commander = { enabled: true, commanders: commanderState.commanders || {}, commanderDamage };
+      const damageAmount = Math.max(0, payload.amount || 0);
+      updates.log = arrayUnion(makeActionLog('COMMANDER_DAMAGE', payload.clear ? `${actorName} cleared commander damage from ${getSafeCardName(card)} to ${defendingPlayer.name || 'Player'}.` : `${actorName} marked ${damageAmount} commander damage from ${getSafeCardName(card)} to ${defendingPlayer.name || 'Player'}.`, { category: 'commander', cardId: card.instanceId, cardName: getSafeCardName(card), defendingPlayerId: defendingPlayer.id, defendingPlayerName: defendingPlayer.name || 'Player', commanderDamage: nextDamage }));
+
+
     } else if (actionType === 'DRAW_CARD') {
       const libCards = game.cards.filter(c => c.ownerId === userId && c.zone === ZONES.LIBRARY);
       if (libCards.length === 0) {
@@ -3392,8 +3482,9 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       updates.cards = newCards;
       updates.combat = clearCombatAssignmentsForCard(game.combat || getEmptyCombatState(), payload.cardId);
       const movedCardName = movingCard?.isToken ? `${movingCard.name || 'Token'} token` : getSafeMoveCardName(movingCard, movingCard?.zone, payload.targetZone);
+      const movingCommanderToCommand = (game.gameMode || 'regular') === 'commander' && (movingCard?.isCommander || (game.commander?.commanders?.[movingCard?.ownerId] || []).some(entry => entry.instanceId === movingCard?.instanceId)) && payload.targetZone === ZONES.COMMAND;
       updates.log = arrayUnion(
-        makeActionLog('MOVE_ZONE', `${actorName} moved ${movedCardName} to ${getZoneLabel(payload.targetZone)}.`, { category: 'zone', cardId: payload.cardId, cardName: movedCardName, fromZone: movingCard?.zone, toZone: payload.targetZone, tokenRemoved: tokenLeavesBattlefield }),
+        makeActionLog(movingCommanderToCommand ? 'MOVE_COMMANDER_TO_COMMAND' : 'MOVE_ZONE', movingCommanderToCommand ? `${actorName} moved ${movedCardName} to the command zone.` : `${actorName} moved ${movedCardName} to ${getZoneLabel(payload.targetZone)}.`, { category: movingCommanderToCommand ? 'commander' : 'zone', cardId: payload.cardId, cardName: movedCardName, fromZone: movingCard?.zone, toZone: payload.targetZone, tokenRemoved: tokenLeavesBattlefield }),
         ...makeAttachmentLogs(attachmentCleanupMessages)
       );
 
@@ -4241,6 +4332,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const getZoneCount = (pid, zone) => (game.cards || []).filter(c => c.ownerId === pid && c.zone === zone).length;
   const myGYCount = getZoneCount(viewAsPlayerId, ZONES.GRAVEYARD);
   const myExileCount = getZoneCount(viewAsPlayerId, ZONES.EXILE);
+  const myCommandCount = getZoneCount(viewAsPlayerId, ZONES.COMMAND);
   const myLibraryCount = isPlayer ? getZoneCount(userId, ZONES.LIBRARY) : 0;
   const canDrawFromLibrary = canAct && myLibraryCount > 0;
   const handleDrawCard = () => handleAction('DRAW_CARD');
@@ -4254,6 +4346,25 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const noDeckLoaded = !hasDeckLoaded;
   const stackCards = game.stack || [];
   const cardsMap = new Map((game.cards || []).map(c => [c.instanceId, c]));
+  const gameMode = game?.gameMode || 'regular';
+  const isCommanderMode = gameMode === 'commander';
+  const getCommanderState = () => game?.commander || { enabled: isCommanderMode, commanders: {}, commanderDamage: {} };
+  const getCommanderEntries = (playerId = null) => {
+    const commanders = getCommanderState().commanders || {};
+    const entries = Object.entries(commanders).flatMap(([ownerId, list]) => (Array.isArray(list) ? list : []).map((entry) => ({ ...entry, ownerId })));
+    return playerId ? entries.filter((entry) => entry.ownerId === playerId) : entries;
+  };
+  const getCommanderEntry = (cardOrId) => {
+    const id = typeof cardOrId === 'string' ? cardOrId : cardOrId?.instanceId;
+    if (!id) return null;
+    return getCommanderEntries().find((entry) => entry.instanceId === id) || null;
+  };
+  const isCommanderCard = (cardOrId) => Boolean(getLiveCard(cardOrId)?.isCommander || getCommanderEntry(cardOrId));
+  const getCommanderTax = (cardOrId) => Math.max(0, getCommanderEntry(cardOrId)?.tax ?? getLiveCard(cardOrId)?.commanderTax ?? 0);
+  const getCommanderDamageToPlayer = (commanderId, playerId) => Math.max(0, getCommanderState().commanderDamage?.[playerId]?.[commanderId] || 0);
+  const getCommanderDamageSummary = (playerId) => getCommanderEntries()
+    .map((entry) => ({ ...entry, amount: getCommanderDamageToPlayer(entry.instanceId, playerId) }))
+    .filter((entry) => entry.amount > 0);
   const getAttachmentInfo = (cardOrId) => {
     const card = typeof cardOrId === 'string' ? cardsMap.get(cardOrId) : cardOrId;
     const liveCard = card?.instanceId ? (cardsMap.get(card.instanceId) || card) : card;
@@ -4713,6 +4824,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                 <span className="bg-slate-700 px-2 py-0.5 rounded text-xs flex gap-2 h-fit">
                   <span>Life: {opponent?.life}</span>
                   {opponent?.counters?.poison > 0 && <span className="text-green-400">P:{opponent.counters.poison}</span>}
+                  {isCommanderMode && getCommanderDamageSummary(opponent.id).length > 0 && <span className="text-amber-200" title={getCommanderDamageSummary(opponent.id).map(entry => `${entry.name}: ${entry.amount}`).join(', ')}>Cmd dmg {getCommanderDamageSummary(opponent.id).reduce((sum, entry) => sum + entry.amount, 0)}</span>}
                 </span>
               )}
             </div>
@@ -4761,6 +4873,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                       targetInfo={getTargetInfoFor(card)}
                       attachmentLabel={getAttachmentBadgeLabel(card)}
                       attachedCount={getAttachedCount(card)}
+                      showCommanderBadge={isCommanderMode && isCommanderCard(card)}
                     />
                   </div>
                 );
@@ -4908,6 +5021,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                       targetInfo={getTargetInfoFor(card)}
                       attachmentLabel={getAttachmentBadgeLabel(card)}
                       attachedCount={getAttachedCount(card)}
+                      showCommanderBadge={isCommanderMode && isCommanderCard(card)}
                     />
                   </div>
                 );
@@ -4963,6 +5077,11 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                   <Skull size={10} className="mr-1"/> {myPlayer.counters.poison}
                 </div>
               )}
+              {isCommanderMode && viewAsPlayerId && getCommanderDamageSummary(viewAsPlayerId).length > 0 && (
+                <div className="ml-1 bg-amber-900/70 text-amber-100 text-xs px-1.5 py-0.5 rounded border border-amber-500/40" title={getCommanderDamageSummary(viewAsPlayerId).map(entry => `${entry.name}: ${entry.amount}`).join(', ')}>
+                  Cmd dmg {getCommanderDamageSummary(viewAsPlayerId).reduce((sum, entry) => sum + entry.amount, 0)}
+                </div>
+              )}
             </div>
 
             <div className="h-6 w-[1px] bg-slate-700"></div>
@@ -4987,6 +5106,11 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               <div className="flex items-center gap-1 cursor-pointer hover:text-white" onClick={() => { setViewZone({ zone: ZONES.EXILE, ownerId: viewAsPlayerId }); }}>
                 <RotateCw size={14} /> Ex: {myExileCount}
               </div>
+              {isCommanderMode && (
+                <div className="flex items-center gap-1 cursor-pointer hover:text-white text-amber-200" onClick={() => { setViewZone({ zone: ZONES.COMMAND, ownerId: viewAsPlayerId }); }}>
+                  ♛ Cmd: {myCommandCount}
+                </div>
+              )}
             </div>
             </div>
 
@@ -5596,6 +5720,9 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             {game.cards.filter(c => c.ownerId === viewZone.ownerId && c.zone === viewZone.zone).map(c => (
               <div key={c.instanceId} className="relative" onClick={() => { setSelectedCard(c); setViewZone(null); }}>
                 <img src={c.image_uri} className="w-full rounded opacity-70 hover:opacity-100" />
+                {isCommanderMode && isCommanderCard(c) && (
+                  <div className="absolute right-1 top-1 rounded bg-amber-700/95 px-1.5 py-0.5 text-[9px] font-black uppercase text-white border border-amber-200/80">♛ Commander</div>
+                )}
               </div>
             ))}
           </div>
@@ -5994,6 +6121,56 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                 </section>
               )}
 
+              {isCommanderMode && canAct && (selectedCard.ownerId === viewAsPlayerId || selectedCard.controllerId === viewAsPlayerId) && (
+                <section className="space-y-2 rounded-lg border border-amber-500/40 bg-amber-950/20 p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <h3 className="text-[11px] font-bold uppercase tracking-wider text-amber-200">Commander</h3>
+                    {isCommanderCard(selectedCard) && <span className="rounded-full bg-amber-600/30 px-2 py-0.5 text-[10px] font-black uppercase text-amber-100 border border-amber-400/50">Commander</span>}
+                  </div>
+                  <div className="grid grid-cols-1 gap-2">
+                    {!isCommanderCard(selectedCard) ? (
+                      <button
+                        disabled={selectedCard.isToken}
+                        onClick={() => { handleAction('SET_COMMANDER', { cardId: selectedCard.instanceId }); setSelectedCard(null); }}
+                        className="min-h-10 rounded-lg border border-amber-500/40 bg-amber-800/50 p-2 text-sm font-bold text-amber-50 hover:bg-amber-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        {selectedCard.isToken ? 'Tokens cannot be commanders' : 'Set as Commander'}
+                      </button>
+                    ) : (
+                      <>
+                        <button onClick={() => { handleAction('UNSET_COMMANDER', { cardId: selectedCard.instanceId }); setSelectedCard(null); }} className="min-h-10 rounded-lg border border-slate-600 bg-slate-700 p-2 text-sm font-bold text-slate-100 hover:bg-slate-600">Unset Commander</button>
+                        <button onClick={() => { handleAction('MOVE_ZONE', { cardId: selectedCard.instanceId, targetZone: ZONES.COMMAND }); setSelectedCard(null); }} className="min-h-10 rounded-lg border border-amber-500/40 bg-amber-900/50 p-2 text-sm font-bold text-amber-100 hover:bg-amber-800">Move to Command Zone</button>
+                      </>
+                    )}
+                  </div>
+                  {isCommanderCard(selectedCard) && (
+                    <>
+                      <div className="rounded-lg border border-amber-500/30 bg-slate-950/40 p-2">
+                        <div className="mb-2 text-sm font-bold text-amber-100">Commander Tax: +{getCommanderTax(selectedCard)}</div>
+                        <div className="grid grid-cols-3 gap-2">
+                          <button onClick={() => handleAction('COMMANDER_TAX', { cardId: selectedCard.instanceId, amount: 2 })} className="min-h-9 rounded bg-amber-700 text-white text-xs font-bold hover:bg-amber-600">+2 Tax</button>
+                          <button onClick={() => handleAction('COMMANDER_TAX', { cardId: selectedCard.instanceId, amount: -2 })} className="min-h-9 rounded bg-slate-700 text-white text-xs font-bold hover:bg-slate-600">-2 Tax</button>
+                          <button onClick={() => handleAction('COMMANDER_TAX', { cardId: selectedCard.instanceId, reset: true })} className="min-h-9 rounded bg-slate-800 text-amber-100 text-xs font-bold border border-amber-700/50">Reset</button>
+                        </div>
+                      </div>
+                      <div className="rounded-lg border border-red-500/30 bg-red-950/20 p-2 space-y-2">
+                        <div className="text-[11px] font-bold uppercase tracking-wider text-red-200">Commander Damage</div>
+                        {(game.players || []).map((player) => (
+                          <div key={player.id} className="rounded bg-slate-950/40 p-2">
+                            <div className="mb-1 text-xs text-slate-200">Commander damage to {player.name || 'Player'}: <span className="font-black text-white">{getCommanderDamageToPlayer(selectedCard.instanceId, player.id)} / 21</span></div>
+                            <div className="grid grid-cols-5 gap-1">
+                              {[1, 2, 3].map((amount) => <button key={amount} onClick={() => handleAction('COMMANDER_DAMAGE', { cardId: selectedCard.instanceId, defendingPlayerId: player.id, amount })} className="min-h-8 rounded bg-red-700 text-white text-xs font-bold hover:bg-red-600">+{amount}</button>)}
+                              <button onClick={() => handleAction('COMMANDER_DAMAGE', { cardId: selectedCard.instanceId, defendingPlayerId: player.id, amount: -1 })} className="min-h-8 rounded bg-slate-700 text-white text-xs font-bold hover:bg-slate-600">-1</button>
+                              <button onClick={() => handleAction('COMMANDER_DAMAGE', { cardId: selectedCard.instanceId, defendingPlayerId: player.id, clear: true })} className="min-h-8 rounded bg-red-950/60 text-red-100 text-[10px] font-bold border border-red-700/60">Clear</button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </section>
+              )}
+
               {canAct && selectedCard.controllerId === viewAsPlayerId && (
                 <section className="space-y-2 rounded-lg border border-slate-700/80 bg-slate-900/30 p-3">
                   <h3 className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Status</h3>
@@ -6317,8 +6494,19 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             </div>
             {(() => {
               const zoomAttachmentInfo = getAttachmentInfo(zoomedCard);
-              return (hasAnyCombatInfo(getCardCombatInfo(zoomedCard, game, allBattlefieldDisplayNames)) || getCardMarkedDamage(zoomedCard) > 0 || getTargetInfoRows(getTargetInfoFor(zoomedCard)).length > 0 || zoomAttachmentInfo.attachedToLabel || zoomAttachmentInfo.attachedCards.length > 0) && (
+              return ((isCommanderMode && isCommanderCard(zoomedCard)) || hasAnyCombatInfo(getCardCombatInfo(zoomedCard, game, allBattlefieldDisplayNames)) || getCardMarkedDamage(zoomedCard) > 0 || getTargetInfoRows(getTargetInfoFor(zoomedCard)).length > 0 || zoomAttachmentInfo.attachedToLabel || zoomAttachmentInfo.attachedCards.length > 0) && (
               <div className="w-full max-w-xs lg:w-64 bg-slate-900/90 border border-slate-600 rounded-xl p-3 shadow-xl text-sm space-y-3">
+                {isCommanderMode && isCommanderCard(zoomedCard) && (
+                  <div className="rounded-lg border border-amber-500/40 bg-amber-950/30 p-2">
+                    <div className="font-bold text-amber-100 uppercase tracking-wide text-xs mb-1">Commander</div>
+                    <div className="text-amber-50">Commander Tax: <span className="font-black">+{getCommanderTax(zoomedCard)}</span></div>
+                    <div className="mt-2 space-y-1">
+                      {(game.players || []).map((player) => (
+                        <div key={player.id} className="text-amber-50 text-xs">Damage to {player.name || 'Player'}: <span className="font-black">{getCommanderDamageToPlayer(zoomedCard.instanceId, player.id)} / 21</span></div>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 {(zoomAttachmentInfo.attachedToLabel || zoomAttachmentInfo.attachedCards.length > 0) && (
                   <div className="rounded-lg border border-fuchsia-500/40 bg-fuchsia-950/30 p-2">
                     <div className="font-bold text-fuchsia-100 uppercase tracking-wide text-xs mb-2">Attachments</div>
@@ -6634,12 +6822,14 @@ export default function App() {
     console.log('currentUser providerData', user.providerData);
   }, [user]);
 
-  const createGame = async (playerNameInput, gameTitleInput) => {
+  const createGame = async (playerNameInput, gameTitleInput, gameModeInput = 'regular') => {
     if (!user) return;
     setIsActionLoading(true);
     setInitError(null);
     const safeName = (playerNameInput || '').trim();
     const safeTitle = (gameTitleInput || '').trim();
+    const safeGameMode = gameModeInput === 'commander' ? 'commander' : 'regular';
+    const startingLife = safeGameMode === 'commander' ? 40 : 20;
     setPlayerName(safeName);
     try {
       const initialData = {
@@ -6649,10 +6839,12 @@ export default function App() {
         ...(safeTitle ? { title: safeTitle } : {}),
         allowSpectators: true,
         spectatorIds: [],
+        gameMode: safeGameMode,
+        ...(safeGameMode === 'commander' ? { commander: { enabled: true, commanders: { [user.uid]: [] }, commanderDamage: {} } } : {}),
         players: [{
           id: user.uid,
           name: safeName,
-          life: 20,
+          life: startingLife,
           turnOrder: 0,
           counters: { poison: 0, energy: 0, commanderTax: 0, experience: 0 },
           handRevealed: false,
@@ -6721,7 +6913,7 @@ export default function App() {
           const newPlayer = {
             id: user.uid,
             name: safeName,
-            life: 20,
+            life: (gameData.gameMode || 'regular') === 'commander' ? 40 : 20,
             turnOrder: players.length,
             counters: { poison: 0, energy: 0, commanderTax: 0, experience: 0 },
             handRevealed: false,

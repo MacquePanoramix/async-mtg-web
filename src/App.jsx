@@ -94,7 +94,7 @@ const copyToClipboard = (text) => {
     try {
       document.execCommand('copy');
       alert(`Copied: ${text}`);
-    } catch (_err) {
+    } catch {
       prompt("Copy this code:", text);
     }
     document.body.removeChild(textArea);
@@ -615,6 +615,110 @@ const clearCombatAssignmentsForCard = (combatState = getEmptyCombatState(), inst
   });
 
   return { attackers: nextAttackers, blockers: nextBlockers };
+};
+
+
+const buildDuplicateDisplayNameMap = (cards = []) => {
+  const grouped = new Map();
+  cards.forEach((card) => {
+    if (!card?.instanceId) return;
+    const key = (card.name || '').trim() || 'Unknown';
+    if (!grouped.has(key)) grouped.set(key, []);
+    grouped.get(key).push(card.instanceId);
+  });
+
+  const labels = new Map();
+  grouped.forEach((ids, name) => {
+    const total = ids.length;
+    ids.forEach((id, index) => {
+      labels.set(id, total > 1 ? `${name} (${index + 1}/${total})` : name);
+    });
+  });
+  return labels;
+};
+
+const getCombatDisplayName = (cardOrId, currentGame, displayNameMap = null) => {
+  const card = typeof cardOrId === 'string'
+    ? (currentGame?.cards || []).find((candidate) => candidate.instanceId === cardOrId)
+    : cardOrId;
+  if (!card) return 'Unknown';
+  const battlefieldDisplayNames = displayNameMap || buildDuplicateDisplayNameMap(
+    (currentGame?.cards || []).filter((candidate) => candidate.zone === ZONES.BATTLEFIELD)
+  );
+  return battlefieldDisplayNames.get(card.instanceId) || card.name || 'Unknown';
+};
+
+const getCombatAttackTargetName = (attackTarget, currentGame, displayNameMap = null) => {
+  if (!attackTarget || typeof attackTarget !== 'object') return null;
+  if (attackTarget.type === 'player') {
+    return (currentGame?.players || []).find((player) => player.id === attackTarget.targetId)?.name || 'Player';
+  }
+  if (attackTarget.type === 'planeswalker') return `PW: ${getCombatDisplayName(attackTarget.targetId, currentGame, displayNameMap)}`;
+  return attackTarget.name || null;
+};
+
+const getCardCombatInfo = (card, currentGame, displayNameMapOverride = null) => {
+  const combat = currentGame?.combat || getEmptyCombatState();
+  const attackers = combat.attackers || {};
+  const blockers = combat.blockers || {};
+  const instanceId = card?.instanceId || null;
+  const displayNameMap = displayNameMapOverride || buildDuplicateDisplayNameMap(
+    (currentGame?.cards || []).filter((candidate) => candidate.zone === ZONES.BATTLEFIELD)
+  );
+  const attackingTarget = instanceId && Object.prototype.hasOwnProperty.call(attackers, instanceId) ? attackers[instanceId] : null;
+  const blockedByIds = instanceId
+    ? Object.entries(blockers)
+      .filter(([, attackerIds]) => Array.isArray(attackerIds) && attackerIds.includes(instanceId))
+      .map(([blockerId]) => blockerId)
+    : [];
+  const blockingIds = instanceId && Array.isArray(blockers[instanceId]) ? blockers[instanceId] : [];
+
+  return {
+    cardId: instanceId,
+    cardName: card?.name || 'Unknown',
+    controllerId: card?.controllerId || null,
+    isAttacking: Boolean(attackingTarget),
+    attackingTargetId: attackingTarget?.targetId || null,
+    attackingTargetName: getCombatAttackTargetName(attackingTarget, currentGame, displayNameMap),
+    isBlocked: blockedByIds.length > 0,
+    blockedByIds,
+    blockedByDisplayNames: blockedByIds.map((id) => getCombatDisplayName(id, currentGame, displayNameMap)),
+    isBlocking: blockingIds.length > 0,
+    blockingIds,
+    blockedAttackerIds: blockingIds,
+    blockingDisplayNames: blockingIds.map((id) => getCombatDisplayName(id, currentGame, displayNameMap))
+  };
+};
+
+const hasAnyCombatInfo = (combatInfo) => Boolean(combatInfo?.isAttacking || combatInfo?.isBlocked || combatInfo?.isBlocking);
+
+const shortenCombatName = (name, maxLength = 18) => {
+  if (!name) return 'Unknown';
+  if (name.length <= maxLength) return name;
+  const duplicateSuffix = name.match(/\s+\(\d+\/\d+\)$/)?.[0] || '';
+  const baseName = duplicateSuffix ? name.slice(0, -duplicateSuffix.length).trim() : name;
+  const words = baseName.split(/\s+/).filter(Boolean);
+  const meaningfulBase = words.length > 1 ? words[words.length - 1] : baseName;
+  const shortened = `${meaningfulBase}${duplicateSuffix}`;
+  return shortened.length <= maxLength ? shortened : `${shortened.slice(0, Math.max(1, maxLength - 1))}…`;
+};
+
+const getCombatInfoLogPayload = (combatInfo, renderContext) => ({
+  cardName: combatInfo?.cardName || 'Unknown',
+  instanceId: combatInfo?.cardId || null,
+  controllerId: combatInfo?.controllerId || null,
+  isAttacking: Boolean(combatInfo?.isAttacking),
+  attackingTargetName: combatInfo?.attackingTargetName || null,
+  isBlocked: Boolean(combatInfo?.isBlocked),
+  blockedByDisplayNames: combatInfo?.blockedByDisplayNames || [],
+  isBlocking: Boolean(combatInfo?.isBlocking),
+  blockingDisplayNames: combatInfo?.blockingDisplayNames || [],
+  renderContext
+});
+
+const logRenderedCombatInfo = (combatInfo, renderContext) => {
+  if (!combatInfo?.cardId) return;
+  console.log('[CARD_COMBAT_INFO_RENDER]', getCombatInfoLogPayload(combatInfo, renderContext));
 };
 
 const getNextCombatState = (currentGame, nextPhase, turnChanged = false) => {
@@ -1178,22 +1282,6 @@ const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isD
           </div>
         )}
 
-        {hasCombatBadge && (
-          <div className="absolute inset-x-1 bottom-1 z-20 pointer-events-none flex flex-col items-start gap-0.5">
-            {normalizedCombatBadges.map((badge, index) => {
-              const toneClass = badge.tone === 'attack'
-                ? 'bg-red-950/95 text-red-50 border-red-300/70'
-                : badge.tone === 'block'
-                  ? 'bg-blue-950/95 text-blue-50 border-blue-300/70'
-                  : 'bg-slate-950/90 text-slate-100 border-slate-300/60';
-              return (
-                <div key={`${badge.label}-${index}`} className={`max-w-full truncate text-[9px] leading-tight px-1.5 py-0.5 rounded border shadow-md whitespace-nowrap font-extrabold ${toneClass}`}>
-                  {badge.label}
-                </div>
-              );
-            })}
-          </div>
-        )}
 
         <div className="absolute top-5 left-1 flex flex-col gap-1 pointer-events-none">
           {Object.entries(counters).map(([label, count]) => (
@@ -1205,6 +1293,23 @@ const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isD
           ))}
         </div>
       </div>
+
+      {hasCombatBadge && (
+        <div className="absolute inset-x-0 top-1 z-30 pointer-events-none flex flex-col items-start gap-0.5 px-1">
+          {normalizedCombatBadges.slice(0, 2).map((badge, index) => {
+            const toneClass = badge.tone === 'attack'
+              ? 'bg-red-950/95 text-red-50 border-red-300/70'
+              : badge.tone === 'block'
+                ? 'bg-blue-950/95 text-blue-50 border-blue-300/70'
+                : 'bg-slate-950/90 text-slate-100 border-slate-300/60';
+            return (
+              <div key={`${badge.label}-${index}`} className={`max-w-full text-[9px] leading-[1.05] px-1.5 py-0.5 rounded border shadow-md whitespace-normal break-words font-extrabold ${toneClass}`}>
+                {badge.label}
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {!isDraggable && (
         <button
@@ -2214,9 +2319,6 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         const nextPhase = PHASES[nextPhaseIdx];
 
         let nextTurnNum = game.turnNumber;
-        let nextActivePlayerIdx = game.activePlayerIndex;
-        let nextTurnPlayerId = game.turnPlayerId;
-
         if (nextPhase.id === 'untap') {
           nextTurnNum++;
           // In solo, active player never changes index (always 0)
@@ -2774,7 +2876,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             xOffset = (xOffset + 5) % 80;
           }
         }
-      } catch (e) {
+      } catch {
         console.error("Failed to fetch", name);
       }
       await new Promise(r => setTimeout(r, 50));
@@ -3202,23 +3304,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     updateDoc(doc(db, 'games_v3', gameId), { cards: nextCards });
   }, [gameId, game?.cards, myBattlefield, myBattlefieldLayout, battlefieldViewport.width, battlefieldViewport.height, draggingCard]);
 
-  const buildSectionDisplayNameMap = (cards) => {
-    const grouped = new Map();
-    cards.forEach((card) => {
-      const key = (card.name || '').trim() || 'Unknown';
-      if (!grouped.has(key)) grouped.set(key, []);
-      grouped.get(key).push(card.instanceId);
-    });
-
-    const labels = new Map();
-    grouped.forEach((ids, name) => {
-      const total = ids.length;
-      ids.forEach((id, index) => {
-        labels.set(id, total > 1 ? `${name} (${index + 1}/${total})` : name);
-      });
-    });
-    return labels;
-  };
+  const buildSectionDisplayNameMap = (cards) => buildDuplicateDisplayNameMap(cards);
 
   const myBattlefieldDisplayNames = useMemo(() => buildSectionDisplayNameMap(myBattlefield), [myBattlefield]);
   const oppBattlefieldDisplayNames = useMemo(() => buildSectionDisplayNameMap(oppBattlefield), [oppBattlefield]);
@@ -3249,10 +3335,6 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     ZONES.EXILE
   ].some(zone => getZoneCount(viewAsPlayerId, zone) > 0);
   const noDeckLoaded = !hasDeckLoaded;
-  // Opponent Counts
-  const oppGYCount = opponent ? getZoneCount(opponent.id, ZONES.GRAVEYARD) : 0;
-  const oppExileCount = opponent ? getZoneCount(opponent.id, ZONES.EXILE) : 0;
-
   const stackCards = game.stack || [];
   const cardsMap = new Map((game.cards || []).map(c => [c.instanceId, c]));
   const combat = game.combat || getEmptyCombatState();
@@ -3264,63 +3346,48 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const validBlockerCandidates = myBattlefield.filter((c) => (c.type_line || '').toLowerCase().includes('creature'));
   const validBlockTargetAttackers = attackingCards.filter((c) => c.controllerId !== viewAsPlayerId);
   const activeAttackers = validBlockTargetAttackers;
-  const combatParticipantIds = new Set([
-    ...Object.keys(combatAttackers),
-    ...Object.keys(combatBlockers),
-    ...Object.values(combatBlockers).flatMap((ids) => Array.isArray(ids) ? ids : [])
-  ]);
-  const combatDisplayNameMap = buildSectionDisplayNameMap(
-    [...combatParticipantIds].map((id) => cardsMap.get(id)).filter(Boolean)
-  );
-  const getCombatDisplayCardName = (cardOrId) => {
-    const card = typeof cardOrId === 'string' ? cardsMap.get(cardOrId) : cardOrId;
-    if (!card) return 'Unknown';
-    return combatDisplayNameMap.get(card.instanceId) || getDisplayCardName(card);
-  };
-  const getCombatDisplayCardNameOrNull = (cardOrId) => {
-    const card = typeof cardOrId === 'string' ? cardsMap.get(cardOrId) : cardOrId;
-    if (!card) return null;
-    return getCombatDisplayCardName(card);
-  };
-  const getAttackTargetLabel = (attackTarget) => {
-    if (!attackTarget || typeof attackTarget !== 'object') return null;
-    if (attackTarget.type === 'player') {
-      const playerName = (game.players || []).find((p) => p.id === attackTarget.targetId)?.name || 'Player';
-      return playerName;
-    }
-    if (attackTarget.type === 'planeswalker') return `PW: ${getCombatDisplayCardName(attackTarget.targetId)}`;
-    if (attackTarget.name) return attackTarget.name;
-    return null;
-  };
+  const getCombatDisplayCardName = (cardOrId) => getCombatDisplayName(cardOrId, game, allBattlefieldDisplayNames);
+  const getAttackTargetLabel = (attackTarget) => getCombatAttackTargetName(attackTarget, game, allBattlefieldDisplayNames);
   const getCardAttackTargetLabel = (cardId) => {
     if (!Object.prototype.hasOwnProperty.call(combatAttackers, cardId)) return null;
     return getAttackTargetLabel(combatAttackers[cardId]);
   };
-  const getBlockingAssignmentsForAttacker = (attackerId) => Object.entries(combatBlockers)
-    .filter(([, blockedIds]) => Array.isArray(blockedIds) && blockedIds.includes(attackerId))
-    .map(([blockerId]) => blockerId);
-  const getCardCombatBadges = (cardId) => {
+  const getRenderedCardCombatInfo = (card, renderContext) => {
+    const combatInfo = getCardCombatInfo(card, game, allBattlefieldDisplayNames);
+    logRenderedCombatInfo(combatInfo, renderContext);
+    return combatInfo;
+  };
+  const getCombatNameList = (names, maxNameLength = 22) => names.map((name) => shortenCombatName(name, maxNameLength)).join(', ');
+  const getCardCombatBadges = (cardOrId, renderContext = 'battlefield') => {
+    const card = typeof cardOrId === 'string' ? cardsMap.get(cardOrId) : cardOrId;
+    const combatInfo = getRenderedCardCombatInfo(card, renderContext);
     const badges = [];
-    const attackTargetLabel = getCardAttackTargetLabel(cardId);
-    if (attackTargetLabel) {
-      badges.push({ label: `ATK → ${attackTargetLabel}`, tone: 'attack' });
-      if (getBlockingAssignmentsForAttacker(cardId).length > 0) {
-        badges.push({ label: 'Blocked', tone: 'neutral' });
-      }
+    if (combatInfo.isAttacking) {
+      badges.push({ label: `ATK → ${shortenCombatName(combatInfo.attackingTargetName || 'Defender', 16)}`, tone: 'attack' });
     }
-
-    const blockedIds = Array.isArray(combatBlockers[cardId]) ? combatBlockers[cardId] : [];
-    if (blockedIds.length > 0) {
-      const blockedNames = blockedIds.map((id) => getCombatDisplayCardNameOrNull(id)).filter(Boolean);
-      const blockedLabel = blockedNames.length > 0 ? blockedNames.join(', ') : `${blockedIds.length} attacker${blockedIds.length === 1 ? '' : 's'}`;
-      badges.push({ label: `BLK → ${blockedLabel}`, tone: 'block' });
+    if (combatInfo.isBlocked) {
+      badges.push({ label: 'Blocked', tone: 'neutral' });
     }
-
+    if (combatInfo.isBlocking) {
+      badges.push({ label: `BLK → ${getCombatNameList(combatInfo.blockingDisplayNames, 14)}`, tone: 'block' });
+    }
     return badges;
   };
-  const getBlockedAttackersForBlocker = (blockerId) => (combatBlockers[blockerId] || [])
-    .map((id) => cardsMap.get(id))
-    .filter(Boolean);
+  const getCardCombatRows = (cardOrId, renderContext = 'action modal') => {
+    const card = typeof cardOrId === 'string' ? cardsMap.get(cardOrId) : cardOrId;
+    const combatInfo = getRenderedCardCombatInfo(card, renderContext);
+    const rows = [];
+    if (combatInfo.isAttacking) {
+      rows.push({ label: 'Attacking', value: combatInfo.attackingTargetName || 'Defender', tone: 'attack', compact: `ATK → ${combatInfo.attackingTargetName || 'Defender'}` });
+    }
+    if (combatInfo.isBlocked) {
+      rows.push({ label: 'Blocked by', value: combatInfo.blockedByDisplayNames.join(', ') || 'Blocker', tone: 'neutral', compact: `Blocked by ${combatInfo.blockedByDisplayNames.join(', ') || 'Blocker'}` });
+    }
+    if (combatInfo.isBlocking) {
+      rows.push({ label: 'Blocking', value: combatInfo.blockingDisplayNames.join(', ') || 'Attacker', tone: 'block', compact: `Blocking ${combatInfo.blockingDisplayNames.join(', ') || 'Attacker'}` });
+    }
+    return rows;
+  };
 
   console.log('[COMBAT_DEBUG]', {
     phase: game.phase,
@@ -3343,7 +3410,6 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     }
   });
 
-  const isOpponentTargeted = (opponent && targetingState?.selectedIds.includes(getPlayerTargetId(opponent.id))) || (opponent && stackPlayerTargets.has(opponent.id));
   const isSelfTargeted = targetingState?.selectedIds.includes(getPlayerTargetId(viewAsPlayerId)) || stackPlayerTargets.has(viewAsPlayerId);
 
   const scrollToOpponentBattlefield = () => {
@@ -3643,7 +3709,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                       onMove={() => targetingState ? toggleTarget(card) : setZoomedCard(card)}
                       onZoom={setZoomedCard}
                       displayName={getDisplayCardName(card)}
-                      combatBadges={getCardCombatBadges(card.instanceId)}
+                      combatBadges={getCardCombatBadges(card, 'opponent battlefield')}
                     />
                   </div>
                 );
@@ -3679,14 +3745,14 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               <div>
                 <div className="text-red-300 font-semibold">Attackers</div>
                 {attackingCards.length === 0 ? <div className="text-slate-400">None</div> : attackingCards.map((attacker) => (
-                  <div key={attacker.instanceId} className="text-slate-200">{getCombatDisplayCardName(attacker)} → {getCardAttackTargetLabel(attacker.instanceId) || 'Defender'}</div>
+                  <div key={attacker.instanceId} className="text-slate-200">{getCombatDisplayCardName(attacker)} → {getCardCombatInfo(attacker, game, allBattlefieldDisplayNames).attackingTargetName || 'Defender'}</div>
                 ))}
               </div>
               <div>
                 <div className="text-blue-300 font-semibold">Blockers</div>
-                {Object.keys(combatBlockers).length === 0 ? <div className="text-slate-400">None</div> : Object.entries(combatBlockers).map(([blockerId, blockedIds]) => (
+                {Object.keys(combatBlockers).length === 0 ? <div className="text-slate-400">None</div> : Object.keys(combatBlockers).map((blockerId) => (
                   <div key={blockerId} className="text-slate-200">
-                    {(getCombatDisplayCardName(blockerId) || 'Blocker')} blocks {(blockedIds || []).map((id) => getCombatDisplayCardName(id) || 'Attacker').join(', ')}
+                    {(getCombatDisplayCardName(blockerId) || 'Blocker')} blocks {getCardCombatInfo(cardsMap.get(blockerId), game, allBattlefieldDisplayNames).blockingDisplayNames.join(', ') || 'Attacker'}
                   </div>
                 ))}
               </div>
@@ -3771,7 +3837,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                       onZoom={setZoomedCard}
                       onPeek={(c) => setPeekCard(c)}
                       displayName={getDisplayCardName(card)}
-                      combatBadges={getCardCombatBadges(card.instanceId)}
+                      combatBadges={getCardCombatBadges(card, 'own battlefield')}
                     />
                   </div>
                 );
@@ -4383,12 +4449,18 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                   {canAct && isBlockersStep && selectedCard.controllerId === viewAsPlayerId && (selectedCard.type_line || '').toLowerCase().includes('creature') && (
                     <button onClick={() => setBlockPickerCard(selectedCard)} className="col-span-2 bg-blue-900/50 hover:bg-blue-800 text-blue-100 p-2 rounded-lg text-sm border border-blue-700">Block...</button>
                   )}
-                  {combatAttackers[selectedCard.instanceId] && (
-                    <div className="col-span-2 text-xs px-2 py-1 rounded bg-red-900/30 border border-red-700/40 text-red-100">ATK → {getCardAttackTargetLabel(selectedCard.instanceId) || 'Defender'}</div>
-                  )}
-                  {(combatBlockers[selectedCard.instanceId] || []).length > 0 && (
-                    <div className="col-span-2 text-xs px-2 py-1 rounded bg-blue-900/30 border border-blue-700/40 text-blue-100">Blocking: {getBlockedAttackersForBlocker(selectedCard.instanceId).map(c => getCombatDisplayCardName(c)).join(', ')}</div>
-                  )}
+                  {getCardCombatRows(selectedCard, selectedCard.controllerId === viewAsPlayerId ? 'action modal' : 'opponent action modal').map((row) => {
+                    const toneClass = row.tone === 'attack'
+                      ? 'bg-red-900/30 border-red-700/40 text-red-100'
+                      : row.tone === 'block'
+                        ? 'bg-blue-900/30 border-blue-700/40 text-blue-100'
+                        : 'bg-slate-900/40 border-slate-600/60 text-slate-100';
+                    return (
+                      <div key={`${row.label}-${row.value}`} className={`col-span-2 text-xs px-2 py-1 rounded border ${toneClass}`}>
+                        <span className="font-semibold">{row.label}:</span> {row.value}
+                      </div>
+                    );
+                  })}
                   <div className="col-span-2 flex flex-col bg-slate-700 rounded-lg p-2 gap-2">
                     <div className="flex justify-between items-center border-b border-slate-600 pb-1">
                       <span className="text-sm text-slate-300 pl-1">+1/+1</span>
@@ -4544,10 +4616,25 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
       {zoomedCard && (
         <div className="fixed inset-0 bg-black/90 z-[60] flex items-center justify-center p-4" onClick={() => setZoomedCard(null)}>
-          <div className="flex flex-col items-center gap-3">
-          <div className="text-sm font-semibold text-slate-100">{getDisplayCardName(zoomedCard)}</div>
-          <img src={zoomedCard.image_uri} alt={zoomedCard.name} className="max-w-full max-h-[80vh] rounded-xl shadow-2xl" />
-        </div>
+          <div className="flex flex-col lg:flex-row items-center gap-4 max-w-full" onClick={(e) => e.stopPropagation()}>
+            <div className="flex flex-col items-center gap-3">
+              <div className="text-sm font-semibold text-slate-100">{getDisplayCardName(zoomedCard)}</div>
+              <img src={zoomedCard.image_uri} alt={zoomedCard.name} className="max-w-full max-h-[80vh] rounded-xl shadow-2xl" />
+            </div>
+            {hasAnyCombatInfo(getCardCombatInfo(zoomedCard, game, allBattlefieldDisplayNames)) && (
+              <div className="w-full max-w-xs lg:w-64 bg-slate-900/90 border border-slate-600 rounded-xl p-3 shadow-xl text-sm">
+                <div className="font-bold text-slate-100 uppercase tracking-wide text-xs mb-2">Combat</div>
+                <div className="space-y-2">
+                  {getCardCombatRows(zoomedCard, 'zoom preview').map((row) => (
+                    <div key={`${row.label}-${row.value}`} className="text-slate-200">
+                      <div className="text-[11px] uppercase tracking-wide text-slate-400">{row.label}</div>
+                      <div className="font-medium leading-snug">{row.value}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>

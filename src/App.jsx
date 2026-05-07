@@ -4460,81 +4460,138 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       )}
 
       {selectedCard && (
-        <div className="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-4 animate-in fade-in duration-200" onClick={() => setSelectedCard(null)}>
-          <div className="bg-slate-800 w-full max-w-sm rounded-xl p-4 shadow-2xl border border-slate-600 space-y-3 max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-            <div className="flex justify-between items-center border-b border-slate-700 pb-2 mb-2">
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-3 sm:p-4 animate-in fade-in duration-200" onClick={() => setSelectedCard(null)}>
+          <div className="bg-slate-800 w-full max-w-sm rounded-xl p-4 shadow-2xl border border-slate-600 max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="flex justify-between items-center border-b border-slate-700 pb-2 mb-3">
               <span className="font-bold text-lg text-white truncate pr-2">{getDisplayCardName(selectedCard)}</span>
               <button onClick={() => setSelectedCard(null)}><X className="text-slate-400" /></button>
             </div>
-            <div className="grid grid-cols-2 gap-2">
-              <button onClick={() => { handleAction('REVEAL_CARD', { cardId: selectedCard.instanceId }); setSelectedCard(null); }} className="bg-slate-700 text-slate-300 p-2 rounded-lg text-sm flex items-center justify-center gap-2"><Eye size={14}/> Reveal</button>
-              {selectedCard.zone === ZONES.HAND && (
-                <button onClick={() => { handleAction('REVEAL_ALL_HAND'); setSelectedCard(null); }} className="bg-slate-700 text-slate-300 p-2 rounded-lg text-sm flex items-center justify-center gap-2"><Eye size={14}/> Reveal Hand</button>
+
+            <div className="space-y-3">
+              {canAct && selectedCard.controllerId === viewAsPlayerId && (
+                <section className="space-y-2 rounded-lg border border-slate-700/80 bg-slate-900/30 p-3">
+                  <h3 className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Status</h3>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button onClick={() => { handleAction('REVEAL_CARD', { cardId: selectedCard.instanceId }); setSelectedCard(null); }} className="min-h-10 bg-slate-700 text-slate-300 p-2 rounded-lg text-sm flex items-center justify-center gap-2"><Eye size={14}/> Reveal</button>
+                    {selectedCard.zone === ZONES.HAND && (
+                      <button onClick={() => { handleAction('REVEAL_ALL_HAND'); setSelectedCard(null); }} className="min-h-10 bg-slate-700 text-slate-300 p-2 rounded-lg text-sm flex items-center justify-center gap-2"><Eye size={14}/> Reveal Hand</button>
+                    )}
+                    {selectedCard.zone === ZONES.BATTLEFIELD && (
+                      <>
+                        <button onClick={() => { handleAction('TAP_TOGGLE', { cardId: selectedCard.instanceId }); setSelectedCard(null); }} className="min-h-10 bg-slate-700 text-white p-2 rounded-lg text-sm font-medium">{selectedCard.tapped ? 'Untap' : 'Tap'}</button>
+                        <button onClick={() => { handleAction('TOGGLE_FACE', { cardId: selectedCard.instanceId }); setSelectedCard(null); }} className="min-h-10 bg-slate-700 text-white p-2 rounded-lg text-sm font-medium">{selectedCard.faceDown ? 'Turn Face Up' : 'Turn Face Down'}</button>
+                      </>
+                    )}
+                  </div>
+                </section>
               )}
 
-              {selectedCard.zone === ZONES.HAND && (
-                <>
-                  <button onClick={() => { handleAction('PLAY_LAND', { cardId: selectedCard.instanceId }); setSelectedCard(null); }} className="bg-amber-900/50 hover:bg-amber-800 text-amber-100 p-3 rounded-lg font-medium border border-amber-800">Play Land</button>
-                  <button onClick={() => { handleAction('CAST_SPELL', { cardId: selectedCard.instanceId }); setSelectedCard(null); }} className="bg-purple-900/50 hover:bg-purple-800 text-purple-100 p-3 rounded-lg font-medium border border-purple-800">Cast Spell</button>
-                  <button onClick={() => { if (!canAct) return; setTargetingState({ source: selectedCard, mode: 'CAST', selectedIds: [] }); setSelectedCard(null); }} className="col-span-2 bg-purple-900/50 hover:bg-purple-800 text-purple-100 p-3 rounded-lg font-medium border border-purple-800 flex items-center justify-center gap-2">Cast + Target 🎯</button>
-                  <button onClick={() => { handleAction('MOVE_ZONE', { cardId: selectedCard.instanceId, targetZone: ZONES.BATTLEFIELD }); handleAction('TOGGLE_FACE', { cardId: selectedCard.instanceId }); setSelectedCard(null); }} className="col-span-2 bg-slate-700 text-slate-300 p-2 rounded-lg text-sm">Play Face Down (Morph)</button>
-                </>
+              {selectedCard.zone === ZONES.HAND && canAct && selectedCard.controllerId === viewAsPlayerId && (
+                <section className="space-y-2 rounded-lg border border-slate-700/80 bg-slate-900/30 p-3">
+                  <h3 className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Targets / Abilities</h3>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button onClick={() => { handleAction('PLAY_LAND', { cardId: selectedCard.instanceId }); setSelectedCard(null); }} className="min-h-10 bg-amber-900/50 hover:bg-amber-800 text-amber-100 p-2 rounded-lg text-sm font-medium border border-amber-800">Play Land</button>
+                    <button onClick={() => { handleAction('CAST_SPELL', { cardId: selectedCard.instanceId }); setSelectedCard(null); }} className="min-h-10 bg-purple-900/50 hover:bg-purple-800 text-purple-100 p-2 rounded-lg text-sm font-medium border border-purple-800">Cast Spell</button>
+                    <button onClick={() => { if (!canAct) return; setTargetingState({ source: selectedCard, mode: 'CAST', selectedIds: [] }); setSelectedCard(null); }} className="col-span-2 min-h-10 bg-purple-900/50 hover:bg-purple-800 text-purple-100 p-2 rounded-lg text-sm font-medium border border-purple-800 flex items-center justify-center gap-2">Cast + Target 🎯</button>
+                    <button onClick={() => { handleAction('MOVE_ZONE', { cardId: selectedCard.instanceId, targetZone: ZONES.BATTLEFIELD }); handleAction('TOGGLE_FACE', { cardId: selectedCard.instanceId }); setSelectedCard(null); }} className="col-span-2 min-h-10 bg-slate-700 text-slate-300 p-2 rounded-lg text-sm">Play Face Down (Morph)</button>
+                  </div>
+                </section>
               )}
 
               {selectedCard.zone === ZONES.BATTLEFIELD && (
-                <>
-                  <button onClick={() => { handleAction('TAP_TOGGLE', { cardId: selectedCard.instanceId }); setSelectedCard(null); }} className="bg-slate-700 text-white p-3 rounded-lg font-medium">{selectedCard.tapped ? 'Untap' : 'Tap'}</button>
-                  <button onClick={() => { handleAction('TOGGLE_FACE', { cardId: selectedCard.instanceId }); setSelectedCard(null); }} className="bg-slate-700 text-white p-3 rounded-lg font-medium">{selectedCard.faceDown ? 'Turn Face Up' : 'Turn Face Down'}</button>
-                  {canAct && <button onClick={() => setDamageModal({ cardId: selectedCard.instanceId, amount: getCardMarkedDamage(selectedCard) })} className="col-span-2 bg-red-900/40 hover:bg-red-800/50 text-red-100 p-2 rounded-lg text-sm border border-red-700">Damage...</button>}
-                  <div className="col-span-2 rounded-lg border border-red-500/40 bg-red-950/20 px-2 py-1 text-xs text-red-100">
-                    Current damage: <span className="font-bold">{getCardMarkedDamage(selectedCard)}</span>
+                <section className="space-y-2 rounded-lg border border-slate-700/80 bg-slate-900/30 p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <h3 className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Combat / Damage</h3>
+                    <div className="rounded border border-red-500/40 bg-red-950/30 px-2 py-1 text-xs text-red-100 whitespace-nowrap">
+                      Current damage <span className="font-black">{getCardMarkedDamage(selectedCard)}</span>
+                    </div>
                   </div>
-                  {canAct && isAttackersStep && selectedCard.controllerId === viewAsPlayerId && (selectedCard.type_line || '').toLowerCase().includes('creature') && (
-                    <button onClick={() => setAttackTargetPickerCard(selectedCard)} className="col-span-2 bg-red-900/50 hover:bg-red-800 text-red-100 p-2 rounded-lg text-sm border border-red-700">Attack...</button>
-                  )}
-                  {canAct && isBlockersStep && selectedCard.controllerId === viewAsPlayerId && (selectedCard.type_line || '').toLowerCase().includes('creature') && (
-                    <button onClick={() => setBlockPickerCard(selectedCard)} className="col-span-2 bg-blue-900/50 hover:bg-blue-800 text-blue-100 p-2 rounded-lg text-sm border border-blue-700">Block...</button>
-                  )}
-                  {getCardCombatRows(selectedCard, selectedCard.controllerId === viewAsPlayerId ? 'action modal' : 'opponent action modal').map((row) => {
-                    const toneClass = row.tone === 'attack'
-                      ? 'bg-red-900/30 border-red-700/40 text-red-100'
-                      : row.tone === 'block'
-                        ? 'bg-blue-900/30 border-blue-700/40 text-blue-100'
-                        : 'bg-slate-900/40 border-slate-600/60 text-slate-100';
+
+                  {(() => {
+                    const combatRows = getCardCombatRows(selectedCard, selectedCard.controllerId === viewAsPlayerId ? 'action modal' : 'opponent action modal');
+                    if (combatRows.length === 0) return null;
                     return (
-                      <div key={`${row.label}-${row.value}`} className={`col-span-2 text-xs px-2 py-1 rounded border ${toneClass}`}>
-                        <span className="font-semibold">{row.label}:</span> {row.value}
+                      <div className="space-y-1">
+                        {combatRows.map((row) => {
+                          const toneClass = row.tone === 'attack'
+                            ? 'bg-red-900/30 border-red-700/40 text-red-100'
+                            : row.tone === 'block'
+                              ? 'bg-blue-900/30 border-blue-700/40 text-blue-100'
+                              : 'bg-slate-900/40 border-slate-600/60 text-slate-100';
+                          return (
+                            <div key={`${row.label}-${row.value}`} className={`text-xs px-2 py-1 rounded border ${toneClass}`}>
+                              <span className="font-semibold">{row.label}:</span> {row.value}
+                            </div>
+                          );
+                        })}
                       </div>
                     );
-                  })}
-                  <div className="col-span-2 flex flex-col bg-slate-700 rounded-lg p-2 gap-2">
-                    <div className="flex justify-between items-center border-b border-slate-600 pb-1">
-                      <span className="text-sm text-slate-300 pl-1">+1/+1</span>
-                      <div className="flex gap-2">
-                        <button onClick={() => handleAction('MOD_COUNTER', { cardId: selectedCard.instanceId, amount: -1 })} className="w-6 h-6 bg-black/40 rounded text-red-400 font-bold text-xs">-</button>
-                        <button onClick={() => handleAction('MOD_COUNTER', { cardId: selectedCard.instanceId, amount: 1 })} className="w-6 h-6 bg-black/40 rounded text-green-400 font-bold text-xs">+</button>
+                  })()}
+
+                  {canAct && selectedCard.controllerId === viewAsPlayerId && (
+                    <>
+                      <div className="grid grid-cols-2 gap-2">
+                        {isAttackersStep && (selectedCard.type_line || '').toLowerCase().includes('creature') && (
+                          <button onClick={() => setAttackTargetPickerCard(selectedCard)} className="min-h-10 bg-red-900/50 hover:bg-red-800 text-red-100 p-2 rounded-lg text-sm border border-red-700">Attack...</button>
+                        )}
+                        {isBlockersStep && (selectedCard.type_line || '').toLowerCase().includes('creature') && (
+                          <button onClick={() => setBlockPickerCard(selectedCard)} className="min-h-10 bg-blue-900/50 hover:bg-blue-800 text-blue-100 p-2 rounded-lg text-sm border border-blue-700">Block...</button>
+                        )}
                       </div>
+                      <div className="grid grid-cols-5 gap-1.5">
+                        <button onClick={() => applyTempDamageChange(selectedCard.instanceId, 1)} className="min-h-9 bg-red-700 hover:bg-red-600 rounded text-white font-bold text-sm">+1</button>
+                        <button onClick={() => applyTempDamageChange(selectedCard.instanceId, 2)} className="min-h-9 bg-red-700 hover:bg-red-600 rounded text-white font-bold text-sm">+2</button>
+                        <button onClick={() => applyTempDamageChange(selectedCard.instanceId, 3)} className="min-h-9 bg-red-700 hover:bg-red-600 rounded text-white font-bold text-sm">+3</button>
+                        <button onClick={() => applyTempDamageChange(selectedCard.instanceId, -1)} className="min-h-9 bg-slate-700 hover:bg-slate-600 rounded text-white font-bold text-sm">-1</button>
+                        <button onClick={() => applyTempDamageChange(selectedCard.instanceId, 0, true)} className="min-h-9 bg-red-900/40 hover:bg-red-800/40 rounded text-red-100 border border-red-700 font-bold text-xs">Clear</button>
+                      </div>
+                    </>
+                  )}
+                </section>
+              )}
+
+              {selectedCard.zone === ZONES.BATTLEFIELD && canAct && selectedCard.controllerId === viewAsPlayerId && (
+                <section className="space-y-2 rounded-lg border border-slate-700/80 bg-slate-900/30 p-3">
+                  <h3 className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Counters</h3>
+                  <div className="flex items-center justify-between gap-2 rounded-lg bg-slate-700/80 px-2 py-2">
+                    <span className="text-sm text-slate-300">+1/+1 counters</span>
+                    <div className="flex gap-2">
+                      <button onClick={() => handleAction('MOD_COUNTER', { cardId: selectedCard.instanceId, amount: -1 })} className="min-h-9 min-w-9 bg-black/40 rounded text-red-400 font-bold text-sm">-</button>
+                      <button onClick={() => handleAction('MOD_COUNTER', { cardId: selectedCard.instanceId, amount: 1 })} className="min-h-9 min-w-9 bg-black/40 rounded text-green-400 font-bold text-sm">+</button>
                     </div>
-                    <button onClick={addCustomCounter} className="text-xs text-blue-300 hover:text-white text-left pl-1 flex items-center gap-1"><Hexagon size={10}/> Add Custom Counter...</button>
                   </div>
-                  <button onClick={() => { if (!canAct) return; setTargetingState({ source: selectedCard, mode: 'ABILITY', selectedIds: [] }); setSelectedCard(null); }} className="bg-blue-900/50 hover:bg-blue-800 text-blue-100 p-2 rounded-lg text-sm flex items-center justify-center gap-2 border border-blue-800">Ability 🎯</button>
-                  <button onClick={() => { if (!canAct) return; setTargetingState({ source: selectedCard, mode: 'MANUAL', selectedIds: [] }); setSelectedCard(null); }} className="bg-slate-700 hover:bg-slate-600 text-slate-300 p-2 rounded-lg text-sm flex items-center justify-center gap-2 border border-slate-600">Target... 🎯</button>
-                  <button onClick={() => clearTargets(selectedCard)} className="col-span-2 bg-slate-700 hover:bg-slate-600 text-slate-300 p-2 rounded-lg text-sm flex items-center justify-center gap-2">✖ Clear Targets</button>
-                  <button onClick={() => { handleAction('CLONE_CARD', { cardId: selectedCard.instanceId }); setSelectedCard(null); }} className="bg-slate-700 text-slate-300 p-2 rounded-lg text-sm flex items-center justify-center gap-2"><Copy size={12}/> Clone</button>
-                  <button onClick={() => { handleAction('CHANGE_CONTROL', { cardId: selectedCard.instanceId, cardName: selectedCard.name }); setSelectedCard(null); }} className="bg-slate-700 text-slate-300 p-2 rounded-lg text-sm flex items-center justify-center gap-2"><UserCheck size={12}/> Give Control</button>
-                </>
+                  <button onClick={addCustomCounter} className="min-h-9 w-full rounded-lg bg-slate-700/70 px-2 text-xs text-blue-300 hover:text-white flex items-center justify-center gap-1"><Hexagon size={12}/> Add Custom Counter...</button>
+                </section>
               )}
 
-              <button onClick={() => { handleAction('MOVE_ZONE', { cardId: selectedCard.instanceId, targetZone: ZONES.GRAVEYARD }); setSelectedCard(null); }} className="bg-slate-700 hover:bg-red-900/50 text-white p-3 rounded-lg font-medium">To Graveyard</button>
-              <button onClick={() => { handleAction('MOVE_ZONE', { cardId: selectedCard.instanceId, targetZone: ZONES.EXILE }); setSelectedCard(null); }} className="bg-slate-700 text-slate-300 p-3 rounded-lg font-medium">To Exile</button>
-              <button onClick={() => { handleAction('MOVE_ZONE', { cardId: selectedCard.instanceId, targetZone: ZONES.HAND }); setSelectedCard(null); }} className="bg-slate-700 text-slate-300 p-3 rounded-lg font-medium">To Hand</button>
-
-              {selectedCard.zone !== ZONES.BATTLEFIELD && selectedCard.zone !== ZONES.HAND && (
-                <button onClick={() => { handleAction('MOVE_ZONE', { cardId: selectedCard.instanceId, targetZone: ZONES.BATTLEFIELD }); setSelectedCard(null); }} className="col-span-2 bg-purple-900/50 text-white p-3 rounded-lg font-medium">Return to Battlefield</button>
+              {selectedCard.zone === ZONES.BATTLEFIELD && canAct && selectedCard.controllerId === viewAsPlayerId && (
+                <section className="space-y-2 rounded-lg border border-slate-700/80 bg-slate-900/30 p-3">
+                  <h3 className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Targets / Abilities</h3>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button onClick={() => { if (!canAct) return; setTargetingState({ source: selectedCard, mode: 'ABILITY', selectedIds: [] }); setSelectedCard(null); }} className="min-h-10 bg-blue-900/50 hover:bg-blue-800 text-blue-100 p-2 rounded-lg text-sm flex items-center justify-center gap-2 border border-blue-800">Ability 🎯</button>
+                    <button onClick={() => { if (!canAct) return; setTargetingState({ source: selectedCard, mode: 'MANUAL', selectedIds: [] }); setSelectedCard(null); }} className="min-h-10 bg-slate-700 hover:bg-slate-600 text-slate-300 p-2 rounded-lg text-sm flex items-center justify-center gap-2 border border-slate-600">Target... 🎯</button>
+                    <button onClick={() => clearTargets(selectedCard)} className="col-span-2 min-h-10 bg-slate-700 hover:bg-slate-600 text-slate-300 p-2 rounded-lg text-sm flex items-center justify-center gap-2">✖ Clear Targets</button>
+                    <button onClick={() => { handleAction('CLONE_CARD', { cardId: selectedCard.instanceId }); setSelectedCard(null); }} className="min-h-10 bg-slate-700 text-slate-300 p-2 rounded-lg text-sm flex items-center justify-center gap-2"><Copy size={12}/> Clone</button>
+                    <button onClick={() => { handleAction('CHANGE_CONTROL', { cardId: selectedCard.instanceId, cardName: selectedCard.name }); setSelectedCard(null); }} className="min-h-10 bg-slate-700 text-slate-300 p-2 rounded-lg text-sm flex items-center justify-center gap-2"><UserCheck size={12}/> Give Control</button>
+                  </div>
+                </section>
               )}
 
-              <button onClick={() => { handleAction('MOVE_TO_LIBRARY', { cardId: selectedCard.instanceId, position: 'TOP' }); setSelectedCard(null); }} className="bg-slate-700 text-slate-300 p-2 rounded-lg text-sm font-medium">To Top Lib</button>
-              <button onClick={() => { handleAction('MOVE_TO_LIBRARY', { cardId: selectedCard.instanceId, position: 'BOTTOM' }); setSelectedCard(null); }} className="bg-slate-700 text-slate-300 p-2 rounded-lg text-sm font-medium">To Bot Lib</button>
+              {canAct && selectedCard.controllerId === viewAsPlayerId && (
+                <section className="space-y-2 rounded-lg border border-slate-700/80 bg-slate-900/30 p-3">
+                  <h3 className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Move Card</h3>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button onClick={() => { handleAction('MOVE_ZONE', { cardId: selectedCard.instanceId, targetZone: ZONES.GRAVEYARD }); setSelectedCard(null); }} className="min-h-10 bg-slate-700 hover:bg-red-900/50 text-white p-2 rounded-lg text-sm font-medium">To Graveyard</button>
+                    <button onClick={() => { handleAction('MOVE_ZONE', { cardId: selectedCard.instanceId, targetZone: ZONES.EXILE }); setSelectedCard(null); }} className="min-h-10 bg-slate-700 text-slate-300 p-2 rounded-lg text-sm font-medium">To Exile</button>
+                    <button onClick={() => { handleAction('MOVE_ZONE', { cardId: selectedCard.instanceId, targetZone: ZONES.HAND }); setSelectedCard(null); }} className="min-h-10 bg-slate-700 text-slate-300 p-2 rounded-lg text-sm font-medium">To Hand</button>
+                    {selectedCard.zone !== ZONES.BATTLEFIELD && selectedCard.zone !== ZONES.HAND && (
+                      <button onClick={() => { handleAction('MOVE_ZONE', { cardId: selectedCard.instanceId, targetZone: ZONES.BATTLEFIELD }); setSelectedCard(null); }} className="min-h-10 bg-purple-900/50 text-white p-2 rounded-lg text-sm font-medium">Return to Battlefield</button>
+                    )}
+                    <button onClick={() => { handleAction('MOVE_TO_LIBRARY', { cardId: selectedCard.instanceId, position: 'TOP' }); setSelectedCard(null); }} className="min-h-10 bg-slate-700 text-slate-300 p-2 rounded-lg text-sm font-medium">To Top Lib</button>
+                    <button onClick={() => { handleAction('MOVE_TO_LIBRARY', { cardId: selectedCard.instanceId, position: 'BOTTOM' }); setSelectedCard(null); }} className="min-h-10 bg-slate-700 text-slate-300 p-2 rounded-lg text-sm font-medium">To Bot Lib</button>
+                  </div>
+                </section>
+              )}
             </div>
           </div>
         </div>

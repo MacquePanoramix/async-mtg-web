@@ -1782,6 +1782,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const [zoomedCard, setZoomedCard] = useState(null);
   const closeZoomedCard = useCallback(() => setZoomedCard(null), []);
   const [scryCard, setScryCard] = useState(null);
+  const [scryModal, setScryModal] = useState(null);
   const [viewZone, setViewZone] = useState(null);
   const [searchLibraryOwner, setSearchLibraryOwner] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -1790,6 +1791,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const [diceMenuOpen, setDiceMenuOpen] = useState(false);
   const [customDieSize, setCustomDieSize] = useState('12');
   const [libraryMenuOpen, setLibraryMenuOpen] = useState(false);
+  const [libraryToolsOpen, setLibraryToolsOpen] = useState(false);
   const [libraryMenuPos, setLibraryMenuPos] = useState(null);
   const [notification, setNotification] = useState(null);
   const [boardUnlocked, setBoardUnlocked] = useState(false);
@@ -2686,11 +2688,94 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       updates.cards = newCards;
       delete updates.log;
     } else if (actionType === 'SHUFFLE_LIBRARY') {
-      const ownerId = payload.targetOwnerId || userId;
+      const ownerId = userId;
       const libCards = game.cards.filter(c => c.ownerId === ownerId && c.zone === ZONES.LIBRARY);
       const otherCards = game.cards.filter(c => !(c.ownerId === ownerId && c.zone === ZONES.LIBRARY));
       updates.cards = [...otherCards, ...shuffleArray([...libCards])];
-      updates.log = arrayUnion(makeActionLog('SHUFFLE_LIBRARY', `${actorName} shuffled ${ownerId === userId ? 'their' : "opponent's"} library.`, { category: 'library' }));
+      updates.log = arrayUnion(makeActionLog('SHUFFLE_LIBRARY', `${actorName} shuffled their library.`, { category: 'library' }));
+    } else if (actionType === 'SUBMIT_SCRY') {
+      const ownerId = userId;
+      const scryIds = Array.isArray(payload.scryIds) ? payload.scryIds : [];
+      const bottomIds = new Set(Array.isArray(payload.bottomIds) ? payload.bottomIds : []);
+      const currentLib = game.cards.filter(c => c.ownerId === ownerId && c.zone === ZONES.LIBRARY);
+      const scryIdSet = new Set(scryIds);
+      const scryCardsById = new Map(currentLib.filter(c => scryIdSet.has(c.instanceId)).map(c => [c.instanceId, c]));
+      const topCards = scryIds.filter(id => !bottomIds.has(id)).map(id => scryCardsById.get(id)).filter(Boolean);
+      const bottomCards = scryIds.filter(id => bottomIds.has(id)).map(id => scryCardsById.get(id)).filter(Boolean);
+      const untouched = currentLib.filter(c => !scryIdSet.has(c.instanceId));
+      const newLibQueue = [...topCards, ...untouched, ...bottomCards];
+      updates.cards = game.cards.map(c => {
+        if (c.ownerId === ownerId && c.zone === ZONES.LIBRARY) return newLibQueue.shift() || c;
+        return c;
+      });
+      const scryCount = Math.max(1, Math.min(2, Number.parseInt(payload.count, 10) || scryIds.length || 1));
+      updates.log = arrayUnion(makeActionLog('SCRY_LIBRARY', `${actorName} scried ${scryCount}.`, { category: 'library', scryCount }));
+    } else if (actionType === 'REVEAL_TOP_LIBRARY') {
+      const topCard = game.cards.find(c => c.ownerId === userId && c.zone === ZONES.LIBRARY);
+      if (!topCard) {
+        setNotification('No cards left in library to reveal.');
+        setTimeout(() => setNotification(null), 2000);
+        return;
+      }
+      const revealEntry = {
+        id: generateCardId(),
+        cardId: topCard.instanceId,
+        cardName: topCard.name,
+        cardImage: topCard.image_uri,
+        revealerId: userId,
+        revealerName: actorName,
+        timestamp: Date.now(),
+        source: 'library-top'
+      };
+      updates.reveals = arrayUnion(revealEntry);
+      updates.log = arrayUnion(makeActionLog('REVEAL_TOP_LIBRARY', `${actorName} revealed the top card of their library: ${topCard.name}.`, { category: 'reveal', cardId: topCard.instanceId, cardName: topCard.name, cardImage: topCard.image_uri }));
+    } else if (actionType === 'SEARCH_LIBRARY') {
+      updates.log = arrayUnion(makeActionLog('SEARCH_LIBRARY', `${actorName} searched their library.`, { category: 'library' }));
+    } else if (actionType === 'SEARCH_LIBRARY_CARD') {
+      const card = game.cards.find(c => c.instanceId === payload.cardId && c.ownerId === userId && c.zone === ZONES.LIBRARY);
+      if (!card) return;
+      if (payload.mode === 'REVEAL') {
+        const revealEntry = {
+          id: generateCardId(),
+          cardId: card.instanceId,
+          cardName: card.name,
+          cardImage: card.image_uri,
+          revealerId: userId,
+          revealerName: actorName,
+          timestamp: Date.now(),
+          source: 'library-search'
+        };
+        updates.reveals = arrayUnion(revealEntry);
+        updates.log = arrayUnion(makeActionLog('SEARCH_LIBRARY_REVEAL', `${actorName} searched their library and revealed ${card.name}.`, { category: 'reveal', cardId: card.instanceId, cardName: card.name, cardImage: card.image_uri }));
+      } else {
+        const targetZone = payload.targetZone;
+        if (![ZONES.HAND, ZONES.BATTLEFIELD, ZONES.GRAVEYARD, ZONES.EXILE].includes(targetZone)) return;
+        const spawnPosition = targetZone === ZONES.BATTLEFIELD
+          ? getBattlefieldGridPosition({
+              card: { ...card, zone: ZONES.BATTLEFIELD, controllerId: userId },
+              existingBattlefieldCards: game.cards,
+              controllerId: userId,
+              containerWidth: getCurrentBattlefieldWidthPx(),
+              isMobile: battlefieldViewport.width <= 900
+            })
+          : null;
+        updates.cards = game.cards.map(c => c.instanceId === card.instanceId
+          ? {
+              ...c,
+              zone: targetZone,
+              controllerId: c.ownerId,
+              tapped: false,
+              tempDamage: 0,
+              ...(spawnPosition ? getBattlefieldPositionCoordinates(spawnPosition) : {})
+            }
+          : c
+        );
+        if (spawnPosition) logBattlefieldEntry({ ...card, zone: ZONES.BATTLEFIELD, controllerId: userId }, 'SEARCH_LIBRARY_CARD', spawnPosition);
+        const message = targetZone === ZONES.HAND
+          ? `${actorName} searched their library and put a card into their hand.`
+          : `${actorName} searched their library and put ${card.name} into ${getZoneLabel(targetZone)}.`;
+        updates.log = arrayUnion(makeActionLog('SEARCH_LIBRARY_MOVE', message, { category: 'library', cardId: card.instanceId, cardName: targetZone === ZONES.HAND ? null : card.name, toZone: targetZone }));
+      }
     } else if (actionType === 'MULLIGAN') {
       const handCards = game.cards.filter(c => c.controllerId === userId && c.zone === ZONES.HAND);
       const movedToLibrary = new Set(handCards.map(c => c.instanceId));
@@ -4012,6 +4097,49 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const myLibraryCount = isPlayer ? getZoneCount(userId, ZONES.LIBRARY) : 0;
   const canDrawFromLibrary = canAct && myLibraryCount > 0;
   const handleDrawCard = () => handleAction('DRAW_CARD');
+  const getMyLibraryCards = () => (game.cards || []).filter(c => c.ownerId === userId && c.zone === ZONES.LIBRARY);
+  const openLibraryTools = () => {
+    if (!canAct) return;
+    setLibraryToolsOpen(true);
+    setLibraryMenuOpen(false);
+  };
+  const startScry = (count) => {
+    const scryCount = Math.max(1, Math.min(2, count));
+    const topCards = getMyLibraryCards().slice(0, scryCount);
+    if (topCards.length === 0) {
+      setNotification('No cards left in library to scry.');
+      setTimeout(() => setNotification(null), 2000);
+      return;
+    }
+    setLibraryToolsOpen(false);
+    setScryModal({ count: topCards.length, cards: topCards, placements: Object.fromEntries(topCards.map(c => [c.instanceId, 'top'])) });
+  };
+  const setScryPlacement = (cardId, placement) => {
+    setScryModal(prev => prev ? { ...prev, placements: { ...(prev.placements || {}), [cardId]: placement } } : prev);
+  };
+  const submitScry = async () => {
+    if (!scryModal) return;
+    const scryIds = (scryModal.cards || []).map(c => c.instanceId);
+    const bottomIds = scryIds.filter(id => scryModal.placements?.[id] === 'bottom');
+    await handleAction('SUBMIT_SCRY', { count: scryModal.count, scryIds, bottomIds });
+    setScryModal(null);
+  };
+  const openLibrarySearch = async () => {
+    if (!canAct) return;
+    setLibraryToolsOpen(false);
+    setSearchQuery('');
+    setSearchLibraryOwner(userId);
+    await handleAction('SEARCH_LIBRARY');
+  };
+  const handleSearchLibraryCardAction = async (card, action) => {
+    if (!card) return;
+    if (action === 'REVEAL') {
+      await handleAction('SEARCH_LIBRARY_CARD', { cardId: card.instanceId, mode: 'REVEAL' });
+      return;
+    }
+    await handleAction('SEARCH_LIBRARY_CARD', { cardId: card.instanceId, mode: 'MOVE', targetZone: action });
+    setSearchLibraryOwner(null);
+  };
   const hasDeckLoaded = [
     ZONES.LIBRARY,
     ZONES.HAND,
@@ -4702,8 +4830,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             <div className="relative">
               <button
                 ref={libraryButtonRef}
-                onClick={canAct ? () => setLibraryMenuOpen(!libraryMenuOpen) : undefined}
-                className={`p-2 rounded-full hover:bg-slate-700 ${libraryMenuOpen ? 'text-white bg-slate-700' : 'text-slate-400'} ${canAct ? '' : 'opacity-40 cursor-not-allowed'}`}
+                onClick={openLibraryTools}
+                className={`p-2 rounded-full hover:bg-slate-700 ${libraryToolsOpen ? 'text-white bg-slate-700' : 'text-slate-400'} ${canAct ? '' : 'opacity-40 cursor-not-allowed'}`}
               >
                 <BookOpen size={18} />
               </button>
@@ -4772,6 +4900,46 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                       d{size}
                     </button>
                   ))}
+                </div>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
+        {libraryToolsOpen && createPortal(
+          <div className="fixed inset-0 z-[120] flex items-end justify-center bg-black/70 p-2 sm:items-center sm:p-4" onMouseDown={() => setLibraryToolsOpen(false)}>
+            <div
+              className="w-full max-w-md rounded-t-2xl border border-slate-600 bg-slate-900 text-slate-100 shadow-2xl sm:rounded-2xl"
+              onMouseDown={(event) => event.stopPropagation()}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="library-tools-title"
+            >
+              <div className="flex items-start justify-between gap-3 border-b border-slate-700 px-4 py-3">
+                <div>
+                  <h2 id="library-tools-title" className="text-lg font-black text-white flex items-center gap-2"><BookOpen size={18}/> Library Tools</h2>
+                  <p className="text-xs text-slate-400">Private tools only show your library contents to you.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setLibraryToolsOpen(false)}
+                  className="min-h-11 min-w-11 rounded-full bg-slate-800 text-slate-200 hover:bg-slate-700 flex items-center justify-center"
+                  aria-label="Close library tools"
+                >
+                  <X size={20}/>
+                </button>
+              </div>
+              <div className="space-y-3 p-4">
+                <div className="rounded-xl border border-slate-700 bg-slate-950/60 p-3 text-sm text-slate-300">
+                  Your library: <span className="font-black text-white">{myLibraryCount}</span> card{myLibraryCount === 1 ? '' : 's'}.
+                  Scry and search contents are not public. Reveals are public.
+                </div>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <button type="button" onClick={() => startScry(1)} disabled={myLibraryCount < 1} className="min-h-12 rounded-xl border border-purple-500/50 bg-purple-950/50 px-4 py-3 text-left font-bold text-purple-100 hover:bg-purple-900/60 disabled:cursor-not-allowed disabled:opacity-45 flex items-center gap-2"><Eye size={16}/> Scry 1</button>
+                  <button type="button" onClick={() => startScry(2)} disabled={myLibraryCount < 1} className="min-h-12 rounded-xl border border-purple-500/50 bg-purple-950/50 px-4 py-3 text-left font-bold text-purple-100 hover:bg-purple-900/60 disabled:cursor-not-allowed disabled:opacity-45 flex items-center gap-2"><Eye size={16}/> Scry 2</button>
+                  <button type="button" onClick={() => { handleAction('REVEAL_TOP_LIBRARY'); setLibraryToolsOpen(false); }} disabled={myLibraryCount < 1} className="min-h-12 rounded-xl border border-blue-500/50 bg-blue-950/50 px-4 py-3 text-left font-bold text-blue-100 hover:bg-blue-900/60 disabled:cursor-not-allowed disabled:opacity-45 flex items-center gap-2"><Eye size={16}/> Reveal top card</button>
+                  <button type="button" onClick={openLibrarySearch} disabled={myLibraryCount < 1} className="min-h-12 rounded-xl border border-green-500/50 bg-green-950/50 px-4 py-3 text-left font-bold text-green-100 hover:bg-green-900/60 disabled:cursor-not-allowed disabled:opacity-45 flex items-center gap-2"><Search size={16}/> Search library</button>
+                  <button type="button" onClick={() => { handleAction('SHUFFLE_LIBRARY'); setLibraryToolsOpen(false); }} disabled={myLibraryCount < 2} className="min-h-12 rounded-xl border border-yellow-500/50 bg-yellow-950/40 px-4 py-3 text-left font-bold text-yellow-100 hover:bg-yellow-900/50 disabled:cursor-not-allowed disabled:opacity-45 flex items-center gap-2 sm:col-span-2"><Shuffle size={16}/> Shuffle library</button>
                 </div>
               </div>
             </div>
@@ -5391,30 +5559,93 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         </div>
       )}
 
-      {/* Library Search Modal */}
-      {searchLibraryOwner && (
-        <div className="fixed inset-0 bg-black/95 z-[60] flex flex-col p-4 animate-in fade-in">
-          <div className="flex justify-between items-center mb-4 border-b border-slate-700 pb-2">
-            <h2 className="text-lg font-bold text-white">Searching {searchLibraryOwner === userId ? 'Your' : "Opponent's"} Library</h2>
-            <button onClick={() => setSearchLibraryOwner(null)}><X className="text-white"/></button>
+      {/* Scry Modal */}
+      {scryModal && (
+        <div className="fixed inset-0 z-[140] flex items-end justify-center bg-black/85 p-2 sm:items-center sm:p-4" onClick={() => setScryModal(null)}>
+          <div className="max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-t-2xl border border-slate-600 bg-slate-900 shadow-2xl sm:rounded-2xl" onClick={e => e.stopPropagation()}>
+            <div className="sticky top-0 z-10 flex items-start justify-between gap-3 border-b border-slate-700 bg-slate-900/95 px-4 py-3 backdrop-blur">
+              <div>
+                <h2 className="text-xl font-black text-white">Scry {scryModal.count}</h2>
+                <p className="text-xs text-slate-400">Only you can see these cards. Card 1 is currently the top card.</p>
+              </div>
+              <button onClick={() => setScryModal(null)} className="min-h-11 min-w-11 rounded-full bg-slate-800 text-white hover:bg-slate-700 flex items-center justify-center" aria-label="Close scry"><X size={20}/></button>
+            </div>
+            <div className="space-y-3 p-4">
+              {(scryModal.cards || []).map((card, index) => {
+                const placement = scryModal.placements?.[card.instanceId] || 'top';
+                return (
+                  <div key={card.instanceId} className="rounded-xl border border-slate-700 bg-slate-950/70 p-3">
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <div>
+                        <div className="text-xs font-black uppercase tracking-widest text-purple-300">Card {index + 1}</div>
+                        <div className="text-sm text-slate-400">{index === 0 ? 'Current top card' : 'Currently second from top'}</div>
+                      </div>
+                      <span className={`rounded-full px-3 py-1 text-xs font-black ${placement === 'top' ? 'bg-green-900/60 text-green-100 border border-green-500/50' : 'bg-amber-900/60 text-amber-100 border border-amber-500/50'}`}>
+                        {placement === 'top' ? 'Stays on top' : 'Goes to bottom'}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-[96px_1fr] gap-3 sm:grid-cols-[120px_1fr]">
+                      <img src={card.image_uri} alt={card.name} className="w-24 rounded-lg border border-slate-700 sm:w-28" />
+                      <div className="flex min-w-0 flex-col gap-2">
+                        <div className="truncate text-base font-bold text-white">{card.name}</div>
+                        <button type="button" onClick={() => setScryPlacement(card.instanceId, 'top')} className={`min-h-11 rounded-xl px-3 text-sm font-black ${placement === 'top' ? 'bg-green-600 text-white' : 'bg-slate-800 text-slate-200 hover:bg-slate-700'}`}>Keep on top</button>
+                        <button type="button" onClick={() => setScryPlacement(card.instanceId, 'bottom')} className={`min-h-11 rounded-xl px-3 text-sm font-black ${placement === 'bottom' ? 'bg-amber-600 text-white' : 'bg-slate-800 text-slate-200 hover:bg-slate-700'}`}>Put on bottom</button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+              <div className="rounded-xl border border-slate-700 bg-slate-800/60 p-3 text-xs text-slate-300">
+                Top cards keep their shown order. Bottom cards are placed underneath the rest of your library in their shown order. The public log will only say that you scried {scryModal.count}.
+              </div>
+              <button onClick={submitScry} className="min-h-12 w-full rounded-xl bg-green-600 py-3 text-base font-black text-white hover:bg-green-500">Done scrying</button>
+            </div>
           </div>
-          <input type="text" placeholder="Filter cards..." className="bg-slate-800 text-white p-2 rounded mb-4 border border-slate-700" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
-          <div className="flex-1 overflow-y-auto grid grid-cols-2 sm:grid-cols-4 gap-2 content-start">
-            {game.cards
-              .filter(c => c.ownerId === searchLibraryOwner && c.zone === ZONES.LIBRARY)
-              .filter(c => c.name.toLowerCase().includes(searchQuery.toLowerCase()))
+        </div>
+      )}
+
+      {/* Library Search Modal */}
+      {searchLibraryOwner && searchLibraryOwner === userId && (
+        <div className="fixed inset-0 bg-black/95 z-[130] flex flex-col p-3 sm:p-4 animate-in fade-in">
+          <div className="flex justify-between items-start gap-3 mb-4 border-b border-slate-700 pb-3">
+            <div>
+              <h2 className="text-xl font-black text-white">Search Your Library</h2>
+              <p className="text-xs text-slate-400">Only you can see this list. Revealing a card makes its name public.</p>
+            </div>
+            <button onClick={() => setSearchLibraryOwner(null)} className="min-h-11 min-w-11 rounded-full bg-slate-800 text-white hover:bg-slate-700 flex items-center justify-center" aria-label="Close library search"><X size={20}/></button>
+          </div>
+          <input
+            type="text"
+            placeholder="Filter cards..."
+            className="min-h-12 bg-slate-800 text-white p-3 rounded-xl mb-4 border border-slate-700 text-base outline-none focus:border-green-400"
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+          />
+          <div className="flex-1 overflow-y-auto grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 content-start pb-4">
+            {getMyLibraryCards()
+              .filter(c => (c.name || '').toLowerCase().includes(searchQuery.toLowerCase()))
               .map(c => (
-                <div key={c.instanceId} className="relative group" onClick={() => setSelectedCard(c)}>
-                  <img src={c.image_uri} className="w-full rounded" />
-                  <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex flex-col items-center justify-center gap-2">
-                    <span className="text-xs font-bold text-white mb-1">{c.name}</span>
-                    <button onClick={(e) => {e.stopPropagation(); handleAction('MOVE_ZONE', { cardId: c.instanceId, targetZone: ZONES.HAND }); setSearchLibraryOwner(null);}} className="bg-blue-600 text-xs px-2 py-1 rounded">To Hand</button>
-                    <button onClick={(e) => {e.stopPropagation(); handleAction('MOVE_ZONE', { cardId: c.instanceId, targetZone: ZONES.BATTLEFIELD }); setSearchLibraryOwner(null);}} className="bg-green-600 text-xs px-2 py-1 rounded">To Play</button>
-                    <button onClick={(e) => {e.stopPropagation(); handleAction('MOVE_ZONE', { cardId: c.instanceId, targetZone: ZONES.GRAVEYARD }); setSearchLibraryOwner(null);}} className="bg-red-600 text-xs px-2 py-1 rounded">To GY</button>
-                    <button onClick={(e) => {e.stopPropagation(); handleAction('SCRY_BOTTOM', { cardId: c.instanceId }); setSearchLibraryOwner(null);}} className="bg-slate-600 text-xs px-2 py-1 rounded">To Bottom</button>
+                <div key={c.instanceId} className="rounded-xl border border-slate-700 bg-slate-900/80 p-3 shadow-lg">
+                  <div className="grid grid-cols-[96px_1fr] gap-3">
+                    <img src={c.image_uri} alt={c.name} className="w-24 rounded-lg border border-slate-700" />
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-black text-white">{c.name}</div>
+                      <div className="mt-1 line-clamp-3 text-xs text-slate-400">{c.type_line || 'Card'}</div>
+                      <button onClick={() => setZoomedCard(c)} className="mt-2 min-h-9 w-full rounded-lg bg-slate-800 px-2 text-xs font-bold text-slate-200 hover:bg-slate-700">Zoom</button>
+                    </div>
+                  </div>
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    <button onClick={() => handleSearchLibraryCardAction(c, 'REVEAL')} className="min-h-11 rounded-lg bg-blue-700 px-2 text-sm font-bold text-white hover:bg-blue-600 flex items-center justify-center gap-1"><Eye size={14}/> Reveal</button>
+                    <button onClick={() => handleSearchLibraryCardAction(c, ZONES.HAND)} className="min-h-11 rounded-lg bg-indigo-700 px-2 text-sm font-bold text-white hover:bg-indigo-600">To hand</button>
+                    <button onClick={() => handleSearchLibraryCardAction(c, ZONES.BATTLEFIELD)} className="min-h-11 rounded-lg bg-green-700 px-2 text-sm font-bold text-white hover:bg-green-600">To battlefield</button>
+                    <button onClick={() => handleSearchLibraryCardAction(c, ZONES.GRAVEYARD)} className="min-h-11 rounded-lg bg-red-800 px-2 text-sm font-bold text-white hover:bg-red-700">To graveyard</button>
+                    <button onClick={() => handleSearchLibraryCardAction(c, ZONES.EXILE)} className="min-h-11 rounded-lg bg-orange-800 px-2 text-sm font-bold text-white hover:bg-orange-700 col-span-2">To exile</button>
                   </div>
                 </div>
               ))}
+            {getMyLibraryCards().filter(c => (c.name || '').toLowerCase().includes(searchQuery.toLowerCase())).length === 0 && (
+              <div className="rounded-xl border border-slate-700 bg-slate-900 p-4 text-sm text-slate-400">No matching cards in your library.</div>
+            )}
           </div>
         </div>
       )}

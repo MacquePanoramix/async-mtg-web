@@ -38,12 +38,19 @@ const isCommanderGame = (game) => getGameMode(game) === GAME_MODES.COMMANDER;
 const getStartingLifeForMode = (gameMode) => gameMode === GAME_MODES.COMMANDER ? 40 : 20;
 
 const BUILT_IN_PLAYER_COUNTERS = ['poison', 'energy', 'experience'];
+const COMMANDER_PLAYER_COUNTERS = ['commanderTax', 'commanderDamage'];
 const PLAYER_COUNTER_LABELS = {
   poison: 'Poison',
   energy: 'Energy',
   experience: 'Experience',
+  commanderTax: 'Commander Tax',
+  commanderDamage: 'Commander Damage',
   monarch: 'Monarch',
   ringTempted: 'Ring tempted'
+};
+const PLAYER_COUNTER_BADGE_LABELS = {
+  commanderTax: 'Cmd tax',
+  commanderDamage: 'Cmd dmg'
 };
 
 const COMMANDER_SECTION_HEADERS = new Set(['commander', 'commanders']);
@@ -2172,9 +2179,12 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     .filter((card) => card.isCommander && getCommanderDamage(card, playerId) > 0)
     .map((card) => ({ card, amount: getCommanderDamage(card, playerId) }));
   const getTotalCommanderDamageToPlayer = (playerId) => getCommanderDamageRowsForPlayer(playerId).reduce((sum, row) => sum + row.amount, 0);
+  const defaultPlayerCounters = commanderModeEnabled
+    ? [...BUILT_IN_PLAYER_COUNTERS, ...COMMANDER_PLAYER_COUNTERS]
+    : BUILT_IN_PLAYER_COUNTERS;
   const getVisiblePlayerCounters = (player) => Object.entries(player?.counters || {})
-    .filter(([key, value]) => key !== 'commanderTax' && Number(value) > 0)
-    .map(([key, value]) => ({ key, label: PLAYER_COUNTER_LABELS[key] || key, value }));
+    .filter(([key, value]) => (commanderModeEnabled || key !== 'commanderTax') && Number(value) > 0)
+    .map(([key, value]) => ({ key, label: PLAYER_COUNTER_BADGE_LABELS[key] || PLAYER_COUNTER_LABELS[key] || key, value }));
   const lastSeen = isSpectator ? spectatorLastSeenChatAt : (myPlayer?.lastSeenChatAt || 0);
   const unreadCount = chatMessages.filter(m => m.timestamp > lastSeen && m.playerId !== userId).length;
   useEffect(() => {
@@ -2949,7 +2959,15 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       const newPlayers = [...game.players];
       newPlayers[pIndex] = { ...player, counters: { ...player.counters, [payload.counterType]: newVal } };
       updates.players = newPlayers;
-      updates.log = arrayUnion(makeActionLog('PLAYER_COUNTER', `${actorName} ${payload.amount > 0 ? 'added' : 'removed'} a ${payload.counterType} counter.`, { category: 'counter' }));
+      const counterLabel = PLAYER_COUNTER_LABELS[payload.counterType] || payload.counterType;
+      let counterMessage = `${actorName} ${payload.amount > 0 ? 'added' : 'removed'} a ${counterLabel} counter.`;
+      if (payload.counterType === 'commanderTax') {
+        counterMessage = `${actorName} set Commander Tax to ${newVal}.`;
+      } else if (payload.counterType === 'commanderDamage') {
+        const changeAmount = Math.abs(newVal - currentVal);
+        counterMessage = `${actorName} ${payload.amount > 0 ? 'added' : 'removed'} ${changeAmount} Commander Damage.`;
+      }
+      updates.log = arrayUnion(makeActionLog('PLAYER_COUNTER', counterMessage, { category: 'counter' }));
 
     } else if (actionType === 'SET_COMMANDER') {
       if (!isCommanderGame(game)) return;
@@ -5999,7 +6017,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           <div className="bg-slate-800 p-6 rounded-xl w-full max-w-sm border border-slate-600" onClick={e => e.stopPropagation()}>
             <h3 className="text-xl font-bold mb-4 text-white">Player Counters</h3>
             <div className="space-y-4">
-              {[...BUILT_IN_PLAYER_COUNTERS, ...Object.keys(myPlayer?.counters || {}).filter(type => !BUILT_IN_PLAYER_COUNTERS.includes(type) && type !== 'commanderTax')].map(type => (
+              {[...defaultPlayerCounters, ...Object.keys(myPlayer?.counters || {}).filter(type => !defaultPlayerCounters.includes(type) && (commanderModeEnabled || type !== 'commanderTax'))].map(type => (
                 <div key={type} className="flex justify-between items-center bg-slate-700 p-3 rounded">
                   <span className="capitalize text-slate-300 font-medium">{PLAYER_COUNTER_LABELS[type] || type}</span>
                   <div className="flex items-center gap-3">

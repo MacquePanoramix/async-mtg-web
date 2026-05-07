@@ -598,6 +598,7 @@ const getEmptyCombatState = () => ({ attackers: {}, blockers: {} });
 const isCombatPhase = (phase) => typeof phase === 'string' && phase.startsWith('combat_');
 const shouldClearCombatState = (fromPhase, toPhase) => fromPhase?.startsWith('combat_') && !toPhase?.startsWith('combat_');
 const resetTemporaryDamage = (cards = []) => cards.map((card) => (card.tempDamage ? { ...card, tempDamage: 0 } : card));
+const shouldResetTemporaryDamageForPhase = (phase) => phase === 'cleanup' || phase === 'untap';
 const clearCombatAssignmentsForCard = (combatState = getEmptyCombatState(), instanceId) => {
   if (!instanceId) return combatState;
 
@@ -751,9 +752,13 @@ const advancePassPriorityState = (currentGame, logEntry, onTurnStart, layoutOpti
     updatedGame.turnNumber = nextTurnNum;
     updatedGame.log.push({ ...logEntry, type: 'PHASE_ADVANCE', desc: `${logEntry.actorId ? 'AutoPass (proxy): ' : ''}Phase: ${nextPhase.label}` });
 
+    if (shouldResetTemporaryDamageForPhase(nextPhase.id)) {
+      updatedGame.cards = resetTemporaryDamage(updatedGame.cards);
+    }
+
     if (nextPhase.id === 'untap') {
       if (onTurnStart) onTurnStart(buildTurnStartEvent(updatedGame));
-      updatedGame.cards = resetTemporaryDamage(updatedGame.cards).map(c => {
+      updatedGame.cards = updatedGame.cards.map(c => {
         if (c.controllerId === logEntry.playerId && c.zone === ZONES.BATTLEFIELD) return { ...c, tapped: false };
         return c;
       });
@@ -825,9 +830,13 @@ const advancePassPriorityState = (currentGame, logEntry, onTurnStart, layoutOpti
     updatedGame.turnNumber = nextTurnNum;
     updatedGame.log.push({ ...logEntry, type: 'PHASE_ADVANCE', desc: `${logEntry.actorId ? 'AutoPass (proxy): ' : ''}Phase: ${nextPhase.label}` });
 
+    if (shouldResetTemporaryDamageForPhase(nextPhase.id)) {
+      updatedGame.cards = resetTemporaryDamage(updatedGame.cards);
+    }
+
     if (nextPhase.id === 'untap') {
       if (onTurnStart) onTurnStart(buildTurnStartEvent(updatedGame));
-      updatedGame.cards = resetTemporaryDamage(updatedGame.cards).map(c => {
+      updatedGame.cards = updatedGame.cards.map(c => {
         if (c.controllerId === nextTurnPlayerId && c.zone === ZONES.BATTLEFIELD) return { ...c, tapped: false };
         return c;
       });
@@ -1276,13 +1285,6 @@ const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isD
           </div>
         )}
 
-        {tempDamage > 0 && (
-          <div className="absolute top-1 right-1 z-20 pointer-events-none bg-red-800/90 text-red-100 text-[9px] px-1.5 py-0.5 rounded border border-red-300/60 shadow-sm whitespace-nowrap font-bold">
-            DMG: {tempDamage}
-          </div>
-        )}
-
-
         <div className="absolute top-5 left-1 flex flex-col gap-1 pointer-events-none">
           {Object.entries(counters).map(([label, count]) => (
             count > 0 && (
@@ -1293,6 +1295,13 @@ const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isD
           ))}
         </div>
       </div>
+
+
+      {tempDamage > 0 && (
+        <div className="absolute bottom-1 right-1 z-30 pointer-events-none max-w-[calc(100%-0.5rem)] rounded-md border border-red-100/90 bg-red-700 text-white px-1.5 py-0.5 text-[10px] font-black leading-none shadow-[0_1px_6px_rgba(0,0,0,0.65)] whitespace-nowrap">
+          DMG {tempDamage}
+        </div>
+      )}
 
       {hasCombatBadge && (
         <div className="absolute inset-x-0 top-1 z-30 pointer-events-none flex flex-col items-start gap-0.5 px-1">
@@ -2327,9 +2336,14 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         const nextCombatState = getNextCombatState(game, nextPhase.id, nextPhase.id === 'untap');
         updates = { ...updates, phase: nextPhase.id, turnNumber: nextTurnNum, combat: nextCombatState, log: arrayUnion({ ...logEntry, desc: `Phase: ${nextPhase.label}` }) };
 
+        if (shouldResetTemporaryDamageForPhase(nextPhase.id)) {
+          updates.cards = resetTemporaryDamage(game.cards);
+        }
+
         // Untap logic
         if (nextPhase.id === 'untap') {
-          const newCards = resetTemporaryDamage(game.cards).map(c => {
+          const phaseCards = updates.cards || game.cards;
+          const newCards = phaseCards.map(c => {
             if (c.controllerId === userId && c.zone === ZONES.BATTLEFIELD) {
               return { ...c, tapped: false };
             }
@@ -2411,8 +2425,13 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               log: arrayUnion({ ...logEntry, desc: `Phase: ${nextPhase.label}` })
             };
 
+            if (shouldResetTemporaryDamageForPhase(nextPhase.id)) {
+              updates.cards = resetTemporaryDamage(game.cards);
+            }
+
             if (nextPhase.id === 'untap') {
-              const newCards = resetTemporaryDamage(game.cards).map(c => {
+              const phaseCards = updates.cards || game.cards;
+              const newCards = phaseCards.map(c => {
                 if (c.controllerId === nextTurnPlayerId && c.zone === ZONES.BATTLEFIELD) {
                   return { ...c, tapped: false };
                 }
@@ -3337,6 +3356,11 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const noDeckLoaded = !hasDeckLoaded;
   const stackCards = game.stack || [];
   const cardsMap = new Map((game.cards || []).map(c => [c.instanceId, c]));
+  const getLiveCard = (cardOrId) => {
+    const card = typeof cardOrId === 'string' ? cardsMap.get(cardOrId) : cardOrId;
+    return card?.instanceId ? (cardsMap.get(card.instanceId) || card) : card;
+  };
+  const getCardMarkedDamage = (cardOrId) => Math.max(0, getLiveCard(cardOrId)?.tempDamage || 0);
   const combat = game.combat || getEmptyCombatState();
   const combatAttackers = combat.attackers || {};
   const combatBlockers = combat.blockers || {};
@@ -3359,7 +3383,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   };
   const getCombatNameList = (names, maxNameLength = 22) => names.map((name) => shortenCombatName(name, maxNameLength)).join(', ');
   const getCardCombatBadges = (cardOrId, renderContext = 'battlefield') => {
-    const card = typeof cardOrId === 'string' ? cardsMap.get(cardOrId) : cardOrId;
+    const card = getLiveCard(cardOrId);
     const combatInfo = getRenderedCardCombatInfo(card, renderContext);
     const badges = [];
     if (combatInfo.isAttacking) {
@@ -3374,7 +3398,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     return badges;
   };
   const getCardCombatRows = (cardOrId, renderContext = 'action modal') => {
-    const card = typeof cardOrId === 'string' ? cardsMap.get(cardOrId) : cardOrId;
+    const card = getLiveCard(cardOrId);
     const combatInfo = getRenderedCardCombatInfo(card, renderContext);
     const rows = [];
     if (combatInfo.isAttacking) {
@@ -3421,6 +3445,13 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     container.scrollTo({ top: targetTop, behavior: 'smooth' });
     setOpponentSectionHighlighted(true);
     window.setTimeout(() => setOpponentSectionHighlighted(false), 1200);
+  };
+
+  const applyTempDamageChange = async (cardId, amount, clear = false) => {
+    const current = getCardMarkedDamage(cardId);
+    const nextAmount = clear ? 0 : Math.max(0, current + amount);
+    setDamageModal(prev => (prev?.cardId === cardId ? { ...prev, amount: nextAmount } : prev));
+    await handleAction('TEMP_DAMAGE', { cardId, amount, clear });
   };
 
   return (
@@ -4223,32 +4254,21 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       {damageModal && (
         <div className="fixed inset-0 bg-black/80 z-[70] flex items-center justify-center p-4" onClick={() => setDamageModal(null)}>
           <div className="bg-slate-800 p-4 rounded-xl border border-slate-600 max-w-xs w-full space-y-3" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-lg font-bold text-white">Temporary Damage</h3>
-            <div className="text-sm text-slate-300">{getDisplayCardName(damageModal.cardId)}</div>
-            <div className="text-xs text-slate-400">Current: {damageModal.amount}</div>
+            <div>
+              <h3 className="text-lg font-bold text-white">Temporary Damage</h3>
+              <div className="text-sm text-slate-300 truncate">{getDisplayCardName(damageModal.cardId)}</div>
+            </div>
+            <div className="rounded-lg border border-red-500/50 bg-red-950/30 px-3 py-2 text-sm text-red-50">
+              Current damage: <span className="font-black">{getCardMarkedDamage(damageModal.cardId)}</span>
+            </div>
             <div className="grid grid-cols-3 gap-2">
-              <button onClick={() => setDamageModal(prev => ({ ...prev, amount: Math.max(0, prev.amount - 1) }))} className="bg-slate-700 hover:bg-slate-600 rounded py-2 text-white">-1</button>
-              <button onClick={() => setDamageModal(prev => ({ ...prev, amount: prev.amount + 1 }))} className="bg-slate-700 hover:bg-slate-600 rounded py-2 text-white">+1</button>
-              <button onClick={() => setDamageModal(prev => ({ ...prev, amount: 0 }))} className="bg-red-900/40 hover:bg-red-800/40 rounded py-2 text-red-100 border border-red-700">Clear</button>
+              <button onClick={() => applyTempDamageChange(damageModal.cardId, 1)} className="bg-red-700 hover:bg-red-600 rounded py-2 text-white font-bold">+1 damage</button>
+              <button onClick={() => applyTempDamageChange(damageModal.cardId, 2)} className="bg-red-700 hover:bg-red-600 rounded py-2 text-white font-bold">+2 damage</button>
+              <button onClick={() => applyTempDamageChange(damageModal.cardId, 3)} className="bg-red-700 hover:bg-red-600 rounded py-2 text-white font-bold">+3 damage</button>
+              <button onClick={() => applyTempDamageChange(damageModal.cardId, -1)} className="bg-slate-700 hover:bg-slate-600 rounded py-2 text-white font-bold">-1 damage</button>
+              <button onClick={() => applyTempDamageChange(damageModal.cardId, 0, true)} className="col-span-2 bg-red-900/40 hover:bg-red-800/40 rounded py-2 text-red-100 border border-red-700 font-bold">Clear damage</button>
             </div>
-            <div className="flex gap-2">
-              <button onClick={() => setDamageModal(null)} className="flex-1 bg-slate-700 py-2 rounded text-white hover:bg-slate-600">Cancel</button>
-              <button
-                onClick={async () => {
-                  const currentCard = game.cards.find(c => c.instanceId === damageModal.cardId);
-                  const current = Math.max(0, currentCard?.tempDamage || 0);
-                  const delta = damageModal.amount - current;
-                  if (delta !== 0 || current !== 0) {
-                    await handleAction('TEMP_DAMAGE', { cardId: damageModal.cardId, amount: delta, clear: damageModal.amount === 0 });
-                  }
-                  setSelectedCard(null);
-                  setDamageModal(null);
-                }}
-                className="flex-1 bg-red-600 py-2 rounded text-white hover:bg-red-500"
-              >
-                Apply
-              </button>
-            </div>
+            <button onClick={() => { setSelectedCard(null); setDamageModal(null); }} className="w-full bg-slate-700 py-2 rounded text-white hover:bg-slate-600">Done</button>
           </div>
         </div>
       )}
@@ -4442,7 +4462,10 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                 <>
                   <button onClick={() => { handleAction('TAP_TOGGLE', { cardId: selectedCard.instanceId }); setSelectedCard(null); }} className="bg-slate-700 text-white p-3 rounded-lg font-medium">{selectedCard.tapped ? 'Untap' : 'Tap'}</button>
                   <button onClick={() => { handleAction('TOGGLE_FACE', { cardId: selectedCard.instanceId }); setSelectedCard(null); }} className="bg-slate-700 text-white p-3 rounded-lg font-medium">{selectedCard.faceDown ? 'Turn Face Up' : 'Turn Face Down'}</button>
-                  {canAct && <button onClick={() => setDamageModal({ cardId: selectedCard.instanceId, amount: Math.max(0, selectedCard.tempDamage || 0) })} className="col-span-2 bg-red-900/40 hover:bg-red-800/50 text-red-100 p-2 rounded-lg text-sm border border-red-700">Damage...</button>}
+                  {canAct && <button onClick={() => setDamageModal({ cardId: selectedCard.instanceId, amount: getCardMarkedDamage(selectedCard) })} className="col-span-2 bg-red-900/40 hover:bg-red-800/50 text-red-100 p-2 rounded-lg text-sm border border-red-700">Damage...</button>}
+                  <div className="col-span-2 rounded-lg border border-red-500/40 bg-red-950/20 px-2 py-1 text-xs text-red-100">
+                    Current damage: <span className="font-bold">{getCardMarkedDamage(selectedCard)}</span>
+                  </div>
                   {canAct && isAttackersStep && selectedCard.controllerId === viewAsPlayerId && (selectedCard.type_line || '').toLowerCase().includes('creature') && (
                     <button onClick={() => setAttackTargetPickerCard(selectedCard)} className="col-span-2 bg-red-900/50 hover:bg-red-800 text-red-100 p-2 rounded-lg text-sm border border-red-700">Attack...</button>
                   )}
@@ -4621,17 +4644,27 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               <div className="text-sm font-semibold text-slate-100">{getDisplayCardName(zoomedCard)}</div>
               <img src={zoomedCard.image_uri} alt={zoomedCard.name} className="max-w-full max-h-[80vh] rounded-xl shadow-2xl" />
             </div>
-            {hasAnyCombatInfo(getCardCombatInfo(zoomedCard, game, allBattlefieldDisplayNames)) && (
-              <div className="w-full max-w-xs lg:w-64 bg-slate-900/90 border border-slate-600 rounded-xl p-3 shadow-xl text-sm">
-                <div className="font-bold text-slate-100 uppercase tracking-wide text-xs mb-2">Combat</div>
-                <div className="space-y-2">
-                  {getCardCombatRows(zoomedCard, 'zoom preview').map((row) => (
-                    <div key={`${row.label}-${row.value}`} className="text-slate-200">
-                      <div className="text-[11px] uppercase tracking-wide text-slate-400">{row.label}</div>
-                      <div className="font-medium leading-snug">{row.value}</div>
+            {(hasAnyCombatInfo(getCardCombatInfo(zoomedCard, game, allBattlefieldDisplayNames)) || getCardMarkedDamage(zoomedCard) > 0) && (
+              <div className="w-full max-w-xs lg:w-64 bg-slate-900/90 border border-slate-600 rounded-xl p-3 shadow-xl text-sm space-y-3">
+                {hasAnyCombatInfo(getCardCombatInfo(zoomedCard, game, allBattlefieldDisplayNames)) && (
+                  <div>
+                    <div className="font-bold text-slate-100 uppercase tracking-wide text-xs mb-2">Combat</div>
+                    <div className="space-y-2">
+                      {getCardCombatRows(zoomedCard, 'zoom preview').map((row) => (
+                        <div key={`${row.label}-${row.value}`} className="text-slate-200">
+                          <div className="text-[11px] uppercase tracking-wide text-slate-400">{row.label}</div>
+                          <div className="font-medium leading-snug">{row.value}</div>
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
+                  </div>
+                )}
+                {getCardMarkedDamage(zoomedCard) > 0 && (
+                  <div className="rounded-lg border border-red-500/50 bg-red-950/30 p-2">
+                    <div className="font-bold text-red-100 uppercase tracking-wide text-xs mb-1">Damage</div>
+                    <div className="text-red-50">Marked damage: <span className="font-black">{getCardMarkedDamage(zoomedCard)}</span></div>
+                  </div>
+                )}
               </div>
             )}
           </div>

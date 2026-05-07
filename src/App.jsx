@@ -3689,7 +3689,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           </div>
         )}
 
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3">
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); setStackDetailOpen(true); }}
@@ -3720,18 +3720,6 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           >
             <BookOpen size={20} />
           </button>
-          {!isSpectator && (
-            <button
-              type="button"
-              onClick={handleDrawCard}
-              disabled={!canDrawFromLibrary}
-              className={`relative z-20 pointer-events-auto min-h-11 px-4 py-2 rounded-full text-sm font-extrabold shadow-lg transition-all flex items-center gap-2 active:scale-95 ${canDrawFromLibrary ? 'bg-blue-600 hover:bg-blue-500 text-white border border-blue-400/60' : 'bg-slate-700/50 text-slate-400 border border-slate-600 cursor-not-allowed opacity-60'}`}
-              title={canDrawFromLibrary ? 'Draw one card' : 'No cards left in library'}
-              aria-label="Draw one card"
-            >
-              <Plus size={16} /> Draw
-            </button>
-          )}
           <button
             onClick={() => setRevealsOpen(true)}
             className="relative z-20 pointer-events-auto flex flex-col items-center justify-center px-2 py-1 rounded hover:bg-slate-700"

@@ -1483,6 +1483,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const [damageModal, setDamageModal] = useState(null); // { cardId, amount }
   const [tokenModal, setTokenModal] = useState(null); // { name, power, toughness }
   const [revealsOpen, setRevealsOpen] = useState(false);
+  const [stackDetailOpen, setStackDetailOpen] = useState(false);
 
   // Chat State
   const [chatOpen, setChatOpen] = useState(false);
@@ -2577,7 +2578,9 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         timestamp: Date.now(),
         targetIds: payload.targetIds || [], // Store array of targets on stack item
         targetPlayerIds: payload.targetPlayerIds || [], // Store array of player targets
-        cardImage: card.image_uri || null // Added cardImage
+        cardImage: card.image_uri || null, // Added cardImage
+        typeLine: card.type_line || null,
+        itemType: 'SPELL'
       };
 
       const newCards = game.cards.map(c => c.instanceId === payload.cardId ? { ...c, zone: 'stack_zone' } : c);
@@ -2622,7 +2625,9 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         targetIds: payload.targetIds || [],
         targetPlayerIds: payload.targetPlayerIds || [], // Store array of player targets
         type: 'ABILITY',
-        cardImage: sourceCard.image_uri || null // Added cardImage
+        cardImage: sourceCard.image_uri || null, // Added cardImage
+        typeLine: sourceCard.type_line || null,
+        itemType: 'ABILITY'
       };
       const userIndex = game.players.findIndex(p => p.id === userId);
       updates.stack = arrayUnion(stackItem);
@@ -3452,6 +3457,60 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const noDeckLoaded = !hasDeckLoaded;
   const stackCards = game.stack || [];
   const cardsMap = new Map((game.cards || []).map(c => [c.instanceId, c]));
+  const getSafePublicCardName = (card, fallback = 'a card') => {
+    if (!card) return fallback;
+    if (card.faceDown) return 'a face-down card';
+    if (!isPublicZone(card.zone)) return fallback;
+    return card.name || fallback;
+  };
+  const getStackItemSourceCard = (item) => cardsMap.get(item?.sourceId) || null;
+  const getStackItemName = (item) => {
+    const trimmedName = (item?.name || '').trim();
+    if (trimmedName) return trimmedName;
+    return getSafePublicCardName(getStackItemSourceCard(item), 'Unknown stack item');
+  };
+  const getStackItemTypeLabel = (item) => {
+    const rawType = (item?.itemType || item?.type || '').toString().toUpperCase();
+    if (rawType.includes('ABILITY')) return 'Ability';
+    if (rawType.includes('SPELL')) return 'Spell';
+    const sourceCard = getStackItemSourceCard(item);
+    const sourceTypeLine = item?.typeLine || (isPublicZone(sourceCard?.zone) ? sourceCard?.type_line : '') || '';
+    if (sourceTypeLine) return sourceTypeLine.toLowerCase().includes('ability') ? 'Ability' : 'Spell';
+    return null;
+  };
+  const getStackItemTypeLine = (item) => {
+    const sourceCard = getStackItemSourceCard(item);
+    const typeLine = (item?.typeLine || (isPublicZone(sourceCard?.zone) ? sourceCard?.type_line : '') || '').trim();
+    return typeLine || null;
+  };
+  const getStackTargetDisplayNames = (item) => {
+    const cardTargets = (item?.targetIds || []).map((targetId) => {
+      const targetCard = cardsMap.get(targetId);
+      return getSafePublicCardName(targetCard, 'a card');
+    });
+    const playerTargets = (item?.targetPlayerIds || []).map((playerId) => getPlayerNameById(game, playerId, 'Player'));
+    return [...cardTargets, ...playerTargets].filter(Boolean);
+  };
+  const priorityHolderName = getPlayerNameById(game, game.priorityPlayerId, 'Unknown');
+  const priorityPassCount = Math.max(0, Math.min(game.consecutivePasses || 0, (game.players || []).length));
+  const passedPriorityPlayers = (game.players || []).length > 1 && priorityPassCount > 0
+    ? Array.from({ length: priorityPassCount }, (_, offset) => {
+        const index = (((game.priorityIndex || 0) - offset - 1) % game.players.length + game.players.length) % game.players.length;
+        return game.players[index];
+      }).filter(Boolean)
+    : [];
+  const waitingPriorityPlayers = game.priorityPlayerId
+    ? (game.players || []).filter((player) => player.id === game.priorityPlayerId)
+    : [];
+  const stackDetailItems = [...stackCards].reverse().map((item, index) => ({
+    item,
+    name: getStackItemName(item),
+    casterName: getPlayerNameById(game, item?.controllerId, 'Unknown'),
+    typeLabel: getStackItemTypeLabel(item),
+    typeLine: getStackItemTypeLine(item),
+    targets: getStackTargetDisplayNames(item),
+    isTop: index === 0
+  }));
   const getLiveCard = (cardOrId) => {
     const card = typeof cardOrId === 'string' ? cardsMap.get(cardOrId) : cardOrId;
     return card?.instanceId ? (cardsMap.get(card.instanceId) || card) : card;
@@ -3625,12 +3684,18 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         )}
 
         <div className="flex items-center gap-4">
-          <div className="flex flex-col items-center">
-            <span className="text-[10px] text-slate-400">STACK</span>
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); setStackDetailOpen(true); }}
+            className={`relative z-20 pointer-events-auto flex flex-col items-center px-3 py-1 rounded border transition-colors ${stackCards.length > 0 ? 'border-yellow-600/60 bg-yellow-950/40 hover:bg-yellow-900/50' : 'border-slate-700 bg-slate-900 hover:bg-slate-800'}`}
+            title="Inspect stack and priority"
+            aria-label={`Inspect stack, ${stackCards.length} item${stackCards.length === 1 ? '' : 's'}`}
+          >
+            <span className="text-[10px] text-slate-400 flex items-center gap-1"><Layers size={12}/> STACK</span>
             <span className={`font-mono font-bold ${stackCards.length > 0 ? 'text-yellow-400' : 'text-slate-600'}`}>
               {stackCards.length}
             </span>
-          </div>
+          </button>
           <button
             onClick={openChat}
             className="relative z-20 pointer-events-auto p-2 rounded hover:bg-slate-700 text-slate-400 hover:text-white"
@@ -4200,6 +4265,93 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         </div>
       )}
 
+
+      {/* STACK DETAIL MODAL */}
+      {stackDetailOpen && (
+        <div className="fixed inset-0 z-[148] pointer-events-none flex items-end sm:items-center justify-center p-3 sm:p-4">
+          <div className="pointer-events-auto w-full sm:max-w-lg max-h-[82vh] bg-slate-900 border border-slate-700 shadow-2xl flex flex-col rounded-t-2xl sm:rounded-2xl overflow-hidden">
+            <div className="flex items-start justify-between gap-3 p-4 border-b border-slate-700 bg-slate-800">
+              <div className="min-w-0">
+                <h3 className="font-bold text-white text-lg flex items-center gap-2"><Layers size={18} className="text-yellow-400"/> Stack</h3>
+                <div className="text-[11px] text-slate-400">Top resolves first</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setStackDetailOpen(false)}
+                className="shrink-0 p-2 -mr-1 -mt-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-700"
+                aria-label="Close stack details"
+              >
+                <X size={20}/>
+              </button>
+            </div>
+
+            <div className="border-b border-slate-700 bg-slate-950/80 p-3 space-y-2 text-sm">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-slate-400">Priority:</span>
+                <span className="font-bold text-purple-200">{priorityHolderName}</span>
+              </div>
+              {passedPriorityPlayers.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {passedPriorityPlayers.map((player) => (
+                    <span key={player.id} className="rounded-full border border-emerald-500/30 bg-emerald-950/50 px-2 py-0.5 text-xs text-emerald-200">
+                      {player.name || 'Player'} passed
+                    </span>
+                  ))}
+                </div>
+              )}
+              {waitingPriorityPlayers.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {waitingPriorityPlayers.map((player) => (
+                    <span key={player.id} className="rounded-full border border-yellow-500/40 bg-yellow-950/50 px-2 py-0.5 text-xs text-yellow-100">
+                      Waiting for {player.name || 'Player'}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="flex-1 overflow-y-auto overscroll-contain p-3 space-y-3 bg-slate-900/95">
+              {stackDetailItems.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-slate-700 bg-slate-800/40 p-6 text-center text-slate-300">
+                  Stack is empty.
+                </div>
+              ) : stackDetailItems.map(({ item, name, casterName, typeLabel, typeLine, targets, isTop }) => (
+                <div key={item.id || `${item.sourceId}-${item.timestamp}`} className={`rounded-xl border p-3 shadow-lg ${isTop ? 'border-yellow-500/60 bg-yellow-950/30' : 'border-slate-700 bg-slate-800/70'}`}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="font-bold text-slate-50 break-words">{name}</div>
+                      <div className="mt-1 text-xs text-slate-300">{typeLabel === 'Ability' ? 'Activated by' : 'Cast by'} {casterName}</div>
+                    </div>
+                    {typeLabel && (
+                      <span className="shrink-0 rounded-full border border-slate-600 bg-slate-950/80 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-300">
+                        {typeLabel}
+                      </span>
+                    )}
+                  </div>
+                  {typeLine && <div className="mt-2 text-xs italic text-slate-400 break-words">{typeLine}</div>}
+                  {targets.length > 0 && (
+                    <div className="mt-3 space-y-1">
+                      {targets.map((targetName, targetIndex) => (
+                        <div key={`${item.id || item.sourceId}-target-${targetIndex}`} className="text-sm text-yellow-100 break-words">
+                          <span className="text-slate-400">Target:</span> {targetName}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div className="mt-3 text-xs text-slate-400">
+                    {isTop ? 'Waiting for priority' : 'Below top item'}
+                  </div>
+                  {isTop && waitingPriorityPlayers.length > 0 && (
+                    <div className="mt-1 text-xs font-semibold text-yellow-200">
+                      Waiting for: {waitingPriorityPlayers.map((player) => player.name || 'Player').join(', ')}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* GAME LOG MODAL */}
       {recapOpen && (

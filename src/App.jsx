@@ -1554,8 +1554,11 @@ const TokenCardPreview = ({ token, size = 'small' }) => {
   const titleClasses = isLarge ? 'text-3xl' : 'text-[12px]';
   const colorClasses = isLarge ? 'text-xs' : 'text-[7px]';
   const typeClasses = isLarge ? 'px-3 py-1.5 text-sm' : 'px-1 py-0.5 text-[7px]';
-  const textClasses = isLarge ? 'min-h-28 px-3 py-3 text-base' : 'min-h-[1.1rem] px-1 py-0.5 text-[8px]';
-  const ptClasses = isLarge ? 'bottom-4 right-4 px-4 py-1.5 text-2xl' : 'px-1.5 py-0.5 text-[10px]';
+  const textClasses = isLarge ? 'min-h-28 px-3 py-3 text-base' : 'min-h-[1.5rem] px-1 py-0.5 text-[8px]';
+  const compactTextBoxClasses = showPowerToughness
+    ? 'flex min-h-[2.1rem] flex-1 flex-col justify-between gap-0.5 px-1 py-0.5 text-[8px] text-left'
+    : 'flex-1 px-1 py-0.5 text-[8px]';
+  const ptClasses = isLarge ? 'bottom-4 right-4 px-4 py-1.5 text-2xl' : 'px-1.5 py-0.5 text-[9px]';
   const contentPadding = showPowerToughness && isLarge ? 'pb-16' : 'pb-1';
   const contentGapClasses = isLarge ? 'gap-1.5' : 'gap-1';
   const contentMarginClasses = isLarge ? 'mt-1' : 'mt-0.5';
@@ -1578,17 +1581,27 @@ const TokenCardPreview = ({ token, size = 'small' }) => {
           {typeLine}
         </div>
 
-        <div className={`flex-1 rounded border border-white/15 bg-black/25 font-semibold leading-snug text-white/90 shadow-inner ${textClasses}`}>
-          {rulesText ? <div className="whitespace-pre-wrap break-words">{rulesText}</div> : <div className="opacity-45">&nbsp;</div>}
+        <div className={`rounded border border-white/15 bg-black/25 font-semibold leading-snug text-white/90 shadow-inner ${isLarge ? textClasses : compactTextBoxClasses}`}>
+          {isLarge ? (
+            rulesText ? <div className="whitespace-pre-wrap break-words">{rulesText}</div> : <div className="opacity-45">&nbsp;</div>
+          ) : showPowerToughness ? (
+            <>
+              <div className="min-h-0 flex-1" aria-hidden="true">
+                &nbsp;
+              </div>
+              <div className="flex min-h-[1.05rem] shrink-0 items-end justify-between gap-1 border-t border-white/10 pt-0.5">
+                <div className="min-w-0 flex-1 truncate text-left font-bold leading-none text-white/90">
+                  {rulesText || <span className="opacity-35">&nbsp;</span>}
+                </div>
+                <span className={`shrink-0 rounded border border-white/35 bg-white/15 font-black leading-none text-white ${ptClasses}`} aria-label="Power and toughness">
+                  {token.power}/{token.toughness}
+                </span>
+              </div>
+            </>
+          ) : (
+            rulesText ? <div className="whitespace-pre-wrap break-words">{rulesText}</div> : <div className="opacity-45">&nbsp;</div>
+          )}
         </div>
-
-        {!isLarge && showPowerToughness && (
-          <div className="flex h-4 shrink-0 items-end justify-end" aria-label="Power and toughness">
-            <span className={`rounded-md border border-white/40 bg-black/75 font-black leading-none text-white shadow-lg ${ptClasses}`}>
-              {token.power}/{token.toughness}
-            </span>
-          </div>
-        )}
       </div>
 
       {isLarge && showPowerToughness && (

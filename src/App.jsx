@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged, GoogleAuthProvider, linkWithPopup, signInWithPopup, signInWithRedirect, getRedirectResult, signOut } from 'firebase/auth';
 import { getFirestore, doc, setDoc, collection, onSnapshot, updateDoc, arrayUnion, serverTimestamp, runTransaction, query, orderBy, deleteDoc, getDoc, addDoc } from 'firebase/firestore';
-import { X, ArrowRight, Clock, Shield, Skull, Layers, Eye, ChevronDown, ChevronUp, BookOpen, Shuffle, Plus, Copy, UserCheck, EyeOff, RotateCw, Search, Hexagon, Unlock, Lock, Move, Dices, Coins, LayoutGrid, LogOut, Users, User, Bug, Loader2, RefreshCw, AlertTriangle, Repeat, Check, ArrowUp, ArrowDown, MessageSquare, Trash2, Paperclip, Crown } from 'lucide-react';
+import { X, ArrowRight, Clock, Shield, Skull, Layers, Eye, ChevronDown, ChevronUp, BookOpen, Shuffle, Plus, Copy, UserCheck, EyeOff, RotateCw, Search, Hexagon, Unlock, Lock, Move, Dices, Coins, LayoutGrid, LogOut, Users, User, Bug, Loader2, RefreshCw, AlertTriangle, Repeat, Check, ArrowUp, ArrowDown, MessageSquare, Trash2, Paperclip, Crown, Undo2 } from 'lucide-react';
 
 // --- Firebase Configuration ---
 // UPDATED: Using standard Vite env vars
@@ -248,6 +248,123 @@ const getCardsAttachedToPlayer = (cards = [], playerId) => cards.filter((card) =
 const getPlayerNameById = (currentGame, playerId, fallback = 'Player') => (
   (currentGame?.players || []).find((player) => player.id === playerId)?.name || fallback
 );
+
+
+const MAX_UNDO_STACK_ENTRIES = 10;
+const UNDO_STATE_FIELDS = [
+  'players',
+  'cards',
+  'stack',
+  'combat',
+  'activePlayerIndex',
+  'turnPlayerId',
+  'phase',
+  'turnNumber',
+  'priorityIndex',
+  'priorityPlayerId',
+  'consecutivePasses',
+  'reveals',
+  'targets',
+  'autopass',
+  'gameMode'
+];
+const UNDOABLE_ACTION_TYPES = new Set([
+  'DRAW_CARD',
+  'MULLIGAN',
+  'IMPORT',
+  'PLAY_LAND',
+  'CAST_SPELL',
+  'ACTIVATE_ABILITY',
+  'MOVE_ZONE',
+  'MOVE_TO_LIBRARY',
+  'TAP_TOGGLE',
+  'REVEAL_CARD',
+  'REVEAL_ALL_HAND',
+  'CLEAR_REVEALS',
+  'TOGGLE_HAND_REVEAL',
+  'TOGGLE_FACE',
+  'MOD_COUNTER',
+  'TEMP_DAMAGE',
+  'PLAYER_COUNTER',
+  'CREATE_TOKEN',
+  'CLONE_CARD',
+  'CHANGE_CONTROL',
+  'ATTACH_CARD',
+  'DETACH_CARD',
+  'SET_ATTACK_TARGET',
+  'TOGGLE_BLOCK_TARGET',
+  'RESOLVE_STACK_TOP',
+  'COUNTER_STACK_TOP',
+  'DISCARD_RANDOM',
+  'SCRY_BOTTOM',
+  'REORDER_TOP_LIBRARY',
+  'SHUFFLE_LIBRARY',
+  'MANUAL_SET_STEP',
+  'START_EXTRA_COMBAT',
+  'GO_EXTRA_MAIN',
+  'START_EXTRA_TURN',
+  'SET_ACTIVE_PLAYER',
+  'PASS',
+  'PASS_PRIORITY',
+  'SET_COMMANDER',
+  'UNSET_COMMANDER',
+  'COMMANDER_TAX',
+  'COMMANDER_DAMAGE'
+]);
+
+const cloneUndoValue = (value) => {
+  if (value === undefined) return undefined;
+  return JSON.parse(JSON.stringify(value));
+};
+
+const buildUndoPreviousState = (currentGame = {}) => {
+  const previousState = {};
+  UNDO_STATE_FIELDS.forEach((field) => {
+    if (currentGame[field] !== undefined) previousState[field] = cloneUndoValue(currentGame[field]);
+  });
+  if (previousState.combat === undefined) previousState.combat = getEmptyCombatState();
+  if (previousState.stack === undefined) previousState.stack = [];
+  if (previousState.cards === undefined) previousState.cards = [];
+  if (previousState.players === undefined) previousState.players = [];
+  if (previousState.reveals === undefined) previousState.reveals = [];
+  if (previousState.targets === undefined) previousState.targets = [];
+  return previousState;
+};
+
+const normalizeUndoActionLabel = (message, actorName) => {
+  let label = String(message || '').trim();
+  if (!label) return 'last game action';
+  const actorPrefix = String(actorName || '').trim();
+  if (actorPrefix && label.toLowerCase().startsWith(actorPrefix.toLowerCase())) {
+    label = label.slice(actorPrefix.length).trim();
+  }
+  label = label.replace(/^\s*(has|have|was)\s+/i, '').replace(/\.$/, '').trim();
+  return label || 'last game action';
+};
+
+const buildUndoEntry = ({ currentGame, actorId, actorName, actionLabel }) => ({
+  id: `${Date.now()}-${generateCardId()}`,
+  timestamp: Date.now(),
+  actorId: actorId || null,
+  actorName: actorName || 'Unknown',
+  actionLabel: actionLabel || 'last game action',
+  previousState: buildUndoPreviousState(currentGame)
+});
+
+const appendUndoEntry = (currentGame, undoEntry) => [
+  ...((currentGame?.undoStack || []).slice(-(MAX_UNDO_STACK_ENTRIES - 1))),
+  undoEntry
+];
+
+const getUndoRestoreUpdates = (previousState = {}) => {
+  const updates = {};
+  UNDO_STATE_FIELDS.forEach((field) => {
+    if (previousState[field] !== undefined) updates[field] = cloneUndoValue(previousState[field]);
+  });
+  return updates;
+};
+
+const actionUpdatesRestorableState = (updates = {}) => UNDO_STATE_FIELDS.some((field) => Object.prototype.hasOwnProperty.call(updates, field));
 
 const buildGameLogEntry = ({ currentGame, playerId, playerName, type, category, message, timestamp = Date.now(), ...extra }) => ({
   timestamp,
@@ -1941,6 +2058,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const [stackDetailOpen, setStackDetailOpen] = useState(false);
   const [selectedStackItemId, setSelectedStackItemId] = useState(null);
   const [timeControlsOpen, setTimeControlsOpen] = useState(false);
+  const [undoConfirmOpen, setUndoConfirmOpen] = useState(false);
 
   // Chat State
   const [chatOpen, setChatOpen] = useState(false);
@@ -2475,6 +2593,111 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     setDiceMenuOpen(false);
   };
 
+  const getLatestUndoEntry = () => (game?.undoStack || [])[(game?.undoStack || []).length - 1] || null;
+  const canUndoLatestAction = canAct && Boolean(getLatestUndoEntry());
+
+  const closeTransientGameModals = () => {
+    setSelectedCard(null);
+    setZoomedCard(null);
+    setScryCard(null);
+    setPeekCard(null);
+    setViewZone(null);
+    setSearchLibraryOwner(null);
+    setTargetingState(null);
+    setAttachmentState(null);
+    setAttachmentPlayerPickerCard(null);
+    setAttackTargetPickerCard(null);
+    setBlockPickerCard(null);
+    setReorderModal(null);
+    setCustomCounterModal(null);
+    setDamageModal(null);
+    setTokenModal(null);
+    setStackDetailOpen(false);
+    setSelectedStackItemId(null);
+    setTimeControlsOpen(false);
+    setUndoConfirmOpen(false);
+  };
+
+  const handleUndoLatestAction = async () => {
+    if (!game) return;
+    if (isSpectator || !isPlayer) {
+      setNotification("Spectators can't undo game actions.");
+      setTimeout(() => setNotification(null), 2000);
+      return;
+    }
+
+    const expectedUndoEntry = getLatestUndoEntry();
+    if (!expectedUndoEntry) {
+      setNotification('Nothing to undo.');
+      setTimeout(() => setNotification(null), 2000);
+      setUndoConfirmOpen(false);
+      return;
+    }
+
+    let undone = false;
+    let stale = false;
+    const gameRef = doc(db, 'games_v3', gameId);
+
+    try {
+      await runTransaction(db, async (transaction) => {
+        const snap = await transaction.get(gameRef);
+        if (!snap.exists()) return;
+        const currentGame = snap.data();
+        const currentPlayers = currentGame.players || [];
+        const currentPlayer = currentPlayers.find((player) => player.id === userId);
+        if (!currentPlayer) return;
+
+        const currentUndoStack = currentGame.undoStack || [];
+        const latestUndoEntry = currentUndoStack[currentUndoStack.length - 1];
+        if (!latestUndoEntry || latestUndoEntry.id !== expectedUndoEntry.id) {
+          stale = true;
+          return;
+        }
+
+        const actionLabel = latestUndoEntry.actionLabel || 'last action';
+        const undoActorName = currentPlayer.name || myPlayer?.name || 'Unknown';
+        const undoLogEntry = buildGameLogEntry({
+          currentGame,
+          playerId: userId,
+          playerName: undoActorName,
+          type: 'UNDO',
+          category: 'undo',
+          message: actionLabel && actionLabel !== 'last game action'
+            ? `${undoActorName} undid: ${actionLabel}.`
+            : `${undoActorName} undid the last action.`,
+          undoneActionLabel: actionLabel,
+          undoneActionId: latestUndoEntry.id
+        });
+
+        transaction.update(gameRef, {
+          ...getUndoRestoreUpdates(latestUndoEntry.previousState || {}),
+          undoStack: currentUndoStack.slice(0, -1),
+          log: [...(currentGame.log || []), undoLogEntry],
+          updatedAt: serverTimestamp()
+        });
+        undone = true;
+      });
+    } catch (error) {
+      console.error('Undo failed', error);
+    }
+
+    if (stale) {
+      setNotification('Could not undo because the game changed. Try again.');
+      setTimeout(() => setNotification(null), 3000);
+      setUndoConfirmOpen(false);
+      return;
+    }
+
+    if (!undone) {
+      setNotification('Could not undo that action.');
+      setTimeout(() => setNotification(null), 2500);
+      setUndoConfirmOpen(false);
+      return;
+    }
+
+    closeTransientGameModals();
+  };
+
   const handleAction = async (actionType, payload = {}) => {
     if (!game) return;
     if (isSpectator && actionType !== 'SEND_CHAT') {
@@ -2487,7 +2710,10 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
     // FIX: Safety check for name
     const actorName = isSpectator ? (displayName || 'Viewer') : (myPlayer?.name || 'Unknown');
-    const makeActionLog = (type, message, extra = {}) => buildGameLogEntry({
+    const actionMessages = [];
+    const makeActionLog = (type, message, extra = {}) => {
+      actionMessages.push(message);
+      return buildGameLogEntry({
       currentGame: game,
       playerId: userId,
       playerName: actorName,
@@ -2495,7 +2721,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       category: extra.category || type,
       message,
       ...extra
-    });
+      });
+    };
     const getActionTargetDisplayNames = (targetIds = [], targetPlayerIds = []) => [
       ...(targetIds || []).map((targetId) => getPublicTargetDisplayName(targetId, game, allBattlefieldDisplayNames, 'a target')),
       ...(targetPlayerIds || []).map((playerId) => getPlayerNameById(game, playerId, 'Player'))
@@ -2526,6 +2753,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     };
     const makeAttachmentLogs = (messages) => messages.map((message) => makeActionLog('ATTACHMENT_CLEANUP', message, { category: 'attachment' }));
     const logEntry = makeActionLog(actionType, payload.desc || actionType);
+    actionMessages.length = 0;
 
     let updates = { log: arrayUnion(logEntry) };
     const pendingRecapEvents = [];
@@ -2569,7 +2797,14 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           cards: proxyGame.cards,
           combat: proxyGame.combat || getEmptyCombatState(),
           log: proxyGame.log,
-          autopass: proxyGame.autopass || {}
+          autopass: proxyGame.autopass || {},
+          undoStack: appendUndoEntry(currentGame, buildUndoEntry({
+            currentGame,
+            actorId: userId,
+            actorName,
+            actionLabel: normalizeUndoActionLabel(passLogEntry.message, actorName)
+          })),
+          updatedAt: serverTimestamp()
         });
       });
       if (turnStartEvents.length > 0) {
@@ -2675,7 +2910,25 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           };
         }
 
-        if (manualUpdates) transaction.update(gameRef, manualUpdates);
+        if (manualUpdates) {
+          const manualActionLabels = {
+            MANUAL_SET_STEP: `changed phase to ${PHASES.find((phase) => phase.id === payload.phaseId)?.label || 'another step'}`,
+            START_EXTRA_COMBAT: 'started an extra combat phase',
+            GO_EXTRA_MAIN: 'moved to an extra main phase',
+            START_EXTRA_TURN: 'started an extra turn',
+            SET_ACTIVE_PLAYER: 'changed the active player'
+          };
+          transaction.update(gameRef, {
+            ...manualUpdates,
+            undoStack: appendUndoEntry(currentGame, buildUndoEntry({
+              currentGame,
+              actorId: userId,
+              actorName: currentPlayer.name || actorName,
+              actionLabel: manualActionLabels[actionType] || 'changed time controls'
+            })),
+            updatedAt: serverTimestamp()
+          });
+        }
       });
       setAutoPassConfig(getDefaultAutoPassConfig());
       setTimeControlsOpen(false);
@@ -2746,7 +2999,14 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           consecutivePasses: 0,
           priorityIndex: nextPriorityIndex,
           priorityPlayerId: nextPriorityPlayerId,
-          log: [...(currentGame.log || []), stackLogEntry]
+          log: [...(currentGame.log || []), stackLogEntry],
+          undoStack: appendUndoEntry(currentGame, buildUndoEntry({
+            currentGame,
+            actorId: userId,
+            actorName: logActorName,
+            actionLabel: normalizeUndoActionLabel(stackLogEntry.message, logActorName)
+          })),
+          updatedAt: serverTimestamp()
         });
       });
       setSelectedStackItemId(null);
@@ -2788,7 +3048,14 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
         transaction.update(gameRef, {
           cards: nextCards,
-          log: [...(currentGame.log || []), discardLogEntry]
+          log: [...(currentGame.log || []), discardLogEntry],
+          undoStack: appendUndoEntry(currentGame, buildUndoEntry({
+            currentGame,
+            actorId: userId,
+            actorName: transactionActorName,
+            actionLabel: normalizeUndoActionLabel(discardLogEntry.message, transactionActorName)
+          })),
+          updatedAt: serverTimestamp()
         });
       });
 
@@ -3633,7 +3900,24 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       updates.log = arrayUnion(makeActionLog('TOGGLE_HAND_REVEAL', !handRevealed ? `${actorName} revealed their hand.` : `${actorName} hid their hand.`, { category: 'reveal' }));
     }
 
-    await updateDoc(gameRef, updates);
+    if (UNDOABLE_ACTION_TYPES.has(actionType) && actionUpdatesRestorableState(updates)) {
+      const actionLabel = normalizeUndoActionLabel(actionMessages[0] || payload.desc || actionType, actorName);
+      await runTransaction(db, async (transaction) => {
+        const snap = await transaction.get(gameRef);
+        if (!snap.exists()) return;
+        const currentGame = snap.data();
+        const currentPlayers = currentGame.players || [];
+        if (!currentPlayers.some((player) => player.id === userId)) return;
+        const transactionActorName = currentPlayers.find((player) => player.id === userId)?.name || actorName;
+        transaction.update(gameRef, {
+          ...updates,
+          undoStack: appendUndoEntry(currentGame, buildUndoEntry({ currentGame, actorId: userId, actorName: transactionActorName, actionLabel })),
+          updatedAt: serverTimestamp()
+        });
+      });
+    } else {
+      await updateDoc(gameRef, updates);
+    }
     if (pendingRecapEvents.length > 0) {
       await Promise.all(pendingRecapEvents.map((event) => appendEvent(gameId, event)));
     }
@@ -3799,7 +4083,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     }
     setImporting(true);
     const entries = getImportDeckEntries();
-    const newCards = [...(game.cards || [])];
+    const importedCards = [];
     let xOffset = 5, yOffset = 5;
     let importedCount = 0;
     let importedCommanderCount = 0;
@@ -3828,7 +4112,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               y: yOffset,
               ...(entry.isCommander ? { isCommander: true, commanderTax: 0, commanderDamage: {} } : {})
             };
-            newCards.push(importedCard);
+            importedCards.push(importedCard);
             importedCount += 1;
             if (entry.isCommander) importedCommanderCount += 1;
             xOffset = (xOffset + 5) % 80;
@@ -3840,18 +4124,35 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       await new Promise(r => setTimeout(r, 50));
     }
     // UPDATED: Path
-    await updateDoc(doc(db, 'games_v3', gameId), {
-      cards: newCards,
-      log: arrayUnion(buildGameLogEntry({
-        currentGame: game,
-        playerId: userId,
-        playerName: myPlayer?.name || displayName || 'Unknown',
-        type: 'IMPORT',
-        category: 'setup',
-        message: importedCommanderCount > 0
-          ? `${myPlayer?.name || displayName || 'Unknown'} imported ${importedCount} cards and moved ${importedCommanderCount} commander card${importedCommanderCount === 1 ? '' : 's'} to the command zone.`
-          : `${myPlayer?.name || displayName || 'Unknown'} imported ${importedCount} cards into their library.`
-      }))
+    const importActorName = myPlayer?.name || displayName || 'Unknown';
+    const importMessage = importedCommanderCount > 0
+      ? `${importActorName} imported ${importedCount} cards and moved ${importedCommanderCount} commander card${importedCommanderCount === 1 ? '' : 's'} to the command zone.`
+      : `${importActorName} imported ${importedCount} cards into their library.`;
+    await runTransaction(db, async (transaction) => {
+      const gameRef = doc(db, 'games_v3', gameId);
+      const snap = await transaction.get(gameRef);
+      if (!snap.exists()) return;
+      const currentGame = snap.data();
+      const currentPlayers = currentGame.players || [];
+      if (!currentPlayers.some((player) => player.id === userId)) return;
+      transaction.update(gameRef, {
+        cards: [...(currentGame.cards || []), ...importedCards],
+        log: arrayUnion(buildGameLogEntry({
+          currentGame,
+          playerId: userId,
+          playerName: importActorName,
+          type: 'IMPORT',
+          category: 'setup',
+          message: importMessage
+        })),
+        undoStack: appendUndoEntry(currentGame, buildUndoEntry({
+          currentGame,
+          actorId: userId,
+          actorName: importActorName,
+          actionLabel: normalizeUndoActionLabel(importMessage, importActorName)
+        })),
+        updatedAt: serverTimestamp()
+      });
     });
 
     setImporting(false);
@@ -4390,6 +4691,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const myCommandCount = getZoneCount(viewAsPlayerId, ZONES.COMMAND);
   const myLibraryCount = isPlayer ? getZoneCount(userId, ZONES.LIBRARY) : 0;
   const canDrawFromLibrary = canAct && myLibraryCount > 0;
+  const latestUndoEntry = getLatestUndoEntry();
+  const undoButtonDisabled = !canUndoLatestAction;
   const handleDrawCard = () => handleAction('DRAW_CARD');
   const hasDeckLoaded = [
     ZONES.LIBRARY,
@@ -5175,10 +5478,66 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                 <BookOpen size={18} />
               </button>
             </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                if (undoButtonDisabled) {
+                  if (canAct) {
+                    setNotification('Nothing to undo.');
+                    setTimeout(() => setNotification(null), 2000);
+                  }
+                  return;
+                }
+                setUndoConfirmOpen(true);
+              }}
+              disabled={undoButtonDisabled}
+              className={`min-h-9 rounded-full border px-3 py-1.5 text-xs font-extrabold transition-all flex items-center gap-1.5 ${undoButtonDisabled ? 'border-slate-700 bg-slate-800/50 text-slate-500 cursor-not-allowed opacity-60' : 'border-amber-500/60 bg-amber-900/40 text-amber-100 hover:bg-amber-800/60 active:scale-95'}`}
+              title={latestUndoEntry ? `Undo ${latestUndoEntry.actionLabel || 'last action'}` : 'Nothing to undo'}
+              aria-label="Undo last game action"
+            >
+              <Undo2 size={14} /> <span className="hidden xs:inline sm:inline">Undo</span>
+            </button>
             </div>
           </div>
         </div>
       </div>
+        {undoConfirmOpen && createPortal(
+          <div className="fixed inset-0 z-[100] flex items-end justify-center bg-black/50 p-3 sm:items-center" onMouseDown={() => setUndoConfirmOpen(false)}>
+            <div
+              className="w-full max-w-sm rounded-2xl border border-slate-600 bg-slate-900 text-slate-100 shadow-2xl overflow-hidden"
+              onMouseDown={(event) => event.stopPropagation()}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="undo-confirm-title"
+            >
+              <div className="border-b border-slate-700 bg-slate-800/90 px-4 py-3">
+                <h3 id="undo-confirm-title" className="text-base font-extrabold text-white">Undo last action?</h3>
+                <p className="mt-1 text-sm text-slate-300">
+                  Last action: {latestUndoEntry?.actorName || 'A player'} {latestUndoEntry?.actionLabel || 'last game action'}.
+                </p>
+              </div>
+              <div className="flex justify-end gap-2 p-4">
+                <button
+                  type="button"
+                  onClick={() => setUndoConfirmOpen(false)}
+                  className="rounded-lg border border-slate-600 px-4 py-2 text-sm font-bold text-slate-200 hover:bg-slate-800"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleUndoLatestAction}
+                  disabled={!canUndoLatestAction}
+                  className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-extrabold text-white hover:bg-amber-500 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Undo
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
         {diceMenuOpen && createPortal(
           <div className="fixed inset-0 z-[100] flex items-end justify-center bg-black/45 p-3 sm:items-center" onMouseDown={() => setDiceMenuOpen(false)}>
             <div
@@ -6937,6 +7296,7 @@ export default function App() {
         targets: [],
         reveals: [],
         autopass: {},
+        undoStack: [],
         combat: getEmptyCombatState(),
         log: [buildGameLogEntry({
           currentGame: { turnNumber: 1, turnPlayerId: user.uid, phase: 'main1' },

@@ -1205,11 +1205,22 @@ const Lobby = ({
   );
 };
 
-const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isDraggable, targets = [], stack = [], isSelected = false, combatBadgeLabel = null, combatBadges = null, displayName = null }) => {
+const DamageBadge = ({ amount }) => {
+  const damageAmount = Math.max(0, Number(amount) || 0);
+  if (damageAmount <= 0) return null;
+
+  return (
+    <div className="absolute bottom-1 right-1 z-30 pointer-events-none max-w-[calc(100%-0.5rem)] rounded-md border border-red-100/90 bg-red-700 text-white px-1.5 py-0.5 text-[10px] font-black leading-none shadow-[0_1px_6px_rgba(0,0,0,0.65)] whitespace-nowrap">
+      DMG {damageAmount}
+    </div>
+  );
+};
+
+const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isDraggable, targets = [], stack = [], isSelected = false, combatBadgeLabel = null, combatBadges = null, displayName = null, markedDamage = null }) => {
   const isTapped = card.tapped;
   const isFaceDown = card.faceDown;
   const counters = card.counters || {};
-  const tempDamage = Math.max(0, card.tempDamage || 0);
+  const tempDamage = Math.max(0, markedDamage ?? card.tempDamage ?? 0);
 
   // Calculate Target/Source status from BOTH persistent targets AND stack items
   const persistentSource = targets.some(t => t.sourceId === card.instanceId);
@@ -1297,11 +1308,7 @@ const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isD
       </div>
 
 
-      {tempDamage > 0 && (
-        <div className="absolute bottom-1 right-1 z-30 pointer-events-none max-w-[calc(100%-0.5rem)] rounded-md border border-red-100/90 bg-red-700 text-white px-1.5 py-0.5 text-[10px] font-black leading-none shadow-[0_1px_6px_rgba(0,0,0,0.65)] whitespace-nowrap">
-          DMG {tempDamage}
-        </div>
-      )}
+      <DamageBadge amount={tempDamage} />
 
       {hasCombatBadge && (
         <div className="absolute inset-x-0 top-1 z-30 pointer-events-none flex flex-col items-start gap-0.5 px-1">
@@ -1355,6 +1362,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const [deleteDeckConfirmOpen, setDeleteDeckConfirmOpen] = useState(false);
   const [selectedCard, setSelectedCard] = useState(null);
   const [zoomedCard, setZoomedCard] = useState(null);
+  const closeZoomedCard = useCallback(() => setZoomedCard(null), []);
   const [scryCard, setScryCard] = useState(null);
   const [viewZone, setViewZone] = useState(null);
   const [searchLibraryOwner, setSearchLibraryOwner] = useState(null);
@@ -3115,6 +3123,19 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     setReorderModal(null);
   };
 
+  useEffect(() => {
+    if (!zoomedCard) return undefined;
+
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        closeZoomedCard();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [closeZoomedCard, zoomedCard]);
+
   const openStackItem = (item) => {
     const card = game.cards.find(c => c.instanceId === item.sourceId);
     if (card && card.image_uri) {
@@ -3740,6 +3761,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                       onMove={() => targetingState ? toggleTarget(card) : setZoomedCard(card)}
                       onZoom={setZoomedCard}
                       displayName={getDisplayCardName(card)}
+                      markedDamage={getCardMarkedDamage(card)}
                       combatBadges={getCardCombatBadges(card, 'opponent battlefield')}
                     />
                   </div>
@@ -3868,6 +3890,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                       onZoom={setZoomedCard}
                       onPeek={(c) => setPeekCard(c)}
                       displayName={getDisplayCardName(card)}
+                      markedDamage={getCardMarkedDamage(card)}
                       combatBadges={getCardCombatBadges(card, 'own battlefield')}
                     />
                   </div>
@@ -4638,8 +4661,26 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       )}
 
       {zoomedCard && (
-        <div className="fixed inset-0 bg-black/90 z-[60] flex items-center justify-center p-4" onClick={() => setZoomedCard(null)}>
-          <div className="flex flex-col lg:flex-row items-center gap-4 max-w-full" onClick={(e) => e.stopPropagation()}>
+        <div
+          className="fixed inset-0 bg-black/90 z-[60] flex items-center justify-center p-4"
+          onPointerDown={(e) => { if (e.target === e.currentTarget) closeZoomedCard(); }}
+          onClick={(e) => { if (e.target === e.currentTarget) closeZoomedCard(); }}
+        >
+          <button
+            type="button"
+            aria-label="Close card preview"
+            className="fixed top-4 right-4 z-[61] flex h-12 w-12 items-center justify-center rounded-full border border-white/30 bg-slate-950/90 text-white shadow-2xl transition hover:bg-slate-800 active:scale-95 sm:top-6 sm:right-6"
+            onPointerDown={(e) => { e.stopPropagation(); closeZoomedCard(); }}
+            onClick={(e) => { e.stopPropagation(); closeZoomedCard(); }}
+          >
+            <X size={28} aria-hidden="true" />
+          </button>
+          <div
+            className="flex max-h-[calc(100vh-2rem)] max-w-full flex-col items-center gap-4 overflow-y-auto overscroll-contain px-1 py-14 lg:flex-row lg:py-4"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+            onTouchStart={(e) => e.stopPropagation()}
+          >
             <div className="flex flex-col items-center gap-3">
               <div className="text-sm font-semibold text-slate-100">{getDisplayCardName(zoomedCard)}</div>
               <img src={zoomedCard.image_uri} alt={zoomedCard.name} className="max-w-full max-h-[80vh] rounded-xl shadow-2xl" />

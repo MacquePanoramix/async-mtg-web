@@ -3452,6 +3452,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const myExileCount = getZoneCount(viewAsPlayerId, ZONES.EXILE);
   const myLibraryCount = isPlayer ? getZoneCount(userId, ZONES.LIBRARY) : 0;
   const canDrawFromLibrary = canAct && myLibraryCount > 0;
+  const handleDrawCard = () => handleAction('DRAW_CARD');
   const hasDeckLoaded = [
     ZONES.LIBRARY,
     ZONES.HAND,
@@ -3722,7 +3723,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           {!isSpectator && (
             <button
               type="button"
-              onClick={() => handleAction('DRAW_CARD')}
+              onClick={handleDrawCard}
               disabled={!canDrawFromLibrary}
               className={`relative z-20 pointer-events-auto min-h-11 px-4 py-2 rounded-full text-sm font-extrabold shadow-lg transition-all flex items-center gap-2 active:scale-95 ${canDrawFromLibrary ? 'bg-blue-600 hover:bg-blue-500 text-white border border-blue-400/60' : 'bg-slate-700/50 text-slate-400 border border-slate-600 cursor-not-allowed opacity-60'}`}
               title={canDrawFromLibrary ? 'Draw one card' : 'No cards left in library'}
@@ -4103,6 +4104,19 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             </div>
 
             <div className="h-6 w-[1px] bg-slate-700"></div>
+
+            {!isSpectator && (
+              <button
+                type="button"
+                onClick={handleDrawCard}
+                disabled={!canDrawFromLibrary}
+                className={`min-h-9 px-3 py-1.5 rounded-full text-xs font-extrabold transition-all flex items-center gap-1.5 active:scale-95 ${canDrawFromLibrary ? 'bg-blue-600 hover:bg-blue-500 text-white border border-blue-400/60 shadow-md shadow-blue-950/30' : 'bg-slate-700/50 text-slate-400 border border-slate-600 cursor-not-allowed opacity-60'}`}
+                title={canDrawFromLibrary ? 'Draw one card' : 'No cards left in library'}
+                aria-label="Draw one card from bottom panel"
+              >
+                <Plus size={14} /> Draw
+              </button>
+            )}
 
             <div className="flex gap-2 text-xs text-slate-400">
               <div className="flex items-center gap-1 cursor-pointer hover:text-white" onClick={() => { setViewZone({ zone: ZONES.GRAVEYARD, ownerId: viewAsPlayerId }); }}>

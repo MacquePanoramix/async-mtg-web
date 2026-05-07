@@ -1840,6 +1840,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const [revealsOpen, setRevealsOpen] = useState(false);
   const [stackDetailOpen, setStackDetailOpen] = useState(false);
   const [selectedStackItemId, setSelectedStackItemId] = useState(null);
+  const [timeControlsOpen, setTimeControlsOpen] = useState(false);
 
   // Chat State
   const [chatOpen, setChatOpen] = useState(false);
@@ -2442,6 +2443,110 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       if (turnStartEvents.length > 0) {
         await Promise.all(turnStartEvents.map((event) => appendEvent(gameId, event)));
       }
+      return;
+    }
+
+    if (['MANUAL_SET_STEP', 'START_EXTRA_COMBAT', 'GO_EXTRA_MAIN', 'START_EXTRA_TURN', 'SET_ACTIVE_PLAYER'].includes(actionType)) {
+      await runTransaction(db, async (transaction) => {
+        const snap = await transaction.get(gameRef);
+        if (!snap.exists()) return;
+        const currentGame = snap.data();
+        const currentPlayers = currentGame.players || [];
+        const currentPlayer = currentPlayers.find(p => p.id === userId);
+        if (!currentPlayer) return;
+
+        const currentActiveIndex = Number.isInteger(currentGame.activePlayerIndex) ? currentGame.activePlayerIndex : 0;
+        const safeActiveIndex = currentPlayers[currentActiveIndex] ? currentActiveIndex : 0;
+        const activePlayerId = currentGame.turnPlayerId || currentPlayers[safeActiveIndex]?.id || currentPlayers[0]?.id || null;
+        const activePlayerIndex = currentPlayers.findIndex(p => p.id === activePlayerId);
+        const resolvedActiveIndex = activePlayerIndex >= 0 ? activePlayerIndex : safeActiveIndex;
+        const resolvedActivePlayerId = currentPlayers[resolvedActiveIndex]?.id || activePlayerId;
+        const resetAutoPass = Object.fromEntries(currentPlayers.map((player) => [player.id, getDefaultAutoPassConfig()]));
+        const buildManualLog = (type, message, extra = {}) => buildGameLogEntry({
+          currentGame,
+          playerId: userId,
+          playerName: currentPlayer.name || actorName,
+          type,
+          category: 'phase',
+          message,
+          ...extra
+        });
+        const baseManualUpdates = {
+          consecutivePasses: 0,
+          priorityIndex: resolvedActiveIndex,
+          priorityPlayerId: resolvedActivePlayerId || currentGame.priorityPlayerId || null,
+          autopass: resetAutoPass
+        };
+
+        let manualUpdates = null;
+
+        if (actionType === 'MANUAL_SET_STEP') {
+          const targetPhase = PHASES.find((phase) => phase.id === payload.phaseId);
+          if (!targetPhase) return;
+          const nextCombatState = shouldClearCombatState(currentGame.phase, targetPhase.id)
+            ? getEmptyCombatState()
+            : (currentGame.combat || getEmptyCombatState());
+          manualUpdates = {
+            ...baseManualUpdates,
+            phase: targetPhase.id,
+            combat: nextCombatState,
+            log: arrayUnion(buildManualLog('MANUAL_SET_STEP', `${currentPlayer.name || actorName} manually set the step to ${targetPhase.label}.`, { phase: targetPhase.id, phaseLabel: targetPhase.label }))
+          };
+        }
+
+        if (actionType === 'START_EXTRA_COMBAT') {
+          manualUpdates = {
+            ...baseManualUpdates,
+            phase: 'combat_begin',
+            combat: getEmptyCombatState(),
+            log: arrayUnion(buildManualLog('START_EXTRA_COMBAT', `${currentPlayer.name || actorName} started an extra combat phase.`, { phase: 'combat_begin', phaseLabel: getPhaseLabel('combat_begin') }))
+          };
+        }
+
+        if (actionType === 'GO_EXTRA_MAIN') {
+          manualUpdates = {
+            ...baseManualUpdates,
+            phase: 'main2',
+            combat: getEmptyCombatState(),
+            log: arrayUnion(buildManualLog('GO_EXTRA_MAIN', `${currentPlayer.name || actorName} moved to an extra main phase.`, { phase: 'main2', phaseLabel: getPhaseLabel('main2') }))
+          };
+        }
+
+        if (actionType === 'START_EXTRA_TURN') {
+          const targetPlayer = currentPlayers.find((player) => player.id === payload.playerId);
+          if (!targetPlayer) return;
+          const targetIndex = currentPlayers.findIndex((player) => player.id === targetPlayer.id);
+          manualUpdates = {
+            ...baseManualUpdates,
+            activePlayerIndex: targetIndex,
+            turnPlayerId: targetPlayer.id,
+            priorityIndex: targetIndex,
+            priorityPlayerId: targetPlayer.id,
+            phase: 'untap',
+            turnNumber: (Number.isFinite(currentGame.turnNumber) ? currentGame.turnNumber : 0) + 1,
+            combat: getEmptyCombatState(),
+            log: arrayUnion(buildManualLog('START_EXTRA_TURN', `${currentPlayer.name || actorName} started an extra turn for ${targetPlayer.name || 'Player'}.`, { phase: 'untap', phaseLabel: getPhaseLabel('untap'), turnNumber: (Number.isFinite(currentGame.turnNumber) ? currentGame.turnNumber : 0) + 1, turnPlayerId: targetPlayer.id, targetPlayerId: targetPlayer.id, targetPlayerName: targetPlayer.name || 'Player' }))
+          };
+        }
+
+        if (actionType === 'SET_ACTIVE_PLAYER') {
+          const targetPlayer = currentPlayers.find((player) => player.id === payload.playerId);
+          if (!targetPlayer) return;
+          const targetIndex = currentPlayers.findIndex((player) => player.id === targetPlayer.id);
+          manualUpdates = {
+            ...baseManualUpdates,
+            activePlayerIndex: targetIndex,
+            turnPlayerId: targetPlayer.id,
+            priorityIndex: targetIndex,
+            priorityPlayerId: targetPlayer.id,
+            log: arrayUnion(buildManualLog('SET_ACTIVE_PLAYER', `${currentPlayer.name || actorName} set the active player to ${targetPlayer.name || 'Player'}.`, { turnPlayerId: targetPlayer.id, targetPlayerId: targetPlayer.id, targetPlayerName: targetPlayer.name || 'Player' }))
+          };
+        }
+
+        if (manualUpdates) transaction.update(gameRef, manualUpdates);
+      });
+      setAutoPassConfig(getDefaultAutoPassConfig());
+      setTimeControlsOpen(false);
       return;
     }
 
@@ -4076,6 +4181,32 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const waitingPriorityText = waitingPriorityPlayers.length > 0
     ? waitingPriorityPlayers.map((player) => player.name || 'Player').join(', ')
     : priorityHolderName;
+  const activeTurnPlayer = (game.players || []).find((player) => player.id === game.turnPlayerId) || game.players?.[game.activePlayerIndex] || null;
+  const currentPhase = PHASES.find((phase) => phase.id === game.phase) || { id: game.phase, label: getPhaseLabel(game.phase) };
+  const confirmTimeControl = (message) => (typeof window === 'undefined' ? true : window.confirm(message));
+  const handleSetManualStep = (phaseId) => {
+    const targetPhase = PHASES.find((phase) => phase.id === phaseId);
+    if (!targetPhase) return;
+    const currentIndex = PHASES.findIndex((phase) => phase.id === game.phase);
+    const targetIndex = PHASES.findIndex((phase) => phase.id === phaseId);
+    const isFarJump = currentIndex >= 0 && targetIndex >= 0 && Math.abs(targetIndex - currentIndex) > 1;
+    if (isFarJump && !confirmTimeControl(`Set step to ${targetPhase.label}?`)) return;
+    handleAction('MANUAL_SET_STEP', { phaseId });
+  };
+  const handleStartExtraCombat = () => handleAction('START_EXTRA_COMBAT');
+  const handleGoExtraMain = () => handleAction('GO_EXTRA_MAIN');
+  const handleStartExtraTurn = (playerId) => {
+    const targetPlayer = (game.players || []).find((player) => player.id === playerId);
+    if (!targetPlayer) return;
+    if (!confirmTimeControl(`Start extra turn for ${targetPlayer.name || 'Player'}?`)) return;
+    handleAction('START_EXTRA_TURN', { playerId });
+  };
+  const handleSetActivePlayer = (playerId) => {
+    const targetPlayer = (game.players || []).find((player) => player.id === playerId);
+    if (!targetPlayer) return;
+    if (targetPlayer.id !== game.turnPlayerId && !confirmTimeControl(`Set active player to ${targetPlayer.name || 'Player'}?`)) return;
+    handleAction('SET_ACTIVE_PLAYER', { playerId });
+  };
   const getLiveCard = (cardOrId) => {
     const card = typeof cardOrId === 'string' ? cardsMap.get(cardOrId) : cardOrId;
     return card?.instanceId ? (cardsMap.get(card.instanceId) || card) : card;
@@ -4200,15 +4331,22 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             }
           }}
         >
-        <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); setTimeControlsOpen(true); }}
+          disabled={!canAct}
+          className={`flex items-center gap-2 rounded-lg border px-2 py-1.5 text-left transition-colors ${canAct ? 'border-slate-700 hover:border-purple-500/60 hover:bg-slate-900' : 'border-transparent cursor-default'}`}
+          title={canAct ? 'Open Time Controls' : 'Phase'}
+          aria-label="Open Time Controls"
+        >
           <div className={`w-3 h-3 rounded-full ${isMyTurn ? 'bg-green-500 shadow-[0_0_10px_rgba(34,197,94,0.6)]' : 'bg-slate-600'}`}></div>
           <div className="flex flex-col leading-none">
-            <span className="text-xs text-slate-400 font-bold uppercase tracking-wider">Phase</span>
+            <span className="text-xs text-slate-400 font-bold uppercase tracking-wider flex items-center gap-1"><Clock size={11} /> Phase</span>
             <span className="font-bold text-sm text-purple-300">
               {PHASES.find(p => p.id === game.phase)?.label}
             </span>
           </div>
-        </div>
+        </button>
 
         <div
           className="flex flex-col items-center justify-center bg-slate-900 px-3 py-1 rounded border border-slate-700 cursor-pointer hover:bg-slate-800"
@@ -4872,6 +5010,91 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         <div className="fixed top-20 left-1/2 transform -translate-x-1/2 z-[100] animate-in fade-in slide-in-from-top-4 pointer-events-none">
           <div className="bg-purple-600 text-white px-6 py-4 rounded-xl shadow-2xl border-2 border-purple-400 flex flex-col items-center">
             <div className="font-bold text-lg text-center">{notification}</div>
+          </div>
+        </div>
+      )}
+
+      {/* TIME CONTROLS PANEL */}
+      {timeControlsOpen && (
+        <div className="fixed inset-0 z-[149] bg-black/70 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={() => setTimeControlsOpen(false)}>
+          <div className="w-full sm:max-w-lg max-h-[90vh] bg-slate-900 border border-slate-700 shadow-2xl rounded-t-2xl sm:rounded-2xl overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between gap-3 border-b border-slate-700 bg-slate-800/90 p-4">
+              <div>
+                <h2 className="text-xl font-black text-white flex items-center gap-2"><Clock size={20} className="text-purple-300" /> Time Controls</h2>
+                <p className="text-sm text-slate-400">Manual phase and turn tools</p>
+              </div>
+              <button onClick={() => setTimeControlsOpen(false)} className="min-h-11 min-w-11 rounded-full bg-slate-900 text-slate-300 hover:text-white hover:bg-slate-700 flex items-center justify-center" aria-label="Close Time Controls">
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="overflow-y-auto p-4 space-y-5">
+              <section className="rounded-xl border border-purple-500/30 bg-purple-950/20 p-4">
+                <div className="text-[10px] uppercase tracking-[0.2em] text-purple-200 font-bold mb-2">Current</div>
+                <div className="space-y-1 text-sm">
+                  <div className="text-slate-100 font-bold">Turn {Number.isFinite(game.turnNumber) ? game.turnNumber : '?'} — {activeTurnPlayer?.name || 'Unknown'}</div>
+                  <div className="text-purple-200 text-lg font-black">{currentPhase.label}</div>
+                  <div className="text-slate-300">Priority: <span className="font-bold text-white">{priorityHolderName}</span></div>
+                </div>
+              </section>
+
+              <section>
+                <h3 className="text-sm font-black uppercase tracking-wider text-slate-300 mb-2">Set current step</h3>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  {PHASES.map((phase) => {
+                    const isCurrent = phase.id === game.phase;
+                    return (
+                      <button
+                        key={phase.id}
+                        onClick={() => handleSetManualStep(phase.id)}
+                        className={`min-h-12 rounded-xl border px-3 py-2 text-sm font-bold ${isCurrent ? 'bg-purple-700 border-purple-400 text-white' : 'bg-slate-800 border-slate-700 text-slate-100 hover:bg-slate-700 hover:border-slate-500'}`}
+                        aria-pressed={isCurrent}
+                      >
+                        {phase.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+
+              <section className="grid grid-cols-1 gap-2">
+                <button onClick={handleStartExtraCombat} className="min-h-12 rounded-xl border border-orange-500/50 bg-orange-950/40 px-4 py-3 text-left text-orange-100 hover:bg-orange-900/50 font-bold">
+                  Start extra combat
+                  <div className="text-xs font-normal text-orange-200/80">Sets Begin Combat and clears old combat assignments.</div>
+                </button>
+                <button onClick={handleGoExtraMain} className="min-h-12 rounded-xl border border-blue-500/50 bg-blue-950/40 px-4 py-3 text-left text-blue-100 hover:bg-blue-900/50 font-bold">
+                  Go to extra main phase
+                  <div className="text-xs font-normal text-blue-200/80">Moves to Main 2 without untapping or drawing.</div>
+                </button>
+              </section>
+
+              <section>
+                <h3 className="text-sm font-black uppercase tracking-wider text-slate-300 mb-2">Start extra turn</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {(game.players || []).map((player) => (
+                    <button key={player.id} onClick={() => handleStartExtraTurn(player.id)} className="min-h-12 rounded-xl border border-green-500/50 bg-green-950/40 px-4 py-3 text-left text-green-100 hover:bg-green-900/50 font-bold">
+                      {player.name || 'Player'}
+                      <div className="text-xs font-normal text-green-200/80">Start at Untap</div>
+                    </button>
+                  ))}
+                </div>
+              </section>
+
+              <section>
+                <h3 className="text-sm font-black uppercase tracking-wider text-slate-300 mb-2">Set active player</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {(game.players || []).map((player) => {
+                    const isActive = player.id === game.turnPlayerId;
+                    return (
+                      <button key={player.id} onClick={() => handleSetActivePlayer(player.id)} className={`min-h-12 rounded-xl border px-4 py-3 text-left font-bold ${isActive ? 'border-purple-400 bg-purple-700 text-white' : 'border-slate-700 bg-slate-800 text-slate-100 hover:bg-slate-700'}`}>
+                        {player.name || 'Player'}
+                        <div className="text-xs font-normal opacity-80">{isActive ? 'Current active player' : 'Make active player'}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+            </div>
           </div>
         </div>
       )}

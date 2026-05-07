@@ -2,7 +2,7 @@ import React, { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallba
 import { createPortal } from 'react-dom';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged, GoogleAuthProvider, linkWithPopup, signInWithPopup, signInWithRedirect, getRedirectResult, signOut } from 'firebase/auth';
-import { getFirestore, doc, setDoc, collection, onSnapshot, updateDoc, arrayUnion, serverTimestamp, runTransaction, query, orderBy, deleteDoc, getDoc, addDoc, limit } from 'firebase/firestore';
+import { getFirestore, doc, setDoc, collection, onSnapshot, updateDoc, arrayUnion, serverTimestamp, runTransaction, query, orderBy, deleteDoc, getDoc, addDoc } from 'firebase/firestore';
 import { X, ArrowRight, Clock, Shield, Skull, Layers, Eye, ChevronDown, ChevronUp, BookOpen, Shuffle, Plus, Copy, UserCheck, EyeOff, RotateCw, Search, Hexagon, Unlock, Lock, Move, Dices, Coins, LayoutGrid, LogOut, Users, User, Bug, Loader2, RefreshCw, AlertTriangle, Repeat, Check, ArrowUp, ArrowDown, MessageSquare, Trash2 } from 'lucide-react';
 
 // --- Firebase Configuration ---
@@ -50,6 +50,53 @@ const ZONES = {
   EXILE: 'exile',
   COMMAND: 'command'
 };
+
+
+
+const getPhaseLabel = (phaseId) => PHASES.find((phase) => phase.id === phaseId)?.label || phaseId || 'Unknown step';
+
+const ZONE_LABELS = {
+  [ZONES.LIBRARY]: 'library',
+  [ZONES.HAND]: 'hand',
+  [ZONES.BATTLEFIELD]: 'battlefield',
+  [ZONES.GRAVEYARD]: 'graveyard',
+  [ZONES.EXILE]: 'exile',
+  [ZONES.COMMAND]: 'command zone',
+  stack_zone: 'stack'
+};
+
+const PUBLIC_ZONES = new Set([ZONES.BATTLEFIELD, ZONES.GRAVEYARD, ZONES.EXILE, ZONES.COMMAND, 'stack_zone']);
+const getZoneLabel = (zone) => ZONE_LABELS[zone] || zone || 'unknown zone';
+const isPublicZone = (zone) => PUBLIC_ZONES.has(zone);
+const getSafeCardName = (card, fallback = 'a card') => {
+  if (!card || card.faceDown) return fallback;
+  return card.name || fallback;
+};
+
+const getSafeMoveCardName = (card, fromZone, toZone) => {
+  if (!card || card.faceDown) return 'a face-down card';
+  if (isPublicZone(fromZone) || isPublicZone(toZone)) return card.name || 'a card';
+  return 'a card';
+};
+
+const getPlayerNameById = (currentGame, playerId, fallback = 'Player') => (
+  (currentGame?.players || []).find((player) => player.id === playerId)?.name || fallback
+);
+
+const buildGameLogEntry = ({ currentGame, playerId, playerName, type, category, message, timestamp = Date.now(), ...extra }) => ({
+  timestamp,
+  playerId: playerId || null,
+  playerName: playerName || 'Unknown',
+  type: type || category || 'GAME_ACTION',
+  category: category || type || 'game',
+  turnNumber: currentGame?.turnNumber ?? null,
+  turnPlayerId: currentGame?.turnPlayerId || null,
+  phase: currentGame?.phase || null,
+  phaseLabel: getPhaseLabel(currentGame?.phase),
+  message,
+  desc: message,
+  ...extra
+});
 
 const AUTO_PASS_MODE = {
   OFF: 'off',
@@ -737,6 +784,19 @@ const advancePassPriorityState = (currentGame, logEntry, onTurnStart, layoutOpti
     stack: [...(currentGame.stack || [])],
     log: [...(currentGame.log || [])]
   };
+  const actorName = logEntry.playerName || getPlayerNameById(currentGame, logEntry.playerId, 'Player');
+  const withUpdatedLogContext = (entry, type, category, message, overrides = {}) => ({
+    ...entry,
+    type,
+    category,
+    turnNumber: updatedGame.turnNumber ?? entry.turnNumber ?? null,
+    turnPlayerId: updatedGame.turnPlayerId || entry.turnPlayerId || null,
+    phase: updatedGame.phase || entry.phase || null,
+    phaseLabel: getPhaseLabel(updatedGame.phase || entry.phase),
+    message,
+    desc: message,
+    ...overrides
+  });
 
   if (players.length < 2) {
     const currentPhaseIdx = PHASES.findIndex(p => p.id === currentGame.phase);
@@ -750,7 +810,7 @@ const advancePassPriorityState = (currentGame, logEntry, onTurnStart, layoutOpti
 
     updatedGame.phase = nextPhase.id;
     updatedGame.turnNumber = nextTurnNum;
-    updatedGame.log.push({ ...logEntry, type: 'PHASE_ADVANCE', desc: `${logEntry.actorId ? 'AutoPass (proxy): ' : ''}Phase: ${nextPhase.label}` });
+    updatedGame.log.push(withUpdatedLogContext(logEntry, 'PHASE_ADVANCE', 'phase', `${actorName} moved to ${nextPhase.label}.`));
 
     if (shouldResetTemporaryDamageForPhase(nextPhase.id)) {
       updatedGame.cards = resetTemporaryDamage(updatedGame.cards);
@@ -801,7 +861,7 @@ const advancePassPriorityState = (currentGame, logEntry, onTurnStart, layoutOpti
       updatedGame.consecutivePasses = 0;
       updatedGame.priorityIndex = currentGame.activePlayerIndex;
       updatedGame.priorityPlayerId = players[currentGame.activePlayerIndex]?.id || currentGame.priorityPlayerId;
-      updatedGame.log.push({ ...logEntry, type: 'PASS_PRIORITY', desc: `${logEntry.actorId ? 'AutoPass (proxy): ' : ''}Resolved: ${item.name}` });
+      updatedGame.log.push(withUpdatedLogContext(logEntry, 'RESOLVE_SPELL', 'stack', `${actorName} resolved ${item.name}.`, { cardName: item.name, cardId: item.sourceId }));
       return updatedGame;
     }
 
@@ -828,7 +888,7 @@ const advancePassPriorityState = (currentGame, logEntry, onTurnStart, layoutOpti
     updatedGame.activePlayerIndex = nextActivePlayerIdx;
     updatedGame.turnPlayerId = nextTurnPlayerId;
     updatedGame.turnNumber = nextTurnNum;
-    updatedGame.log.push({ ...logEntry, type: 'PHASE_ADVANCE', desc: `${logEntry.actorId ? 'AutoPass (proxy): ' : ''}Phase: ${nextPhase.label}` });
+    updatedGame.log.push(withUpdatedLogContext(logEntry, 'PHASE_ADVANCE', 'phase', `${actorName} moved to ${nextPhase.label}.`));
 
     if (shouldResetTemporaryDamageForPhase(nextPhase.id)) {
       updatedGame.cards = resetTemporaryDamage(updatedGame.cards);
@@ -849,7 +909,7 @@ const advancePassPriorityState = (currentGame, logEntry, onTurnStart, layoutOpti
   updatedGame.consecutivePasses = currentGame.consecutivePasses + 1;
   updatedGame.priorityIndex = nextPriorityIdx;
   updatedGame.priorityPlayerId = nextPlayerId;
-  updatedGame.log.push({ ...logEntry, type: 'PASS_PRIORITY', desc: logEntry.actorId ? 'AutoPass (proxy): PASS_PRIORITY' : (logEntry.desc || 'PASS_PRIORITY') });
+  updatedGame.log.push(withUpdatedLogContext(logEntry, 'PASS_PRIORITY', 'priority', `${actorName} passed priority.`));
   return updatedGame;
 };
 
@@ -886,15 +946,17 @@ const runProxyAutoPassAdvances = (startingGame, actorId, actorName, onTurnStart)
       break;
     }
 
-    const proxyLogEntry = {
+    const proxyLogEntry = buildGameLogEntry({
+      currentGame: workingGame,
       timestamp: Date.now() + advances + 1,
       playerId: autoPassPlayerId,
-      actorId,
       playerName: autoPassPlayer.name || 'Unknown',
-      actorName: actorName || 'Proxy',
       type: 'PASS_PRIORITY',
-      desc: 'AutoPass (proxy)'
-    };
+      category: 'priority',
+      message: `${autoPassPlayer.name || 'Unknown'} passed priority.`,
+      actorId,
+      actorName: actorName || 'Proxy'
+    });
 
     workingGame = advancePassPriorityState(workingGame, proxyLogEntry, onTurnStart);
     advances += 1;
@@ -1426,7 +1488,6 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const [chatOpen, setChatOpen] = useState(false);
   const [chatInput, setChatInput] = useState('');
   const [recapOpen, setRecapOpen] = useState(false);
-  const [recapEvents, setRecapEvents] = useState([]);
   const chatEndRef = useRef(null);
 
   // Use the viewAsId to determine which player is "Active" on this screen
@@ -1654,36 +1715,29 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   }, [gameId]);
 
 
-  useEffect(() => {
-    if (!gameId) return;
-    const eventsQuery = query(
-      collection(db, 'games_v3', gameId, 'events'),
-      orderBy('createdAt', 'desc'),
-      limit(50)
-    );
-
-    const unsub = onSnapshot(eventsQuery, (snap) => {
-      const items = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      setRecapEvents(items);
-    }, (err) => console.error(err));
-
-    return () => unsub();
-  }, [gameId]);
-
   // Chat Helpers
   const chatMessages = (game?.log || []).filter(e => e.type === 'CHAT');
+  const gameLogEntries = (game?.log || [])
+    .filter(entry => entry.type !== 'CHAT')
+    .map((entry, index) => ({
+      ...entry,
+      id: entry.id || `${entry.timestamp || 0}-${index}`,
+      message: entry.message || entry.desc || entry.text || entry.type || 'Game action',
+      phaseLabel: entry.phaseLabel || getPhaseLabel(entry.phase),
+      turnNumber: entry.turnNumber ?? '?'
+    }))
+    .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+  const gameLogByTurn = gameLogEntries.reduce((acc, entry) => {
+    const key = entry.turnNumber || '?';
+    if (!acc[key]) acc[key] = [];
+    acc[key].push(entry);
+    return acc;
+  }, {});
+  const gameLogTurnKeys = Object.keys(gameLogByTurn).sort((a, b) => Number(b) - Number(a));
   // FIX: Safety check for players array
   const myPlayer = viewAsPlayer;
   const lastSeen = isSpectator ? spectatorLastSeenChatAt : (myPlayer?.lastSeenChatAt || 0);
   const unreadCount = chatMessages.filter(m => m.timestamp > lastSeen && m.playerId !== userId).length;
-  const recapByTurn = recapEvents.reduce((acc, event) => {
-    const key = event.turnNumber || '?';
-    if (!acc[key]) acc[key] = [];
-    acc[key].push(event);
-    return acc;
-  }, {});
-  const recapTurnKeys = Object.keys(recapByTurn).sort((a, b) => Number(b) - Number(a));
-
   useEffect(() => {
     if (chatOpen) {
       chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -1970,13 +2024,17 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     const gameRef = doc(db, 'games_v3', gameId);
 
     // FIX: Safety check for name
-    const logEntry = {
-      timestamp: Date.now(),
+    const actorName = isSpectator ? (displayName || 'Viewer') : (myPlayer?.name || 'Unknown');
+    const makeActionLog = (type, message, extra = {}) => buildGameLogEntry({
+      currentGame: game,
       playerId: userId,
-      playerName: isSpectator ? (displayName || 'Viewer') : (myPlayer?.name || 'Unknown'),
-      type: actionType,
-      desc: payload.desc || actionType
-    };
+      playerName: actorName,
+      type,
+      category: extra.category || type,
+      message,
+      ...extra
+    });
+    const logEntry = makeActionLog(actionType, payload.desc || actionType);
 
     let updates = { log: arrayUnion(logEntry) };
     const pendingRecapEvents = [];
@@ -1993,13 +2051,14 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         if (!isCurrentPlayer) return;
 
         const actorName = currentPlayers.find(p => p.id === userId)?.name || myPlayer?.name || 'Unknown';
-        const passLogEntry = {
-          timestamp: Date.now(),
+        const passLogEntry = buildGameLogEntry({
+          currentGame,
           playerId: userId,
           playerName: actorName,
           type: 'PASS_PRIORITY',
-          desc: payload.desc || 'PASS_PRIORITY'
-        };
+          category: 'priority',
+          message: `${actorName} passed priority.`
+        });
 
         const layoutOptions = {
           getBattlefieldWidthForController: (controllerId) => controllerId === userId ? getCurrentBattlefieldWidthPx() : undefined
@@ -2035,13 +2094,13 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       if (diceType === 'coin') {
         result = Math.random() > 0.5 ? 1 : 0;
         msg = result === 1 ? 'HEADS' : 'TAILS';
-        updates.log = arrayUnion({...logEntry, type: 'FLIP_COIN', desc: `Coin Flip: ${msg}`});
+        updates.log = arrayUnion(makeActionLog('FLIP_COIN', `${actorName} flipped a coin: ${msg}.`, { category: 'random' }));
       } else if (diceType === 'd6') {
         result = Math.ceil(Math.random() * 6);
-        updates.log = arrayUnion({...logEntry, desc: `Rolled D6: ${result}`});
+        updates.log = arrayUnion(makeActionLog('ROLL_DICE', `${actorName} rolled a D6: ${result}.`, { category: 'random' }));
       } else if (diceType === 'd20') {
         result = Math.ceil(Math.random() * 20);
-        updates.log = arrayUnion({...logEntry, desc: `Rolled D20: ${result}`});
+        updates.log = arrayUnion(makeActionLog('ROLL_DICE', `${actorName} rolled a D20: ${result}.`, { category: 'random' }));
       }
     } else if (actionType === 'SEND_CHAT') {
       const chatEntry = {
@@ -2140,13 +2199,13 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       console.log('[TIDY_BOARD]', tidyPreview);
 
       updates.cards = newCards;
-      updates.log = arrayUnion({...logEntry, desc: 'Tidied the board'});
+      delete updates.log;
     } else if (actionType === 'SHUFFLE_LIBRARY') {
       const ownerId = payload.targetOwnerId || userId;
       const libCards = game.cards.filter(c => c.ownerId === ownerId && c.zone === ZONES.LIBRARY);
       const otherCards = game.cards.filter(c => !(c.ownerId === ownerId && c.zone === ZONES.LIBRARY));
       updates.cards = [...otherCards, ...shuffleArray([...libCards])];
-      updates.log = arrayUnion({...logEntry, desc: `${myPlayer.name} shuffled ${ownerId === userId ? 'their' : "opponent's"} library`});
+      updates.log = arrayUnion(makeActionLog('SHUFFLE_LIBRARY', `${actorName} shuffled ${ownerId === userId ? 'their' : "opponent's"} library.`, { category: 'library' }));
     } else if (actionType === 'MULLIGAN') {
       const handCards = game.cards.filter(c => c.controllerId === userId && c.zone === ZONES.HAND);
       const movedToLibrary = new Set(handCards.map(c => c.instanceId));
@@ -2168,7 +2227,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       const finalLib = shuffledLib.map(c => toHandIds.has(c.instanceId) ? { ...c, zone: ZONES.HAND } : c );
 
       updates.cards = [...otherCards, ...finalLib];
-      updates.log = arrayUnion({ ...logEntry, desc: `${myPlayer?.name || 'Player'} took a mulligan (drew ${drawCount})` });
+      updates.log = arrayUnion(makeActionLog('MULLIGAN', `${actorName} took a mulligan and drew ${drawCount} cards.`, { category: 'library' }));
 
     } else if (actionType === 'PLAYER_COUNTER') {
       const pIndex = game.players.findIndex(p => p.id === userId);
@@ -2178,7 +2237,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       const newPlayers = [...game.players];
       newPlayers[pIndex] = { ...player, counters: { ...player.counters, [payload.counterType]: newVal } };
       updates.players = newPlayers;
-      updates.log = arrayUnion({...logEntry, desc: `${payload.amount > 0 ? 'Added' : 'Removed'} ${payload.counterType} counter`});
+      updates.log = arrayUnion(makeActionLog('PLAYER_COUNTER', `${actorName} ${payload.amount > 0 ? 'added' : 'removed'} a ${payload.counterType} counter.`, { category: 'counter' }));
 
     } else if (actionType === 'CREATE_TOKEN') {
       const tokenBase = {
@@ -2208,7 +2267,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       };
       logBattlefieldEntry(newToken, 'CREATE_TOKEN', spawnPosition);
       updates.cards = [...game.cards, newToken];
-      updates.log = arrayUnion({...logEntry, desc: `Created ${newToken.power}/${newToken.toughness} ${newToken.name} Token`});
+      updates.log = arrayUnion(makeActionLog('CREATE_TOKEN', `${actorName} created a ${newToken.power}/${newToken.toughness} ${newToken.name} token.`, { category: 'token', cardId: newToken.instanceId, cardName: newToken.name }));
 
     } else if (actionType === 'CLONE_CARD') {
       const original = game.cards.find(c => c.instanceId === payload.cardId);
@@ -2228,7 +2287,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         };
         logBattlefieldEntry(clone, 'CLONE_CARD', spawnPosition);
         updates.cards = [...game.cards, clone];
-        updates.log = arrayUnion({...logEntry, desc: `Cloned ${original.name}`});
+        updates.log = arrayUnion(makeActionLog('CLONE_CARD', `${actorName} cloned ${getSafeCardName(original)}.`, { category: 'card', cardId: original.instanceId, cardName: getSafeCardName(original) }));
       }
     } else if (actionType === 'SCRY_TOP') {
       const targetId = payload.targetOwnerId || userId;
@@ -2236,7 +2295,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       if (lib.length > 0) {
         setScryCard({ ...lib[0], ownerId: targetId });
         if (targetId !== userId) {
-          updates.log = arrayUnion({ ...logEntry, desc: `${myPlayer.name} looked at top of opponent's library` });
+          updates.log = arrayUnion(makeActionLog('SCRY_TOP', `${actorName} looked at the top card of opponent's library.`, { category: 'library' }));
         } else {
           return;
         }
@@ -2247,9 +2306,11 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       const cardToMove = game.cards.find(c => c.instanceId === payload.cardId);
       const otherCards = game.cards.filter(c => c.instanceId !== payload.cardId);
       updates.cards = [...otherCards, cardToMove];
+      delete updates.log;
       setScryCard(null);
 
     } else if (actionType === 'SCRY_KEEP_TOP') {
+      delete updates.log;
       setScryCard(null);
 
     } else if (actionType === 'MOD_COUNTER') {
@@ -2261,10 +2322,14 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       if (newVal === 0) delete newCounters[label];
       const newCards = game.cards.map(c => c.instanceId === payload.cardId ? { ...c, counters: newCounters } : c);
       updates.cards = newCards;
+      updates.log = arrayUnion(makeActionLog('MOD_COUNTER', `${actorName} ${payload.amount > 0 ? 'added' : 'removed'} ${Math.abs(payload.amount || 1)} ${label} counter${Math.abs(payload.amount || 1) === 1 ? '' : 's'} ${payload.amount > 0 ? 'to' : 'from'} ${getSafeCardName(card)}.`, { category: 'counter', cardId: card?.instanceId, cardName: getSafeCardName(card), counter: label, counterValue: newVal }));
 
     } else if (actionType === 'TOGGLE_FACE') {
-      const newCards = game.cards.map(c => c.instanceId === payload.cardId ? { ...c, faceDown: !c.faceDown } : c);
+      const card = game.cards.find(c => c.instanceId === payload.cardId);
+      const nextFaceDown = !card?.faceDown;
+      const newCards = game.cards.map(c => c.instanceId === payload.cardId ? { ...c, faceDown: nextFaceDown } : c);
       updates.cards = newCards;
+      updates.log = arrayUnion(makeActionLog('TOGGLE_FACE', nextFaceDown ? `${actorName} turned ${getSafeCardName(card)} face down.` : `${actorName} turned ${getSafeCardName(card, 'a face-down card')} face up${card?.name ? ` as ${card.name}` : ''}.`, { category: 'visibility', cardId: card?.instanceId, cardName: nextFaceDown ? null : card?.name || null }));
 
     } else if (actionType === 'CHANGE_CONTROL') {
       const changedCard = game.cards.find(c => c.instanceId === payload.cardId);
@@ -2289,7 +2354,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       logBattlefieldEntry(changedCard, 'CHANGE_CONTROL', spawnPosition);
       updates.cards = newCards;
       updates.combat = clearCombatAssignmentsForCard(game.combat || getEmptyCombatState(), payload.cardId);
-      updates.log = arrayUnion({...logEntry, desc: `Changed control of ${payload.cardName}`});
+      updates.log = arrayUnion(makeActionLog('CHANGE_CONTROL', `${actorName} gave control of ${getSafeCardName(changedCard, payload.cardName || 'a card')} to ${getPlayerNameById(game, nextControllerId, 'another player')}.`, { category: 'control', cardId: payload.cardId, cardName: getSafeCardName(changedCard, payload.cardName || 'a card') }));
 
     } else if (actionType === 'SET_ATTACK_TARGET') {
       if (game.phase !== 'combat_attackers') return;
@@ -2300,7 +2365,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         attackers: nextAttackers,
         blockers: game.combat?.blockers || {}
       };
-      updates.log = arrayUnion({ ...logEntry, desc: `${myPlayer?.name || 'Player'} set ${payload.cardName || 'a creature'} attack target` });
+      updates.log = arrayUnion(makeActionLog('SET_ATTACK_TARGET', `${actorName} attacked ${getCombatAttackTargetName(attackTarget, game) || 'a target'} with ${getSafeCardName(game.cards.find(c => c.instanceId === payload.cardId), payload.cardName || 'a creature')}.`, { category: 'combat', cardId: payload.cardId, targetId: attackTarget.targetId, targetType: attackTarget.type }));
 
     } else if (actionType === 'TOGGLE_BLOCK_TARGET') {
       if (game.phase !== 'combat_blockers') return;
@@ -2314,7 +2379,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         attackers: game.combat?.attackers || {},
         blockers: nextBlockers
       };
-      updates.log = arrayUnion({ ...logEntry, desc: `${myPlayer?.name || 'Player'} updated blocks` });
+      updates.log = arrayUnion(makeActionLog('TOGGLE_BLOCK_TARGET', isBlocking ? `${actorName} stopped blocking ${getSafeCardName(game.cards.find(c => c.instanceId === payload.attackerId), 'an attacker')} with ${getSafeCardName(game.cards.find(c => c.instanceId === payload.cardId), 'a blocker')}.` : `${actorName} blocked ${getSafeCardName(game.cards.find(c => c.instanceId === payload.attackerId), 'an attacker')} with ${getSafeCardName(game.cards.find(c => c.instanceId === payload.cardId), 'a blocker')}.`, { category: 'combat', cardId: payload.cardId, targetCardId: payload.attackerId }));
 
     } else if (actionType === 'DISCARD_RANDOM') {
       const myHand = game.cards.filter(c => c.controllerId === userId && c.zone === ZONES.HAND);
@@ -2322,7 +2387,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         const randomCard = myHand[Math.floor(Math.random() * myHand.length)];
         const newCards = game.cards.map(c => c.instanceId === randomCard.instanceId ? { ...c, zone: ZONES.GRAVEYARD } : c);
         updates.cards = newCards;
-        updates.log = arrayUnion({...logEntry, desc: `Discarded ${randomCard.name} at random`});
+        updates.log = arrayUnion(makeActionLog('DISCARD_RANDOM', `${actorName} discarded ${getSafeCardName(randomCard)} at random.`, { category: 'zone', cardId: randomCard.instanceId, cardName: getSafeCardName(randomCard) }));
       }
 
     } else if (actionType === 'PASS_PRIORITY') {
@@ -2342,7 +2407,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         }
 
         const nextCombatState = getNextCombatState(game, nextPhase.id, nextPhase.id === 'untap');
-        updates = { ...updates, phase: nextPhase.id, turnNumber: nextTurnNum, combat: nextCombatState, log: arrayUnion({ ...logEntry, desc: `Phase: ${nextPhase.label}` }) };
+        updates = { ...updates, phase: nextPhase.id, turnNumber: nextTurnNum, combat: nextCombatState, log: arrayUnion(makeActionLog('PHASE_ADVANCE', `${actorName} moved to ${nextPhase.label}.`, { category: 'phase' })) };
 
         if (shouldResetTemporaryDamageForPhase(nextPhase.id)) {
           updates.cards = resetTemporaryDamage(game.cards);
@@ -2399,7 +2464,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               priorityIndex: game.activePlayerIndex,
               priorityPlayerId: game.players[game.activePlayerIndex].id,
               cards: updatedCards,
-              log: arrayUnion({ ...logEntry, desc: `Resolved: ${item.name}` })
+              log: arrayUnion(makeActionLog('RESOLVE_SPELL', `${actorName} resolved ${item.name}.`, { category: 'stack', cardId: item.sourceId, cardName: item.name }))
             };
 
           } else {
@@ -2430,7 +2495,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               turnPlayerId: nextTurnPlayerId,
               turnNumber: nextTurnNum,
               combat: nextCombatState,
-              log: arrayUnion({ ...logEntry, desc: `Phase: ${nextPhase.label}` })
+              log: arrayUnion(makeActionLog('PHASE_ADVANCE', `${actorName} moved to ${nextPhase.label}.`, { category: 'phase' }))
             };
 
             if (shouldResetTemporaryDamageForPhase(nextPhase.id)) {
@@ -2473,6 +2538,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       const newCards = game.cards.map(c => c.instanceId === payload.cardId ? { ...c, zone: ZONES.BATTLEFIELD, ...getBattlefieldPositionCoordinates(spawnPosition) } : c);
       logBattlefieldEntry(battlefieldCard, 'PLAY_LAND', spawnPosition);
       updates.cards = newCards;
+      updates.log = arrayUnion(makeActionLog('PLAY_LAND', `${actorName} played ${getSafeCardName(playedCard, payload.cardName || 'a land')}.`, { category: 'card', cardId: playedCard?.instanceId || payload.cardId, cardName: getSafeCardName(playedCard, payload.cardName || 'a land') }));
       pendingRecapEvents.push({
         type: 'PLAY_LAND',
         turnNumber: game.turnNumber,
@@ -2523,7 +2589,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         stack: arrayUnion(stackItem),
         consecutivePasses: 0,
         priorityPlayerId: userId,
-        priorityIndex: userIndex !== -1 ? userIndex : game.priorityIndex
+        priorityIndex: userIndex !== -1 ? userIndex : game.priorityIndex,
+        log: arrayUnion(makeActionLog('CAST_SPELL', `${actorName} cast ${getSafeCardName(card, payload.cardName || 'a spell')}.`, { category: 'stack', cardId: card?.instanceId || payload.cardId, cardName: getSafeCardName(card, payload.cardName || 'a spell') }))
       };
 
     } else if (actionType === 'ACTIVATE_ABILITY') {
@@ -2560,13 +2627,16 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       const userIndex = game.players.findIndex(p => p.id === userId);
       updates.stack = arrayUnion(stackItem);
       updates.consecutivePasses = 0;
-      updates.log = arrayUnion({ ...logEntry, desc: `Activated ability of ${sourceCard.name}` });
+      updates.log = arrayUnion(makeActionLog('ACTIVATE_ABILITY', `${actorName} activated ${getSafeCardName(sourceCard, 'an ability')}.`, { category: 'stack', cardId: sourceCard?.instanceId, cardName: getSafeCardName(sourceCard, 'an ability') }));
       updates.priorityPlayerId = userId;
       updates.priorityIndex = userIndex !== -1 ? userIndex : game.priorityIndex;
 
     } else if (actionType === 'TAP_TOGGLE') {
-      const newCards = game.cards.map(c => c.instanceId === payload.cardId ? { ...c, tapped: !c.tapped } : c);
+      const card = game.cards.find(c => c.instanceId === payload.cardId);
+      const nextTapped = !card?.tapped;
+      const newCards = game.cards.map(c => c.instanceId === payload.cardId ? { ...c, tapped: nextTapped } : c);
       updates.cards = newCards;
+      updates.log = arrayUnion(makeActionLog('TAP_TOGGLE', `${actorName} ${nextTapped ? 'tapped' : 'untapped'} ${getSafeCardName(card)}.`, { category: 'tap', cardId: card?.instanceId, cardName: getSafeCardName(card), tapped: nextTapped }));
 
     } else if (actionType === 'TEMP_DAMAGE') {
       const card = game.cards.find(c => c.instanceId === payload.cardId);
@@ -2574,7 +2644,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       const current = Math.max(0, card.tempDamage || 0);
       const nextDamage = payload.clear ? 0 : Math.max(0, current + (payload.amount || 0));
       updates.cards = game.cards.map(c => c.instanceId === payload.cardId ? { ...c, tempDamage: nextDamage } : c);
-      updates.log = arrayUnion({ ...logEntry, desc: `${card.name}: temporary damage ${nextDamage}` });
+      updates.log = arrayUnion(makeActionLog('TEMP_DAMAGE', payload.clear ? `${actorName} cleared damage from ${getSafeCardName(card)}.` : `${actorName} marked ${payload.amount || 0} damage on ${getSafeCardName(card)}.`, { category: 'damage', cardId: card.instanceId, cardName: getSafeCardName(card), damage: nextDamage }));
 
     } else if (actionType === 'DRAW_CARD') {
       const libCards = game.cards.filter(c => c.ownerId === userId && c.zone === ZONES.LIBRARY);
@@ -2583,6 +2653,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         const newCards = game.cards.map(c => c.instanceId === cardToDraw.instanceId ? { ...c, zone: ZONES.HAND } : c);
         updates.cards = newCards;
       }
+      updates.log = arrayUnion(makeActionLog('DRAW_CARD', `${actorName} drew a card.`, { category: 'draw' }));
 
     } else if (actionType === 'MOVE_ZONE') {
       const movingCard = game.cards.find(c => c.instanceId === payload.cardId);
@@ -2611,6 +2682,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       if (spawnPosition) logBattlefieldEntry(battlefieldMovingCard, 'MOVE_ZONE', spawnPosition);
       updates.cards = newCards;
       updates.combat = clearCombatAssignmentsForCard(game.combat || getEmptyCombatState(), payload.cardId);
+      updates.log = arrayUnion(makeActionLog('MOVE_ZONE', `${actorName} moved ${getSafeMoveCardName(movingCard, movingCard?.zone, payload.targetZone)} to ${getZoneLabel(payload.targetZone)}.`, { category: 'zone', cardId: payload.cardId, cardName: getSafeMoveCardName(movingCard, movingCard?.zone, payload.targetZone), fromZone: movingCard?.zone, toZone: payload.targetZone }));
 
     } else if (actionType === 'MOVE_TO_LIBRARY') {
       const cardToMove = game.cards.find(c => c.instanceId === payload.cardId);
@@ -2623,7 +2695,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         updates.cards = [...otherCards, updatedCard];
       }
       updates.combat = clearCombatAssignmentsForCard(game.combat || getEmptyCombatState(), payload.cardId);
-      updates.log = arrayUnion({ ...logEntry, desc: `Moved ${updatedCard.name} to ${payload.position === 'TOP' ? 'top' : 'bottom'} of library` });
+      updates.log = arrayUnion(makeActionLog('MOVE_TO_LIBRARY', `${actorName} moved ${getSafeCardName(cardToMove)} to the ${payload.position === 'TOP' ? 'top' : 'bottom'} of library.`, { category: 'zone', cardId: updatedCard.instanceId, cardName: getSafeCardName(cardToMove), fromZone: cardToMove?.zone, toZone: ZONES.LIBRARY }));
 
     } else if (actionType === 'REORDER_TOP_LIBRARY') {
       const ownerId = payload.ownerId;
@@ -2656,7 +2728,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         }
         return c;
       });
-      updates.log = arrayUnion({ ...logEntry, desc: `Reordered top ${orderedIds.length} cards of ${ownerId === userId ? 'their' : "opponent's"} library` });
+      updates.log = arrayUnion(makeActionLog('REORDER_TOP_LIBRARY', `${actorName} reordered the top ${orderedIds.length} cards of ${ownerId === userId ? 'their' : "opponent's"} library.`, { category: 'library' }));
 
     } else if (actionType === 'LIFE_CHANGE') {
       const targetPlayer = game.players.find(p => p.id === payload.targetPlayerId);
@@ -2666,6 +2738,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         p.id === payload.targetPlayerId ? { ...p, life: newLife } : p
       );
       updates.players = newPlayers;
+      updates.log = arrayUnion(makeActionLog('LIFE_CHANGE', `${targetPlayer?.name || 'Unknown'} life changed from ${oldLife} to ${newLife}.`, { category: 'life', targetPlayerId: payload.targetPlayerId, oldLife, newLife }));
       pendingRecapEvents.push({
         type: 'LIFE_CHANGE',
         turnNumber: game.turnNumber,
@@ -2687,7 +2760,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         timestamp: Date.now()
       };
       updates.reveals = arrayUnion(revealEntry);
-      updates.log = arrayUnion({...logEntry, desc: `Revealed: ${card.name}`, cardImage: card.image_uri});
+      updates.log = arrayUnion(makeActionLog('REVEAL_CARD', `${actorName} revealed ${card.name}.`, { category: 'reveal', cardId: card.instanceId, cardName: card.name, cardImage: card.image_uri }));
 
     } else if (actionType === 'REVEAL_ALL_HAND') {
       const handCards = game.cards.filter(c => c.controllerId === userId && c.zone === ZONES.HAND);
@@ -2707,14 +2780,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           timestamp: Date.now() + index // Offset slightly to preserve order
         };
         newRevealEntries.push(revealEntry);
-        newLogEntries.push({
-          timestamp: Date.now() + index,
-          playerId: userId,
-          playerName: myPlayer?.name || 'Unknown',
-          type: 'REVEAL_CARD',
-          desc: `Revealed: ${card.name}`,
-          cardImage: card.image_uri
-        });
+        newLogEntries.push(makeActionLog('REVEAL_CARD', `${actorName} revealed ${card.name}.`, { category: 'reveal', timestamp: Date.now() + index, cardId: card.instanceId, cardName: card.name, cardImage: card.image_uri }));
       });
 
       if (newRevealEntries.length > 0) {
@@ -2724,12 +2790,12 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
     } else if (actionType === 'CLEAR_REVEALS') {
       updates.reveals = [];
-      updates.log = arrayUnion({ ...logEntry, desc: 'Cleared revealed cards' });
+      updates.log = arrayUnion(makeActionLog('CLEAR_REVEALS', `${actorName} cleared revealed cards.`, { category: 'reveal' }));
 
     } else if (actionType === 'TOGGLE_HAND_REVEAL') {
       const newPlayers = game.players.map(p => p.id === userId ? { ...p, handRevealed: !p.handRevealed } : p);
       updates.players = newPlayers;
-      updates.log = arrayUnion({...logEntry, desc: !handRevealed ? 'Revealed their hand' : 'Hid their hand'});
+      updates.log = arrayUnion(makeActionLog('TOGGLE_HAND_REVEAL', !handRevealed ? `${actorName} revealed their hand.` : `${actorName} hid their hand.`, { category: 'reveal' }));
     }
 
     await updateDoc(gameRef, updates);
@@ -2911,13 +2977,14 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     // UPDATED: Path
     await updateDoc(doc(db, 'games_v3', gameId), {
       cards: newCards,
-      log: arrayUnion({
-        timestamp: Date.now(),
+      log: arrayUnion(buildGameLogEntry({
+        currentGame: game,
         playerId: userId,
         playerName: myPlayer?.name || displayName || 'Unknown',
         type: 'IMPORT',
-        desc: `Imported ${lines.length} cards`
-      })
+        category: 'setup',
+        message: `${myPlayer?.name || displayName || 'Unknown'} imported ${Math.max(0, newCards.length - (game.cards || []).length)} cards into their library.`
+      }))
     });
 
     setImporting(false);
@@ -2945,13 +3012,14 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       await updateDoc(doc(db, 'games_v3', gameId), {
         cards: nextCards,
         reveals: nextReveals,
-        log: arrayUnion({
-          timestamp: Date.now(),
+        log: arrayUnion(buildGameLogEntry({
+          currentGame: game,
           playerId: userId,
           playerName: myPlayer?.name || displayName || 'Unknown',
           type: 'DECK_DELETE',
-          desc: 'Deleted their deck.'
-        })
+          category: 'setup',
+          message: `${myPlayer?.name || displayName || 'Unknown'} deleted their deck.`
+        }))
       });
 
       setDeleteDeckConfirmOpen(false);
@@ -3038,13 +3106,17 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         const gameRef = doc(db, 'games_v3', gameId);
         await updateDoc(gameRef, {
           targets: arrayUnion(...newEntries),
-          log: arrayUnion({
-            timestamp: Date.now(),
+          log: arrayUnion(buildGameLogEntry({
+            currentGame: game,
             playerId: userId,
             playerName: myPlayer?.name || 'Unknown',
             type: 'TARGET',
-            desc: `Targeted ${selectedIds.length} cards/players with ${source.name}`
-          })
+            category: 'target',
+            message: `${myPlayer?.name || 'Unknown'} targeted ${selectedIds.length} object${selectedIds.length === 1 ? '' : 's'} with ${getSafeCardName(source)}.`,
+            cardId: source.instanceId,
+            cardName: getSafeCardName(source),
+            targetCount: selectedIds.length
+          }))
         });
       }
     }
@@ -3064,13 +3136,16 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       // UPDATED: Path
       await updateDoc(doc(db, 'games_v3', gameId), {
         targets: newTargets,
-        log: arrayUnion({
-          timestamp: Date.now(),
+        log: arrayUnion(buildGameLogEntry({
+          currentGame: game,
           playerId: userId,
           playerName: myPlayer?.name || 'Unknown',
           type: 'CLEAR_TARGETS',
-          desc: `Cleared targets for ${card.name}`
-        })
+          category: 'target',
+          message: `${myPlayer?.name || 'Unknown'} cleared targets for ${getSafeCardName(card)}.`,
+          cardId: card.instanceId,
+          cardName: getSafeCardName(card)
+        }))
       });
     }
     setSelectedCard(null);
@@ -4126,32 +4201,48 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       )}
 
 
-      {/* RECAP MODAL */}
+      {/* GAME LOG MODAL */}
       {recapOpen && (
         <div className="fixed inset-0 z-[149] pointer-events-none flex justify-end items-end sm:items-start sm:top-16 sm:right-4">
-          <div className="pointer-events-auto w-full sm:w-96 h-[80vh] sm:h-[600px] bg-slate-900 border border-slate-700 shadow-2xl flex flex-col rounded-t-xl sm:rounded-xl">
+          <div className="pointer-events-auto w-full sm:w-[28rem] h-[82vh] sm:h-[640px] bg-slate-900 border border-slate-700 shadow-2xl flex flex-col rounded-t-xl sm:rounded-xl">
             <div className="flex justify-between items-center p-3 border-b border-slate-700 bg-slate-800 rounded-t-xl">
-              <h3 className="font-bold text-white flex items-center gap-2"><BookOpen size={16}/> Action Recap</h3>
+              <div>
+                <h3 className="font-bold text-white flex items-center gap-2"><BookOpen size={16}/> Game Log</h3>
+                <div className="text-[11px] text-slate-400">Newest actions first. Private draws stay anonymous.</div>
+              </div>
               <button onClick={() => setRecapOpen(false)} className="text-slate-400 hover:text-white"><X size={18}/></button>
             </div>
-            <div className="flex-1 overflow-y-auto p-3 space-y-3 bg-slate-900/95">
-              {recapTurnKeys.length === 0 && (
-                <div className="text-sm text-slate-400">No recap events yet.</div>
+            <div className="flex-1 overflow-y-auto overscroll-contain p-3 space-y-3 bg-slate-900/95">
+              {gameLogTurnKeys.length === 0 && (
+                <div className="text-sm text-slate-400">No game log entries yet.</div>
               )}
-              {recapTurnKeys.map((turnKey) => (
-                <div key={turnKey} className="bg-slate-800/70 border border-slate-700 rounded-lg">
-                  <div className="px-3 py-2 text-xs font-bold uppercase tracking-wider text-purple-300 border-b border-slate-700">
-                    Turn {turnKey}
+              {gameLogTurnKeys.map((turnKey) => {
+                const turnOwnerName = getPlayerNameById(game, gameLogByTurn[turnKey]?.[0]?.turnPlayerId, null);
+                return (
+                  <div key={turnKey} className="bg-slate-800/70 border border-slate-700 rounded-lg overflow-hidden">
+                    <div className="sticky top-0 z-10 px-3 py-2 text-xs font-bold uppercase tracking-wider text-purple-200 bg-slate-800 border-b border-slate-700">
+                      Turn {turnKey}{turnOwnerName ? ` — ${turnOwnerName}` : ''}
+                    </div>
+                    <div className="divide-y divide-slate-700/70">
+                      {gameLogByTurn[turnKey].map((entry) => (
+                        <div key={entry.id} className="px-3 py-2">
+                          <div className="flex items-start gap-2">
+                            <span className="mt-1 h-2 w-2 rounded-full bg-purple-400 flex-shrink-0" />
+                            <div className="min-w-0 flex-1">
+                              <div className="text-sm text-slate-100 break-words leading-snug">{entry.message}</div>
+                              <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-slate-500">
+                                {entry.timestamp && <span>{new Date(entry.timestamp).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>}
+                                {entry.phaseLabel && <span>{entry.phaseLabel}</span>}
+                                {entry.category && <span className="uppercase tracking-wide">{entry.category}</span>}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                  <div className="px-3 py-2 space-y-1">
-                    {recapByTurn[turnKey].map((event) => (
-                      <div key={event.id} className="text-sm text-slate-200 break-words">
-                        • {event.text}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         </div>
@@ -5067,7 +5158,14 @@ export default function App() {
         reveals: [],
         autopass: {},
         combat: getEmptyCombatState(),
-        log: []
+        log: [buildGameLogEntry({
+          currentGame: { turnNumber: 1, turnPlayerId: user.uid, phase: 'main1' },
+          playerId: user.uid,
+          playerName: safeName || 'Unknown',
+          type: 'GAME_CREATE',
+          category: 'setup',
+          message: `${safeName || 'Unknown'} created the game.`
+        })]
       };
 
       const shortCode = generateGameId();
@@ -5105,7 +5203,7 @@ export default function App() {
         if (existingPlayerIndex >= 0) {
           const newPlayers = [...players];
           newPlayers[existingPlayerIndex] = { ...newPlayers[existingPlayerIndex], name: safeName, lastSeenChatAt: Date.now() };
-          transaction.update(gameRef, { players: newPlayers, updatedAt: serverTimestamp() });
+          transaction.update(gameRef, { players: newPlayers, updatedAt: serverTimestamp(), log: arrayUnion(buildGameLogEntry({ currentGame: gameData, playerId: user.uid, playerName: safeName || 'Unknown', type: 'PLAYER_REJOIN', category: 'setup', message: `${safeName || 'Unknown'} rejoined the game.` })) });
         } else if (players.length < 2) {
           const newPlayer = {
             id: user.uid,
@@ -5116,7 +5214,7 @@ export default function App() {
             handRevealed: false,
             lastSeenChatAt: Date.now()
           };
-          transaction.update(gameRef, { players: [...players, newPlayer], updatedAt: serverTimestamp() });
+          transaction.update(gameRef, { players: [...players, newPlayer], updatedAt: serverTimestamp(), log: arrayUnion(buildGameLogEntry({ currentGame: gameData, playerId: user.uid, playerName: safeName || 'Unknown', type: 'PLAYER_JOIN', category: 'setup', message: `${safeName || 'Unknown'} joined the game.` })) });
         } else {
           throw new Error('Game is full.');
         }

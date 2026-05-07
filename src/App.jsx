@@ -985,7 +985,7 @@ const advancePassPriorityState = (currentGame, logEntry, onTurnStart, layoutOpti
       updatedGame.consecutivePasses = 0;
       updatedGame.priorityIndex = currentGame.activePlayerIndex;
       updatedGame.priorityPlayerId = players[currentGame.activePlayerIndex]?.id || currentGame.priorityPlayerId;
-      updatedGame.log.push(withUpdatedLogContext(logEntry, 'RESOLVE_SPELL', 'stack', `${actorName} resolved ${item.name}.`, { cardName: item.name, cardId: item.sourceId }));
+      updatedGame.log.push(withUpdatedLogContext(logEntry, 'RESOLVE_SPELL', 'stack', `${item.name} resolved.`, { cardName: item.name, cardId: item.sourceId }));
       return updatedGame;
     }
 
@@ -1656,6 +1656,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const [tokenModal, setTokenModal] = useState(null); // { name, power, toughness }
   const [revealsOpen, setRevealsOpen] = useState(false);
   const [stackDetailOpen, setStackDetailOpen] = useState(false);
+  const [selectedStackItemId, setSelectedStackItemId] = useState(null);
 
   // Chat State
   const [chatOpen, setChatOpen] = useState(false);
@@ -2269,6 +2270,78 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       return;
     }
 
+    if (actionType === 'RESOLVE_STACK_TOP' || actionType === 'COUNTER_STACK_TOP') {
+      await runTransaction(db, async (transaction) => {
+        const snap = await transaction.get(gameRef);
+        if (!snap.exists()) return;
+        const currentGame = snap.data();
+        const currentStack = [...(currentGame.stack || [])];
+        if (currentStack.length === 0) return;
+
+        const topItem = currentStack[currentStack.length - 1];
+        if (payload.stackItemId && topItem.id !== payload.stackItemId) return;
+
+        currentStack.pop();
+        const updatedCards = [...(currentGame.cards || [])];
+        const cardIndex = updatedCards.findIndex(c => c.instanceId === topItem.sourceId);
+        const cardName = topItem.name || 'Stack item';
+
+        if (cardIndex >= 0) {
+          const card = { ...updatedCards[cardIndex] };
+          const isStackSpell = card.zone === 'stack_zone' || (topItem.itemType || topItem.type || '').toString().toUpperCase().includes('SPELL');
+          if (actionType === 'RESOLVE_STACK_TOP' && isStackSpell) {
+            const typeLine = card.type_line || '';
+            const isPermanent = !typeLine.includes('Instant') && !typeLine.includes('Sorcery');
+            card.zone = isPermanent ? ZONES.BATTLEFIELD : ZONES.GRAVEYARD;
+            card.tapped = false;
+
+            if (isPermanent) {
+              const spawnPosition = getBattlefieldGridPosition({
+                card,
+                existingBattlefieldCards: currentGame.cards || [],
+                controllerId: card.controllerId,
+                containerWidth: card.controllerId === userId ? getCurrentBattlefieldWidthPx() : BATTLEFIELD_DEFAULT_WIDTH_PX,
+                isMobile: battlefieldViewport.width <= 900
+              });
+              Object.assign(card, getBattlefieldPositionCoordinates(spawnPosition));
+              logBattlefieldEntry(card, 'STACK_RESOLUTION', spawnPosition);
+            }
+          } else if (actionType === 'COUNTER_STACK_TOP' && card.zone === 'stack_zone') {
+            card.zone = ZONES.GRAVEYARD;
+            card.tapped = false;
+          }
+          updatedCards[cardIndex] = card;
+        }
+
+        const currentPlayers = currentGame.players || [];
+        const nextPriorityIndex = Number.isInteger(currentGame.activePlayerIndex) ? currentGame.activePlayerIndex : 0;
+        const nextPriorityPlayerId = currentPlayers[nextPriorityIndex]?.id || currentGame.priorityPlayerId || null;
+        const logActorName = currentPlayers.find(p => p.id === userId)?.name || actorName;
+        const stackLogEntry = buildGameLogEntry({
+          currentGame,
+          playerId: userId,
+          playerName: logActorName,
+          type: actionType === 'RESOLVE_STACK_TOP' ? 'RESOLVE_SPELL' : 'COUNTER_STACK_ITEM',
+          category: 'stack',
+          message: actionType === 'RESOLVE_STACK_TOP' ? `${cardName} resolved.` : `${cardName} was countered/fizzled.`,
+          cardId: topItem.sourceId || null,
+          cardName
+        });
+
+        transaction.update(gameRef, {
+          stack: currentStack,
+          cards: updatedCards,
+          consecutivePasses: 0,
+          priorityIndex: nextPriorityIndex,
+          priorityPlayerId: nextPriorityPlayerId,
+          log: [...(currentGame.log || []), stackLogEntry]
+        });
+      });
+      setSelectedStackItemId(null);
+      setStackDetailOpen(false);
+      return;
+    }
+
     if (actionType === 'ROLL_DICE') {
 
       const { diceType } = payload;
@@ -2646,7 +2719,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               priorityIndex: game.activePlayerIndex,
               priorityPlayerId: game.players[game.activePlayerIndex].id,
               cards: updatedCards,
-              log: arrayUnion(makeActionLog('RESOLVE_SPELL', `${actorName} resolved ${item.name}.`, { category: 'stack', cardId: item.sourceId, cardName: item.name }))
+              log: arrayUnion(makeActionLog('RESOLVE_SPELL', `${item.name} resolved.`, { category: 'stack', cardId: item.sourceId, cardName: item.name }))
             };
 
           } else {
@@ -3401,7 +3474,18 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [closeZoomedCard, zoomedCard]);
 
-  const openStackItem = (item) => {
+  const openStackItemDetail = (item) => {
+    if (!item) return;
+    setSelectedStackItemId(item.id || item.sourceId || null);
+    setStackDetailOpen(true);
+  };
+
+  const closeStackDetail = () => {
+    setStackDetailOpen(false);
+    setSelectedStackItemId(null);
+  };
+
+  const viewStackItemCard = (item) => {
     const card = game.cards.find(c => c.instanceId === item.sourceId);
     if (card && card.image_uri) {
       setZoomedCard(card);
@@ -3702,9 +3786,15 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     typeLabel: getStackItemTypeLabel(item),
     typeLine: getStackItemTypeLine(item),
     targets: getStackTargetDisplayNames(item),
-    targetInfo: getTargetInfoFor(item),
-    isTop: index === 0
+    isTop: index === 0,
+    stackPosition: stackCards.length - index
   }));
+  const selectedStackDetailItem = selectedStackItemId
+    ? stackDetailItems.find(({ item }) => item?.id === selectedStackItemId || item?.sourceId === selectedStackItemId)
+    : null;
+  const waitingPriorityText = waitingPriorityPlayers.length > 0
+    ? waitingPriorityPlayers.map((player) => player.name || 'Player').join(', ')
+    : priorityHolderName;
   const getLiveCard = (cardOrId) => {
     const card = typeof cardOrId === 'string' ? cardsMap.get(cardOrId) : cardOrId;
     return card?.instanceId ? (cardsMap.get(card.instanceId) || card) : card;
@@ -3880,7 +3970,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         <div className="flex items-center gap-3">
           <button
             type="button"
-            onClick={(e) => { e.stopPropagation(); setStackDetailOpen(true); }}
+            onClick={(e) => { e.stopPropagation(); setSelectedStackItemId(null); setStackDetailOpen(true); }}
             className={`relative z-20 pointer-events-auto flex flex-col items-center px-3 py-1 rounded border transition-colors ${stackCards.length > 0 ? 'border-yellow-600/60 bg-yellow-950/40 hover:bg-yellow-900/50' : 'border-slate-700 bg-slate-900 hover:bg-slate-800'}`}
             title="Inspect stack and priority"
             aria-label={`Inspect stack, ${stackCards.length} item${stackCards.length === 1 ? '' : 's'}`}
@@ -4118,7 +4208,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                     return (
                       <div
                         key={item.id}
-                        onClick={() => openStackItem(item)}
+                        onClick={() => openStackItemDetail(item)}
                         className="bg-black/60 p-2 rounded border-l-2 border-yellow-500 flex justify-between items-start gap-4 cursor-pointer hover:bg-black/80 transition-colors"
                       >
                         <div className="min-w-0">
@@ -4481,7 +4571,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               </div>
               <button
                 type="button"
-                onClick={() => setStackDetailOpen(false)}
+                onClick={closeStackDetail}
                 className="shrink-0 p-2 -mr-1 -mt-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-700"
                 aria-label="Close stack details"
               >
@@ -4519,45 +4609,117 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                 <div className="rounded-xl border border-dashed border-slate-700 bg-slate-800/40 p-6 text-center text-slate-300">
                   Stack is empty.
                 </div>
-              ) : stackDetailItems.map(({ item, name, casterName, typeLabel, typeLine, targets, targetInfo, isTop }) => (
-                <div key={item.id || `${item.sourceId}-${item.timestamp}`} className={`rounded-xl border p-3 shadow-lg ${isTop ? 'border-yellow-500/60 bg-yellow-950/30' : 'border-slate-700 bg-slate-800/70'}`}>
+              ) : selectedStackDetailItem ? (() => {
+                const { item, name, casterName, typeLabel, typeLine, targets, isTop, stackPosition } = selectedStackDetailItem;
+                return (
+                  <div className={`rounded-xl border p-3 shadow-lg ${isTop ? 'border-yellow-500/60 bg-yellow-950/30' : 'border-slate-700 bg-slate-800/70'}`}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="font-bold text-slate-50 text-lg break-words">{name}</div>
+                        <div className="mt-1 text-xs text-slate-300">{typeLabel === 'Ability' ? 'Controller' : 'Caster'}: {casterName}</div>
+                      </div>
+                      {typeLabel && (
+                        <span className="shrink-0 rounded-full border border-slate-600 bg-slate-950/80 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-300">
+                          {typeLabel}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="mt-3 grid grid-cols-1 gap-2 text-sm">
+                      <div className="rounded-lg border border-slate-700 bg-slate-950/50 p-2">
+                        <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Type line</div>
+                        <div className="mt-1 text-slate-100 break-words">{typeLine || 'Unknown'}</div>
+                      </div>
+                      <div className="rounded-lg border border-slate-700 bg-slate-950/50 p-2">
+                        <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Stack position</div>
+                        <div className="mt-1 text-slate-100">{stackPosition} of {stackCards.length} · {isTop ? 'Top item' : 'Below top item'}</div>
+                      </div>
+                      <div className="rounded-lg border border-purple-500/30 bg-purple-950/20 p-2">
+                        <div className="text-[11px] font-bold uppercase tracking-wider text-purple-200">Priority</div>
+                        <div className="mt-1 text-purple-50">Priority: {priorityHolderName}</div>
+                        <div className="mt-0.5 text-xs text-purple-200">Waiting for: {waitingPriorityText}</div>
+                      </div>
+                      <div className="rounded-lg border border-yellow-500/30 bg-yellow-950/20 p-2">
+                        <div className="text-[11px] font-bold uppercase tracking-wider text-yellow-200">Targets</div>
+                        {targets.length > 0 ? (
+                          <ul className="mt-1 list-disc pl-4 text-sm text-yellow-50 space-y-0.5">
+                            {targets.map((targetName, targetIndex) => (
+                              <li key={`${item.id || item.sourceId}-detail-target-${targetIndex}`} className="break-words">{targetName}</li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <div className="mt-1 text-sm text-yellow-50">No targets</div>
+                        )}
+                      </div>
+                    </div>
+
+                    {!isTop && (
+                      <div className="mt-3 rounded-lg border border-slate-600 bg-slate-800/80 p-2 text-sm text-slate-300">
+                        Only the top stack item can resolve first.
+                      </div>
+                    )}
+
+                    <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {isTop && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => handleAction('RESOLVE_STACK_TOP', { stackItemId: item.id })}
+                            className="rounded-lg bg-emerald-600 hover:bg-emerald-500 px-3 py-2 text-sm font-bold text-white shadow"
+                          >
+                            Resolve top item
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (window.confirm(`Counter/fizzle ${name}?`)) {
+                                handleAction('COUNTER_STACK_TOP', { stackItemId: item.id });
+                              }
+                            }}
+                            className="rounded-lg bg-red-700 hover:bg-red-600 px-3 py-2 text-sm font-bold text-white shadow"
+                          >
+                            Counter / Fizzle
+                          </button>
+                        </>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => viewStackItemCard(item)}
+                        className="rounded-lg border border-sky-500/50 bg-sky-950/60 hover:bg-sky-900/70 px-3 py-2 text-sm font-bold text-sky-100 shadow"
+                      >
+                        View card
+                      </button>
+                      <button
+                        type="button"
+                        onClick={closeStackDetail}
+                        className="rounded-lg border border-slate-600 bg-slate-800 hover:bg-slate-700 px-3 py-2 text-sm font-bold text-slate-100 shadow"
+                      >
+                        Close
+                      </button>
+                    </div>
+                  </div>
+                );
+              })() : stackDetailItems.map(({ item, name, casterName, typeLabel, typeLine, targets, isTop, stackPosition }) => (
+                <button
+                  type="button"
+                  key={item.id || `${item.sourceId}-${item.timestamp}`}
+                  onClick={() => openStackItemDetail(item)}
+                  className={`block w-full text-left rounded-xl border p-3 shadow-lg transition-colors ${isTop ? 'border-yellow-500/60 bg-yellow-950/30 hover:bg-yellow-900/40' : 'border-slate-700 bg-slate-800/70 hover:bg-slate-800'}`}
+                >
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <div className="font-bold text-slate-50 break-words">{name}</div>
-                      <div className="mt-1 text-xs text-slate-300">{typeLabel === 'Ability' ? 'Activated by' : 'Cast by'} {casterName}</div>
+                      <div className="mt-1 text-xs text-slate-300">{typeLabel === 'Ability' ? 'Controller' : 'Caster'}: {casterName}</div>
                     </div>
-                    {typeLabel && (
-                      <span className="shrink-0 rounded-full border border-slate-600 bg-slate-950/80 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-300">
-                        {typeLabel}
-                      </span>
-                    )}
+                    <span className="shrink-0 rounded-full border border-slate-600 bg-slate-950/80 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-300">
+                      {isTop ? 'Top item' : `#${stackPosition}`}
+                    </span>
                   </div>
                   {typeLine && <div className="mt-2 text-xs italic text-slate-400 break-words">{typeLine}</div>}
-                  {targets.length > 0 && (
-                    <div className="mt-3 rounded-lg border border-yellow-500/30 bg-yellow-950/20 p-2">
-                      <div className="text-[11px] font-bold uppercase tracking-wider text-yellow-200">
-                        {targets.length === 1 ? 'Target' : 'Targets'}
-                      </div>
-                      {targets.length === 1 ? (
-                        <div className="mt-1 text-sm text-yellow-50 break-words">{targets[0]}</div>
-                      ) : (
-                        <ul className="mt-1 list-disc pl-4 text-sm text-yellow-50 space-y-0.5">
-                          {targets.map((targetName, targetIndex) => (
-                            <li key={`${item.id || item.sourceId}-target-${targetIndex}`} className="break-words">{targetName}</li>
-                          ))}
-                        </ul>
-                      )}
-                    </div>
-                  )}
-                  {targetInfo?.targetedByDisplayNames?.length > 0 && (
-                    <div className="mt-2 text-xs text-sky-200 break-words">
-                      Targeted by: {targetInfo.targetedByDisplayNames.join(', ')}
-                    </div>
-                  )}
-                  <div className="mt-3 text-xs text-slate-400">
-                    {isTop && waitingPriorityPlayers.length > 0 ? `Waiting for: ${waitingPriorityPlayers.map((player) => player.name || 'Player').join(', ')}` : (isTop ? 'Top stack item' : 'Below top item')}
+                  <div className="mt-2 text-xs text-yellow-100 break-words">
+                    Targets: {targets.length > 0 ? formatTargetListInline(targets, 2) : 'No targets'}
                   </div>
-                </div>
+                </button>
               ))}
             </div>
           </div>

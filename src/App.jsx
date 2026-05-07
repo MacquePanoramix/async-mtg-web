@@ -2653,11 +2653,14 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
     } else if (actionType === 'DRAW_CARD') {
       const libCards = game.cards.filter(c => c.ownerId === userId && c.zone === ZONES.LIBRARY);
-      if (libCards.length > 0) {
-        const cardToDraw = libCards[0];
-        const newCards = game.cards.map(c => c.instanceId === cardToDraw.instanceId ? { ...c, zone: ZONES.HAND } : c);
-        updates.cards = newCards;
+      if (libCards.length === 0) {
+        setNotification('No cards left in library to draw.');
+        setTimeout(() => setNotification(null), 2000);
+        return;
       }
+      const cardToDraw = libCards[0];
+      const newCards = game.cards.map(c => c.instanceId === cardToDraw.instanceId ? { ...c, zone: ZONES.HAND } : c);
+      updates.cards = newCards;
       updates.log = arrayUnion(makeActionLog('DRAW_CARD', `${actorName} drew a card.`, { category: 'draw' }));
 
     } else if (actionType === 'MOVE_ZONE') {
@@ -3447,6 +3450,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const getZoneCount = (pid, zone) => (game.cards || []).filter(c => c.ownerId === pid && c.zone === zone).length;
   const myGYCount = getZoneCount(viewAsPlayerId, ZONES.GRAVEYARD);
   const myExileCount = getZoneCount(viewAsPlayerId, ZONES.EXILE);
+  const myLibraryCount = isPlayer ? getZoneCount(userId, ZONES.LIBRARY) : 0;
+  const canDrawFromLibrary = canAct && myLibraryCount > 0;
   const hasDeckLoaded = [
     ZONES.LIBRARY,
     ZONES.HAND,
@@ -3714,9 +3719,22 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           >
             <BookOpen size={20} />
           </button>
+          {!isSpectator && (
+            <button
+              type="button"
+              onClick={() => handleAction('DRAW_CARD')}
+              disabled={!canDrawFromLibrary}
+              className={`relative z-20 pointer-events-auto min-h-11 px-4 py-2 rounded-full text-sm font-extrabold shadow-lg transition-all flex items-center gap-2 active:scale-95 ${canDrawFromLibrary ? 'bg-blue-600 hover:bg-blue-500 text-white border border-blue-400/60' : 'bg-slate-700/50 text-slate-400 border border-slate-600 cursor-not-allowed opacity-60'}`}
+              title={canDrawFromLibrary ? 'Draw one card' : 'No cards left in library'}
+              aria-label="Draw one card"
+            >
+              <Plus size={16} /> Draw
+            </button>
+          )}
           <button
             onClick={() => setRevealsOpen(true)}
             className="relative z-20 pointer-events-auto flex flex-col items-center justify-center px-2 py-1 rounded hover:bg-slate-700"
+            title="View reveals and reveal tools"
           >
             <span className="text-[10px] text-slate-400">REVEALS</span>
             <Eye size={16} className="text-blue-400"/>
@@ -4108,23 +4126,6 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               </button>
             </div>
 
-            {myHand.length > 0 && (
-              <button
-                onClick={canAct ? () => handleAction('REVEAL_ALL_HAND') : undefined}
-                className={`p-2 rounded-full text-slate-400 hover:text-white hover:bg-slate-700 ${canAct ? '' : 'opacity-40 cursor-not-allowed'}`}
-                title="Reveal All Hand Cards"
-              >
-                <Eye size={18} />
-              </button>
-            )}
-
-            <button
-              onClick={canAct ? () => handleAction('TOGGLE_HAND_REVEAL') : undefined}
-              className={`p-2 rounded-full ${handRevealed ? 'text-purple-400 bg-purple-900/30' : 'text-slate-500 hover:text-slate-300'} ${canAct ? '' : 'opacity-40 cursor-not-allowed'}`}
-            >
-              {handRevealed ? <Unlock size={18} /> : <Lock size={18} />}
-            </button>
-
             {/* Library Menu */}
             <div className="relative">
               <button
@@ -4155,7 +4156,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             className="fixed z-[100] w-40 bg-slate-800 rounded shadow-xl border border-slate-600 overflow-hidden"
             style={{ top: libraryMenuPos.top - 8, left: libraryMenuPos.right, transform: 'translate(-100%, -100%)' }}
           >
-            <button onClick={() => handleAction('DRAW_CARD')} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-700 flex items-center gap-2 text-blue-300">
+            <button onClick={() => { handleAction('DRAW_CARD'); setLibraryMenuOpen(false); }} disabled={!canDrawFromLibrary} className={`w-full text-left px-3 py-2 text-sm flex items-center gap-2 ${canDrawFromLibrary ? 'hover:bg-slate-700 text-blue-300' : 'text-slate-500 cursor-not-allowed'}`}>
               <Plus size={12} /> Draw
             </button>
             <button onClick={() => { handleAction('MULLIGAN'); setLibraryMenuOpen(false); }} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-700 flex items-center gap-2 text-amber-300" >
@@ -4659,9 +4660,31 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       {revealsOpen && (
         <div className="fixed inset-0 bg-black/90 z-[100] flex flex-col p-4">
           <div className="flex justify-between items-center mb-4">
-            <h2 className="text-xl font-bold text-white">Revealed Cards</h2>
+            <div>
+              <h2 className="text-xl font-bold text-white">Revealed Cards</h2>
+              <p className="text-xs text-slate-400">View reveals and manage reveal tools.</p>
+            </div>
             <button onClick={() => setRevealsOpen(false)}><X className="text-white"/></button>
           </div>
+          {canAct && (
+            <div className="mb-4 grid grid-cols-1 sm:grid-cols-2 gap-2 rounded-xl border border-slate-700 bg-slate-900/70 p-3">
+              <button
+                onClick={() => handleAction('TOGGLE_HAND_REVEAL')}
+                className={`min-h-11 rounded-lg px-4 py-2 text-sm font-bold flex items-center justify-center gap-2 border ${handRevealed ? 'bg-purple-900/50 text-purple-100 border-purple-500/50 hover:bg-purple-800/60' : 'bg-slate-800 text-slate-100 border-slate-600 hover:bg-slate-700'}`}
+              >
+                {handRevealed ? <Unlock size={16} /> : <Lock size={16} />}
+                {handRevealed ? 'Hide hand' : 'Reveal hand'}
+              </button>
+              <button
+                onClick={() => handleAction('REVEAL_ALL_HAND')}
+                disabled={myHand.length === 0}
+                className={`min-h-11 rounded-lg px-4 py-2 text-sm font-bold flex items-center justify-center gap-2 border ${myHand.length > 0 ? 'bg-slate-800 text-slate-100 border-slate-600 hover:bg-slate-700' : 'bg-slate-800/50 text-slate-500 border-slate-700 cursor-not-allowed'}`}
+                title={myHand.length > 0 ? 'Reveal each card in your hand to the public reveals list' : 'No cards in hand to reveal'}
+              >
+                <Eye size={16} /> Reveal all hand cards
+              </button>
+            </div>
+          )}
           <div className="flex-1 overflow-y-auto grid grid-cols-2 sm:grid-cols-4 gap-4 p-2 content-start">
             {[...(game.reveals || [])].reverse().map(r => (
               <div key={r.id} className="bg-slate-800 p-2 rounded border border-slate-700 flex flex-col gap-2">

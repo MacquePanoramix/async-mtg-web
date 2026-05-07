@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged, GoogleAuthProvider, linkWithPopup, signInWithPopup, signInWithRedirect, getRedirectResult, signOut } from 'firebase/auth';
 import { getFirestore, doc, setDoc, collection, onSnapshot, updateDoc, arrayUnion, serverTimestamp, runTransaction, query, orderBy, deleteDoc, getDoc, addDoc } from 'firebase/firestore';
-import { X, ArrowRight, Clock, Shield, Skull, Layers, Eye, ChevronDown, ChevronUp, BookOpen, Shuffle, Plus, Copy, UserCheck, EyeOff, RotateCw, Search, Hexagon, Unlock, Lock, Move, Dices, Coins, LayoutGrid, LogOut, Users, User, Bug, Loader2, RefreshCw, AlertTriangle, Repeat, Check, ArrowUp, ArrowDown, MessageSquare, Trash2 } from 'lucide-react';
+import { X, ArrowRight, Clock, Shield, Skull, Layers, Eye, ChevronDown, ChevronUp, BookOpen, Shuffle, Plus, Copy, UserCheck, EyeOff, RotateCw, Search, Hexagon, Unlock, Lock, Move, Dices, Coins, LayoutGrid, LogOut, Users, User, Bug, Loader2, RefreshCw, AlertTriangle, Repeat, Check, ArrowUp, ArrowDown, MessageSquare, Trash2, Paperclip } from 'lucide-react';
 
 // --- Firebase Configuration ---
 // UPDATED: Using standard Vite env vars
@@ -185,6 +185,36 @@ const getSafeMoveCardName = (card, fromZone, toZone) => {
   if (isPublicZone(fromZone) || isPublicZone(toZone)) return card.name || 'a card';
   return 'a card';
 };
+
+const normalizeAttachment = (card) => {
+  const attachment = card?.attachment;
+  if (attachment?.type && attachment?.id) return { type: attachment.type, id: attachment.id };
+  if (card?.attachedToType && card?.attachedToId) return { type: card.attachedToType, id: card.attachedToId };
+  return null;
+};
+
+const clearAttachmentFields = (card) => {
+  const rest = { ...(card || {}) };
+  delete rest.attachment;
+  delete rest.attachedToType;
+  delete rest.attachedToId;
+  return rest;
+};
+
+const setCardAttachment = (card, type, id) => ({
+  ...clearAttachmentFields(card),
+  attachment: { type, id }
+});
+
+const getCardsAttachedTo = (cards = [], hostCardId) => cards.filter((card) => {
+  const attachment = normalizeAttachment(card);
+  return attachment?.type === 'card' && attachment.id === hostCardId && card.zone === ZONES.BATTLEFIELD;
+});
+
+const getCardsAttachedToPlayer = (cards = [], playerId) => cards.filter((card) => {
+  const attachment = normalizeAttachment(card);
+  return attachment?.type === 'player' && attachment.id === playerId && card.zone === ZONES.BATTLEFIELD;
+});
 
 const getPlayerNameById = (currentGame, playerId, fallback = 'Player') => (
   (currentGame?.players || []).find((player) => player.id === playerId)?.name || fallback
@@ -1613,7 +1643,7 @@ const TokenCardPreview = ({ token, size = 'small' }) => {
   );
 };
 
-const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isDraggable, targets = [], stack = [], isSelected = false, combatBadgeLabel = null, combatBadges = null, displayName = null, markedDamage = null, targetInfo = null }) => {
+const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isDraggable, targets = [], stack = [], isSelected = false, combatBadgeLabel = null, combatBadges = null, displayName = null, markedDamage = null, targetInfo = null, attachmentLabel = null, attachedCount = 0 }) => {
   const isTapped = card.tapped;
   const isFaceDown = card.faceDown;
   const counters = card.counters || {};
@@ -1708,6 +1738,18 @@ const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isD
             )
           ))}
         </div>
+
+        {zone === ZONES.BATTLEFIELD && attachmentLabel && (
+          <div className="absolute top-1 right-1 z-30 pointer-events-none max-w-[calc(100%-0.5rem)] truncate rounded-md border border-fuchsia-200/80 bg-fuchsia-800/95 px-1.5 py-0.5 text-[8px] font-black leading-none text-white shadow-[0_1px_6px_rgba(0,0,0,0.65)]">
+            {attachmentLabel}
+          </div>
+        )}
+
+        {zone === ZONES.BATTLEFIELD && attachedCount > 0 && (
+          <div className="absolute left-1 top-[3.1rem] z-30 pointer-events-none flex items-center gap-0.5 rounded-md border border-violet-200/80 bg-violet-800/95 px-1.5 py-0.5 text-[9px] font-black leading-none text-white shadow-[0_1px_6px_rgba(0,0,0,0.65)]" title={`${attachedCount} attached`}>
+            <Paperclip size={9} /> {attachedCount}
+          </div>
+        )}
 
         {battlefieldBadgeLayout?.targetBadges.show && (
           <div className={battlefieldBadgeLayout.targetBadges.className}>
@@ -1829,6 +1871,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
   // New state for multi-targeting
   const [targetingState, setTargetingState] = useState(null); // { source, mode: 'CAST'|'ABILITY'|'MANUAL', selectedIds: [] }
+  const [attachmentState, setAttachmentState] = useState(null); // { source }
+  const [attachmentPlayerPickerCard, setAttachmentPlayerPickerCard] = useState(null);
   const [opponentSectionHighlighted, setOpponentSectionHighlighted] = useState(false);
   const [attackTargetPickerCard, setAttackTargetPickerCard] = useState(null);
   const [blockPickerCard, setBlockPickerCard] = useState(null);
@@ -2164,7 +2208,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const getCurrentBattlefieldWidthPx = () => getCurrentBattlefieldDimensionsPx().width;
 
   const handleDragStart = (e, card) => {
-    if (isSpectator || !boardUnlocked || targetingState || !myBattlefieldRef.current) return;
+    if (isSpectator || !boardUnlocked || targetingState || attachmentState || !myBattlefieldRef.current) return;
     e.stopPropagation();
     setOptimisticAutoBattlefieldIds(prev => {
       if (!prev.has(card.instanceId)) return prev;
@@ -2393,6 +2437,26 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       if (names.length === 0) return '';
       return ` targeting ${names.join(', ')}`;
     };
+    const getAttachmentDisplayName = (card) => getSafeCardName(card, 'a card');
+    const buildAttachmentCleanup = (cards, leavingCard) => {
+      if (!leavingCard || leavingCard.zone !== ZONES.BATTLEFIELD) return { cards, messages: [] };
+      const leavingId = leavingCard.instanceId;
+      const leavingName = getAttachmentDisplayName(leavingCard);
+      const messages = [];
+      const nextCards = cards.map((card) => {
+        if (card.instanceId === leavingId) {
+          return normalizeAttachment(card) ? clearAttachmentFields(card) : card;
+        }
+        const attachment = normalizeAttachment(card);
+        if (attachment?.type === 'card' && attachment.id === leavingId) {
+          messages.push(`${getAttachmentDisplayName(card)} became unattached because ${leavingName} left the battlefield.`);
+          return clearAttachmentFields(card);
+        }
+        return card;
+      });
+      return { cards: nextCards, messages };
+    };
+    const makeAttachmentLogs = (messages) => messages.map((message) => makeActionLog('ATTACHMENT_CLEANUP', message, { category: 'attachment' }));
     const logEntry = makeActionLog(actionType, payload.desc || actionType);
 
     let updates = { log: arrayUnion(logEntry) };
@@ -2882,7 +2946,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     } else if (actionType === 'CLONE_CARD') {
       const original = game.cards.find(c => c.instanceId === payload.cardId);
       if (original) {
-        const cloneBase = { ...original, instanceId: generateCardId(), zone: ZONES.BATTLEFIELD };
+        const cloneBase = { ...clearAttachmentFields(original), instanceId: generateCardId(), zone: ZONES.BATTLEFIELD };
         const spawnPosition = getBattlefieldGridPosition({
           card: cloneBase,
           existingBattlefieldCards: game.cards,
@@ -3245,6 +3309,28 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       updates.priorityPlayerId = userId;
       updates.priorityIndex = userIndex !== -1 ? userIndex : game.priorityIndex;
 
+    } else if (actionType === 'ATTACH_CARD') {
+      const sourceCard = game.cards.find(c => c.instanceId === payload.cardId);
+      if (!sourceCard || sourceCard.zone !== ZONES.BATTLEFIELD) return;
+      if (payload.targetType === 'card') {
+        const targetCard = game.cards.find(c => c.instanceId === payload.targetId);
+        if (!targetCard || targetCard.zone !== ZONES.BATTLEFIELD || targetCard.instanceId === sourceCard.instanceId) return;
+        updates.cards = game.cards.map(c => c.instanceId === sourceCard.instanceId ? setCardAttachment(c, 'card', targetCard.instanceId) : c);
+        updates.log = arrayUnion(makeActionLog('ATTACH_CARD', `${actorName} attached ${getAttachmentDisplayName(sourceCard)} to ${getAttachmentDisplayName(targetCard)}.`, { category: 'attachment', cardId: sourceCard.instanceId, cardName: getAttachmentDisplayName(sourceCard), targetCardId: targetCard.instanceId, targetCardName: getAttachmentDisplayName(targetCard) }));
+      } else if (payload.targetType === 'player') {
+        const targetPlayer = (game.players || []).find(player => player.id === payload.targetId);
+        if (!targetPlayer) return;
+        const targetPlayerName = targetPlayer.name || 'Player';
+        updates.cards = game.cards.map(c => c.instanceId === sourceCard.instanceId ? setCardAttachment(c, 'player', targetPlayer.id) : c);
+        updates.log = arrayUnion(makeActionLog('ATTACH_CARD', `${actorName} attached ${getAttachmentDisplayName(sourceCard)} to ${targetPlayerName}.`, { category: 'attachment', cardId: sourceCard.instanceId, cardName: getAttachmentDisplayName(sourceCard), targetPlayerId: targetPlayer.id, targetPlayerName }));
+      }
+
+    } else if (actionType === 'DETACH_CARD') {
+      const sourceCard = game.cards.find(c => c.instanceId === payload.cardId);
+      if (!sourceCard || !normalizeAttachment(sourceCard)) return;
+      updates.cards = game.cards.map(c => c.instanceId === sourceCard.instanceId ? clearAttachmentFields(c) : c);
+      updates.log = arrayUnion(makeActionLog('DETACH_CARD', `${actorName} detached ${getAttachmentDisplayName(sourceCard)}.`, { category: 'attachment', cardId: sourceCard.instanceId, cardName: getAttachmentDisplayName(sourceCard) }));
+
     } else if (actionType === 'TAP_TOGGLE') {
       const card = game.cards.find(c => c.instanceId === payload.cardId);
       const nextTapped = !card?.tapped;
@@ -3285,12 +3371,12 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             isMobile: battlefieldViewport.width <= 900
           })
         : null;
-      const newCards = tokenLeavesBattlefield
+      const movedCards = tokenLeavesBattlefield
         ? game.cards.filter(c => c.instanceId !== payload.cardId)
         : game.cards.map(c =>
             c.instanceId === payload.cardId
               ? {
-                  ...c,
+                  ...clearAttachmentFields(c),
                   zone: payload.targetZone,
                   tapped: false,
                   tempDamage: 0,
@@ -3299,26 +3385,38 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                 }
               : c
           );
+      const { cards: newCards, messages: attachmentCleanupMessages } = payload.targetZone !== ZONES.BATTLEFIELD
+        ? buildAttachmentCleanup(movedCards, movingCard)
+        : { cards: movedCards, messages: [] };
       if (spawnPosition) logBattlefieldEntry(battlefieldMovingCard, 'MOVE_ZONE', spawnPosition);
       updates.cards = newCards;
       updates.combat = clearCombatAssignmentsForCard(game.combat || getEmptyCombatState(), payload.cardId);
       const movedCardName = movingCard?.isToken ? `${movingCard.name || 'Token'} token` : getSafeMoveCardName(movingCard, movingCard?.zone, payload.targetZone);
-      updates.log = arrayUnion(makeActionLog('MOVE_ZONE', `${actorName} moved ${movedCardName} to ${getZoneLabel(payload.targetZone)}.`, { category: 'zone', cardId: payload.cardId, cardName: movedCardName, fromZone: movingCard?.zone, toZone: payload.targetZone, tokenRemoved: tokenLeavesBattlefield }));
+      updates.log = arrayUnion(
+        makeActionLog('MOVE_ZONE', `${actorName} moved ${movedCardName} to ${getZoneLabel(payload.targetZone)}.`, { category: 'zone', cardId: payload.cardId, cardName: movedCardName, fromZone: movingCard?.zone, toZone: payload.targetZone, tokenRemoved: tokenLeavesBattlefield }),
+        ...makeAttachmentLogs(attachmentCleanupMessages)
+      );
 
     } else if (actionType === 'MOVE_TO_LIBRARY') {
       const cardToMove = game.cards.find(c => c.instanceId === payload.cardId);
       const otherCards = game.cards.filter(c => c.instanceId !== payload.cardId);
       const tokenLeavesBattlefield = Boolean(cardToMove?.isToken && cardToMove.zone === ZONES.BATTLEFIELD);
 
+      let movedCards;
       if (tokenLeavesBattlefield) {
-        updates.cards = otherCards;
+        movedCards = otherCards;
       } else {
-        const updatedCard = { ...cardToMove, zone: ZONES.LIBRARY, tapped: false, tempDamage: 0, faceDown: false, counters: {}, x: 5, y: 5 };
-        updates.cards = payload.position === 'TOP' ? [updatedCard, ...otherCards] : [...otherCards, updatedCard];
+        const updatedCard = { ...clearAttachmentFields(cardToMove), zone: ZONES.LIBRARY, tapped: false, tempDamage: 0, faceDown: false, counters: {}, x: 5, y: 5 };
+        movedCards = payload.position === 'TOP' ? [updatedCard, ...otherCards] : [...otherCards, updatedCard];
       }
+      const { cards: cleanedCards, messages: attachmentCleanupMessages } = buildAttachmentCleanup(movedCards, cardToMove);
+      updates.cards = cleanedCards;
       updates.combat = clearCombatAssignmentsForCard(game.combat || getEmptyCombatState(), payload.cardId);
       const movedCardName = cardToMove?.isToken ? `${cardToMove.name || 'Token'} token` : getSafeCardName(cardToMove);
-      updates.log = arrayUnion(makeActionLog('MOVE_TO_LIBRARY', `${actorName} moved ${movedCardName} to the ${payload.position === 'TOP' ? 'top' : 'bottom'} of library.`, { category: 'zone', cardId: payload.cardId, cardName: movedCardName, fromZone: cardToMove?.zone, toZone: ZONES.LIBRARY, tokenRemoved: tokenLeavesBattlefield }));
+      updates.log = arrayUnion(
+        makeActionLog('MOVE_TO_LIBRARY', `${actorName} moved ${movedCardName} to the ${payload.position === 'TOP' ? 'top' : 'bottom'} of library.`, { category: 'zone', cardId: payload.cardId, cardName: movedCardName, fromZone: cardToMove?.zone, toZone: ZONES.LIBRARY, tokenRemoved: tokenLeavesBattlefield }),
+        ...makeAttachmentLogs(attachmentCleanupMessages)
+      );
 
     } else if (actionType === 'REORDER_TOP_LIBRARY') {
       const ownerId = payload.ownerId;
@@ -3717,6 +3815,35 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     if (idx >= 0) newSelected.splice(idx, 1);
     else newSelected.push(pidStr);
     setTargetingState({ ...targetingState, selectedIds: newSelected });
+  };
+
+  const selectAttachmentTarget = async (targetCard) => {
+    if (!canAct || !attachmentState?.source || !targetCard) return;
+    if (targetCard.instanceId === attachmentState.source.instanceId) {
+      setNotification("A card can't be attached to itself.");
+      setTimeout(() => setNotification(null), 2000);
+      return;
+    }
+    await handleAction('ATTACH_CARD', { cardId: attachmentState.source.instanceId, targetType: 'card', targetId: targetCard.instanceId });
+    setAttachmentState(null);
+  };
+
+  const handleBattlefieldCardTap = (card, fallback) => {
+    if (attachmentState) {
+      selectAttachmentTarget(card);
+      return;
+    }
+    if (targetingState) {
+      toggleTarget(card);
+      return;
+    }
+    fallback(card);
+  };
+
+  const attachToPlayer = async (playerId) => {
+    if (!attachmentPlayerPickerCard || !canAct) return;
+    await handleAction('ATTACH_CARD', { cardId: attachmentPlayerPickerCard.instanceId, targetType: 'player', targetId: playerId });
+    setAttachmentPlayerPickerCard(null);
   };
 
   const setAttackTarget = async (cardId, attackTarget) => {
@@ -4127,6 +4254,25 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const noDeckLoaded = !hasDeckLoaded;
   const stackCards = game.stack || [];
   const cardsMap = new Map((game.cards || []).map(c => [c.instanceId, c]));
+  const getAttachmentInfo = (cardOrId) => {
+    const card = typeof cardOrId === 'string' ? cardsMap.get(cardOrId) : cardOrId;
+    const liveCard = card?.instanceId ? (cardsMap.get(card.instanceId) || card) : card;
+    const attachment = normalizeAttachment(liveCard);
+    const attachedCards = getCardsAttachedTo(game.cards || [], liveCard?.instanceId);
+    let attachedToLabel = null;
+    let attachedToType = attachment?.type || null;
+    if (attachment?.type === 'card') attachedToLabel = getDisplayCardName(attachment.id);
+    if (attachment?.type === 'player') attachedToLabel = getPlayerNameById(game, attachment.id, 'Player');
+    return { attachment, attachedToType, attachedToLabel, attachedCards };
+  };
+  const getAttachmentBadgeLabel = (card) => {
+    const info = getAttachmentInfo(card);
+    if (info.attachedToType === 'player') return `On ${info.attachedToLabel}`;
+    if (info.attachedToType === 'card') return 'Attached';
+    return null;
+  };
+  const getAttachedCount = (card) => getAttachmentInfo(card).attachedCards.length;
+  const getPlayerAttachmentCount = (playerId) => getCardsAttachedToPlayer(game.cards || [], playerId).length;
   const getSafePublicCardName = (card, fallback = 'a card') => {
     if (!card) return fallback;
     if (card.faceDown) return 'a face-down card';
@@ -4557,6 +4703,11 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                     TURN
                   </span>
                 )}
+                {opponent && getPlayerAttachmentCount(opponent.id) > 0 && (
+                  <span className="inline-flex items-center gap-1 rounded-full border border-fuchsia-500/40 bg-fuchsia-900/40 px-2 py-0.5 text-[10px] font-bold text-fuchsia-100" title={getCardsAttachedToPlayer(game.cards || [], opponent.id).map(c => getDisplayCardName(c)).join(', ')}>
+                    <Paperclip size={10} /> {getPlayerAttachmentCount(opponent.id)}
+                  </span>
+                )}
               </div>
               {opponent && (
                 <span className="bg-slate-700 px-2 py-0.5 rounded text-xs flex gap-2 h-fit">
@@ -4602,12 +4753,14 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                       targets={game.targets || []}
                       stack={stackCards}
                       isSelected={false}
-                      onMove={() => targetingState ? toggleTarget(card) : setZoomedCard(card)}
+                      onMove={() => handleBattlefieldCardTap(card, setZoomedCard)}
                       onZoom={setZoomedCard}
                       displayName={getDisplayCardName(card)}
                       markedDamage={getCardMarkedDamage(card)}
                       combatBadges={getCardCombatBadges(card, 'opponent battlefield')}
                       targetInfo={getTargetInfoFor(card)}
+                      attachmentLabel={getAttachmentBadgeLabel(card)}
+                      attachedCount={getAttachedCount(card)}
                     />
                   </div>
                 );
@@ -4675,6 +4828,11 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                   <div className="text-[10px] uppercase tracking-widest text-slate-400 font-bold">Your Battlefield</div>
                   <div className="font-bold text-slate-100">{myPlayer?.name || 'You'}</div>
                 </div>
+                {myPlayer && getPlayerAttachmentCount(myPlayer.id) > 0 && (
+                  <span className="inline-flex items-center gap-1 rounded-full border border-fuchsia-500/40 bg-fuchsia-900/40 px-2 py-0.5 text-[10px] font-bold text-fuchsia-100" title={getCardsAttachedToPlayer(game.cards || [], myPlayer.id).map(c => getDisplayCardName(c)).join(', ')}>
+                    <Paperclip size={10} /> {getPlayerAttachmentCount(myPlayer.id)}
+                  </span>
+                )}
               </div>
               <div className="sticky top-0 z-30 flex justify-end gap-2 pointer-events-none">
                 <button
@@ -4734,20 +4892,22 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                     <Card
                       card={card}
                       zone={ZONES.BATTLEFIELD}
-                      isDraggable={boardUnlocked && !targetingState}
+                      isDraggable={boardUnlocked && !targetingState && !attachmentState}
                       targets={game.targets || []}
                       stack={stackCards}
                       isSelected={targetingState?.selectedIds.includes(card.instanceId)}
                       style={{ left: `0%`, top: `0%`, zIndex: isDragging ? 50 : 10 }}
                       onMouseDown={(e) => handleDragStart(e, card)}
                       onTouchStart={(e) => handleDragStart(e, card)}
-                      onMove={() => targetingState ? toggleTarget(card) : setSelectedCard(card)}
+                      onMove={() => handleBattlefieldCardTap(card, setSelectedCard)}
                       onZoom={setZoomedCard}
                       onPeek={(c) => setPeekCard(c)}
                       displayName={getDisplayCardName(card)}
                       markedDamage={getCardMarkedDamage(card)}
                       combatBadges={getCardCombatBadges(card, 'own battlefield')}
                       targetInfo={getTargetInfoFor(card)}
+                      attachmentLabel={getAttachmentBadgeLabel(card)}
+                      attachedCount={getAttachedCount(card)}
                     />
                   </div>
                 );
@@ -4779,6 +4939,11 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                   )}
                   {isSelfTargeted && (
                     <div className="text-xs bg-blue-600 text-white rounded-full px-2 py-0.5 font-bold shadow animate-in zoom-in">🎯</div>
+                  )}
+                  {getPlayerAttachmentCount(viewAsPlayerId) > 0 && (
+                    <div className="inline-flex items-center gap-1 rounded-full border border-fuchsia-500/40 bg-fuchsia-900/50 px-2 py-0.5 text-[10px] font-bold text-fuchsia-100" title={getCardsAttachedToPlayer(game.cards || [], viewAsPlayerId).map(c => getDisplayCardName(c)).join(', ')}>
+                      <Paperclip size={10} /> {getPlayerAttachmentCount(viewAsPlayerId)}
+                    </div>
                   )}
                 </div>
               </div>
@@ -5115,6 +5280,45 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         </div>
       )}
 
+
+      {/* ATTACHMENT BANNER */}
+      {attachmentState && (
+        <div className="fixed bottom-40 left-0 right-0 z-[91] flex justify-center pointer-events-none px-4">
+          <div className="bg-fuchsia-700 text-white p-3 rounded-lg shadow-xl text-center font-bold animate-in fade-in slide-in-from-bottom-4 border-2 border-fuchsia-300 flex flex-col gap-2 pointer-events-auto max-w-md w-full">
+            <div className="flex justify-center items-center gap-2">
+              <Paperclip size={16} />
+              <span>Attach {attachmentState.source?.name || 'card'} to a permanent</span>
+            </div>
+            <div className="text-xs text-fuchsia-100">Tap another battlefield permanent. Self-attach is ignored.</div>
+            <button onClick={() => setAttachmentState(null)} className="text-fuchsia-100 underline hover:text-white text-xs">Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {attachmentPlayerPickerCard && (
+        <div className="fixed inset-0 bg-black/70 z-[72] flex items-center justify-center p-4" onClick={() => setAttachmentPlayerPickerCard(null)}>
+          <div className="bg-slate-800 w-full max-w-sm rounded-xl p-4 border border-slate-600 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <h3 className="font-bold text-white">Attach to player</h3>
+                <p className="text-xs text-slate-400">{attachmentPlayerPickerCard.name}</p>
+              </div>
+              <button onClick={() => setAttachmentPlayerPickerCard(null)}><X size={16} className="text-slate-400" /></button>
+            </div>
+            <div className="space-y-2">
+              {(game.players || []).map((player) => (
+                <button
+                  key={player.id}
+                  onClick={() => attachToPlayer(player.id)}
+                  className="w-full rounded-lg border border-slate-600 bg-slate-700 px-3 py-3 text-left text-sm font-bold text-slate-100 hover:bg-slate-600"
+                >
+                  {player.name || 'Player'}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* STACK DETAIL MODAL */}
       {stackDetailOpen && (
@@ -5750,6 +5954,26 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             </div>
 
             <div className="space-y-3">
+              {selectedCard.zone === ZONES.BATTLEFIELD && (() => {
+                const attachmentInfo = getAttachmentInfo(selectedCard);
+                const hasAttachmentDetails = attachmentInfo.attachedToLabel || attachmentInfo.attachedCards.length > 0;
+                return hasAttachmentDetails ? (
+                  <section className="space-y-2 rounded-lg border border-fuchsia-500/40 bg-fuchsia-950/20 p-3">
+                    <h3 className="text-[11px] font-bold uppercase tracking-wider text-fuchsia-200">Attachment details</h3>
+                    {attachmentInfo.attachedToType === 'card' && <div className="text-sm text-slate-100">Attached to: <span className="font-bold">{attachmentInfo.attachedToLabel}</span></div>}
+                    {attachmentInfo.attachedToType === 'player' && <div className="text-sm text-slate-100">Attached to player: <span className="font-bold">{attachmentInfo.attachedToLabel}</span></div>}
+                    {attachmentInfo.attachedCards.length > 0 && (
+                      <div className="text-sm text-slate-100">
+                        <div className="font-bold">Has attached:</div>
+                        <ul className="mt-1 list-disc pl-4 space-y-0.5">
+                          {attachmentInfo.attachedCards.map((attachedCard) => <li key={attachedCard.instanceId}>{getDisplayCardName(attachedCard)}</li>)}
+                        </ul>
+                      </div>
+                    )}
+                  </section>
+                ) : null;
+              })()}
+
               {selectedCard.isToken && (
                 <section className="space-y-2 rounded-lg border border-amber-400/30 bg-slate-900/40 p-3">
                   <h3 className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Token details</h3>
@@ -5863,6 +6087,19 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                     </div>
                   </div>
                   <button onClick={addCustomCounter} className="min-h-9 w-full rounded-lg bg-slate-700/70 px-2 text-xs text-blue-300 hover:text-white flex items-center justify-center gap-1"><Hexagon size={12}/> Add Custom Counter...</button>
+                </section>
+              )}
+
+              {selectedCard.zone === ZONES.BATTLEFIELD && canAct && selectedCard.controllerId === viewAsPlayerId && (
+                <section className="space-y-2 rounded-lg border border-fuchsia-500/40 bg-fuchsia-950/20 p-3">
+                  <h3 className="text-[11px] font-bold uppercase tracking-wider text-fuchsia-200">Attach / Link</h3>
+                  <div className="grid grid-cols-1 gap-2">
+                    <button onClick={() => { setAttachmentState({ source: selectedCard }); setSelectedCard(null); }} className="min-h-10 rounded-lg border border-fuchsia-500/40 bg-fuchsia-900/40 p-2 text-sm font-bold text-fuchsia-100 hover:bg-fuchsia-800/60 flex items-center justify-center gap-2"><Paperclip size={14}/> Attach to permanent...</button>
+                    <button onClick={() => { setAttachmentPlayerPickerCard(selectedCard); setSelectedCard(null); }} className="min-h-10 rounded-lg border border-fuchsia-500/40 bg-slate-700 p-2 text-sm font-bold text-slate-100 hover:bg-slate-600 flex items-center justify-center gap-2"><User size={14}/> Attach to player...</button>
+                    {normalizeAttachment(getLiveCard(selectedCard)) && (
+                      <button onClick={() => { handleAction('DETACH_CARD', { cardId: selectedCard.instanceId }); setSelectedCard(null); }} className="min-h-10 rounded-lg border border-slate-600 bg-slate-700 p-2 text-sm font-bold text-slate-100 hover:bg-slate-600">Detach</button>
+                    )}
+                  </div>
                 </section>
               )}
 
@@ -6078,8 +6315,25 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                 <img src={zoomedCard.image_uri} alt={zoomedCard.name} className="max-w-full max-h-[80vh] rounded-xl shadow-2xl" />
               )}
             </div>
-            {(hasAnyCombatInfo(getCardCombatInfo(zoomedCard, game, allBattlefieldDisplayNames)) || getCardMarkedDamage(zoomedCard) > 0 || getTargetInfoRows(getTargetInfoFor(zoomedCard)).length > 0) && (
+            {(() => {
+              const zoomAttachmentInfo = getAttachmentInfo(zoomedCard);
+              return (hasAnyCombatInfo(getCardCombatInfo(zoomedCard, game, allBattlefieldDisplayNames)) || getCardMarkedDamage(zoomedCard) > 0 || getTargetInfoRows(getTargetInfoFor(zoomedCard)).length > 0 || zoomAttachmentInfo.attachedToLabel || zoomAttachmentInfo.attachedCards.length > 0) && (
               <div className="w-full max-w-xs lg:w-64 bg-slate-900/90 border border-slate-600 rounded-xl p-3 shadow-xl text-sm space-y-3">
+                {(zoomAttachmentInfo.attachedToLabel || zoomAttachmentInfo.attachedCards.length > 0) && (
+                  <div className="rounded-lg border border-fuchsia-500/40 bg-fuchsia-950/30 p-2">
+                    <div className="font-bold text-fuchsia-100 uppercase tracking-wide text-xs mb-2">Attachments</div>
+                    {zoomAttachmentInfo.attachedToType === 'card' && <div className="text-fuchsia-50">Attached to: <span className="font-bold">{zoomAttachmentInfo.attachedToLabel}</span></div>}
+                    {zoomAttachmentInfo.attachedToType === 'player' && <div className="text-fuchsia-50">Attached to player: <span className="font-bold">{zoomAttachmentInfo.attachedToLabel}</span></div>}
+                    {zoomAttachmentInfo.attachedCards.length > 0 && (
+                      <div className="mt-2 text-fuchsia-50">
+                        <div className="font-bold">Attached cards:</div>
+                        <ul className="mt-1 list-disc pl-4">
+                          {zoomAttachmentInfo.attachedCards.map((attachedCard) => <li key={attachedCard.instanceId}>{getDisplayCardName(attachedCard)}</li>)}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                )}
                 {getTargetInfoRows(getTargetInfoFor(zoomedCard)).length > 0 && (
                   <div className="rounded-lg border border-sky-500/40 bg-sky-950/30 p-2">
                     <div className="font-bold text-sky-100 uppercase tracking-wide text-xs mb-2">Targets</div>
@@ -6113,7 +6367,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                   </div>
                 )}
               </div>
-            )}
+            );
+            })()}
           </div>
         </div>
       )}

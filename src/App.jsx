@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged, GoogleAuthProvider, linkWithPopup, signInWithPopup, signInWithRedirect, getRedirectResult, signOut } from 'firebase/auth';
 import { getFirestore, doc, setDoc, collection, onSnapshot, updateDoc, arrayUnion, serverTimestamp, runTransaction, query, orderBy, deleteDoc, getDoc, addDoc } from 'firebase/firestore';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 import { X, ArrowRight, Clock, Shield, Skull, Layers, Eye, ChevronDown, ChevronUp, BookOpen, Shuffle, Plus, Copy, UserCheck, EyeOff, RotateCw, Search, Hexagon, Unlock, Lock, Move, Dices, Coins, LayoutGrid, LogOut, Users, User, Bug, Loader2, RefreshCw, AlertTriangle, Repeat, Check, ArrowUp, ArrowDown, MessageSquare, Trash2, Paperclip, Crown, Undo2 } from 'lucide-react';
 
 // --- Firebase Configuration ---
@@ -24,6 +25,7 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
+const functions = getFunctions(app);
 // REMOVED: const appId... (no longer needed)
 
 // --- Constants & Types ---
@@ -1383,7 +1385,7 @@ const Lobby = ({
   onCreate,
   onJoin,
   onWatch,
-  onRemoveFromList,
+  onDeleteGame,
   onContinueWithGoogle,
   onSignOut,
   myGames,
@@ -1667,9 +1669,11 @@ const Lobby = ({
       {pendingDeleteGame && (
         <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
           <div className="bg-slate-800 w-full max-w-sm rounded-xl border border-slate-700 p-4 space-y-3">
-            <div className="text-base font-semibold text-white">Remove this game from your list?</div>
-            <div className="text-sm text-slate-300">
-              This only removes it from YOUR list. The game still exists for the other player.
+            <div className="text-base font-semibold text-white">Delete or remove this game?</div>
+            <div className="text-sm text-slate-300 space-y-2">
+              <p>If you are the host, this deletes the game for everyone and cannot be undone.</p>
+              <p>Delete this game permanently? This removes the game and its event history from Firebase.</p>
+              <p>If you are not the host, it will only be removed from YOUR list.</p>
             </div>
             <div className="flex gap-2">
               <button
@@ -1680,12 +1684,12 @@ const Lobby = ({
               </button>
               <button
                 onClick={async () => {
-                  await onRemoveFromList(pendingDeleteGame);
+                  await onDeleteGame(pendingDeleteGame);
                   setPendingDeleteGame(null);
                 }}
                 className="flex-1 bg-red-600 hover:bg-red-700 text-white p-2 rounded"
               >
-                Remove
+                Confirm
               </button>
             </div>
           </div>
@@ -7468,18 +7472,54 @@ export default function App() {
     };
   }, [activeGameId]);
 
+  const showToast = (message) => {
+    setToastMessage(message);
+    setTimeout(() => setToastMessage(''), 2500);
+  };
+
   const removeGameFromList = async (game) => {
     if (!user || !game?.id) return;
-    const prevGames = myGames;
+    await deleteDoc(doc(db, 'users', user.uid, 'games', game.id));
     setMyGames((existing) => existing.filter((g) => g.id !== game.id));
+    showToast('Removed from your list.');
+  };
+
+  const deleteGamePermanently = async (gameId) => {
+    if (!user || !gameId) return;
+
+    const gameRef = doc(db, 'games_v3', gameId);
+    const gameSnap = await getDoc(gameRef);
+    if (!gameSnap.exists()) throw new Error('Game not found in Firebase.');
+
+    const gameData = gameSnap.data() || {};
+    if (gameData.hostId !== user.uid) {
+      throw new Error('Only the host can delete this game.');
+    }
+
+    const hardDeleteGame = httpsCallable(functions, 'hardDeleteGame');
+    await hardDeleteGame({ gameId, confirm: true });
+    setMyGames((existing) => existing.filter((g) => g.id !== gameId));
+    showToast('Game permanently deleted.');
+  };
+
+  const deleteLobbyGame = async (game) => {
+    if (!user || !game?.id) return;
+    setInitError(null);
+
     try {
-      await deleteDoc(doc(db, 'users', user.uid, 'games', game.id));
-      setToastMessage('Removed from your list.');
-      setTimeout(() => setToastMessage(''), 2500);
+      const gameRef = doc(db, 'games_v3', game.id);
+      const gameSnap = await getDoc(gameRef);
+      if (!gameSnap.exists()) throw new Error('Game not found in Firebase.');
+
+      const gameData = gameSnap.data() || {};
+      if (gameData.hostId === user.uid) {
+        await deleteGamePermanently(game.id);
+      } else {
+        await removeGameFromList(game);
+      }
     } catch (e) {
       console.error(e);
-      setInitError(e.message);
-      setMyGames(prevGames);
+      setInitError(e?.message || 'Failed to delete game. Please try again.');
     }
   };
 
@@ -7557,7 +7597,7 @@ export default function App() {
       onCreate={createGame}
       onJoin={joinGame}
       onWatch={watchGame}
-      onRemoveFromList={removeGameFromList}
+      onDeleteGame={deleteLobbyGame}
       onContinueWithGoogle={continueWithGoogle}
       onSignOut={handleSignOut}
       myGames={myGames}

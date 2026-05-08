@@ -73,20 +73,19 @@ exports.hardDeleteGame = onCall(async (request) => {
     : [];
 
   const callerUid = request.auth.uid;
-  const isPlayer = playerIds.includes(callerUid);
-  const isSpectator = spectatorIds.includes(callerUid);
+  const hostId = typeof gameData.hostId === 'string' ? gameData.hostId : '';
 
-  if (!isPlayer && !isSpectator) {
+  if (hostId !== callerUid) {
     throw new HttpsError(
       'permission-denied',
-      'You are not allowed to delete this game. Only players (or spectators in the game) can hard delete it.'
+      'Only the host can delete this game.'
     );
   }
 
   const deletedEvents = await deleteCollectionInBatches(gameRef.collection('events'));
   await gameRef.delete();
 
-  const membershipUidSet = new Set([...playerIds, ...spectatorIds]);
+  const membershipUidSet = new Set([hostId, ...playerIds, ...spectatorIds].filter(Boolean));
   let deletedMembershipDocs = 0;
   if (membershipUidSet.size > 0) {
     const membershipBatch = db.batch();

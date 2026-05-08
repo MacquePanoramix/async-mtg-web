@@ -396,7 +396,15 @@ const getCardManaCost = (card, fallback = '') => getActiveCardFace(card)?.mana_c
 const getCardOracleText = (card, fallback = '') => getActiveCardFace(card)?.oracle_text || card?.oracle_text || card?.rulesText || fallback;
 const getCardPower = (card, fallback = '') => getActiveCardFace(card)?.power || card?.power || fallback;
 const getCardToughness = (card, fallback = '') => getActiveCardFace(card)?.toughness || card?.toughness || fallback;
-const getCardImageUri = (card) => getActiveCardFace(card)?.image_uris?.normal || card?.image_uris?.normal || card?.image_uri || null;
+const getBestImageUriFromImageUris = (imageUris) => {
+  if (!imageUris || typeof imageUris !== 'object') return null;
+  return imageUris.normal || imageUris.large || imageUris.png || imageUris.small || null;
+};
+const getCardImageUri = (card) => {
+  const faceImageUri = getBestImageUriFromImageUris(getActiveCardFace(card)?.image_uris);
+  if (faceImageUri) return faceImageUri;
+  return getBestImageUriFromImageUris(card?.image_uris) || card?.image_uri || null;
+};
 const getSafeCardName = (card, fallback = 'a card') => {
   if (!card || card.faceDown) return fallback;
   return getCardDisplayName(card, fallback);
@@ -4716,28 +4724,33 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       setTimeout(() => setNotification(null), 2000);
       return;
     }
+
     setImporting(true);
     const entries = getImportDeckEntries();
     const importedCards = [];
+    const failedImports = [];
     let xOffset = 5, yOffset = 5;
     let importedCount = 0;
     let importedCommanderCount = 0;
 
-    for (const entry of entries) {
-      try {
-        const res = await fetch(`https://api.scryfall.com/cards/named?fuzzy=${encodeURIComponent(entry.name)}`);
-        const data = await res.json();
-        if (data && data.name) {
+    try {
+      for (const entry of entries) {
+        try {
+          const res = await fetch(`https://api.scryfall.com/cards/named?fuzzy=${encodeURIComponent(entry.name)}`);
+          const data = await res.json();
+          if (!res.ok || !data?.name) {
+            throw new Error(data?.details || `Scryfall could not find ${entry.name}.`);
+          }
+
+          const hasCardFaces = Array.isArray(data.card_faces);
+          const imageUri = getCardImageUri(hasCardFaces ? { ...data, activeFaceIndex: 0 } : data);
           for (let i = 0; i < entry.count; i++) {
             const importedCard = {
+              ...data,
               instanceId: generateCardId(),
               scryfallId: data.id,
-              name: data.name,
-              mana_cost: data.mana_cost,
-              type_line: data.type_line,
-              image_uri: data.image_uris?.normal || data.card_faces?.[0]?.image_uris?.normal,
-              ...(Array.isArray(data.card_faces) ? { card_faces: data.card_faces } : {}),
-              ...(Array.isArray(data.card_faces) && data.card_faces.length >= 2 ? { activeFaceIndex: 0 } : {}),
+              ...(imageUri ? { image_uri: imageUri } : {}),
+              ...(hasCardFaces ? { card_faces: data.card_faces, activeFaceIndex: 0 } : {}),
               ownerId: userId,
               controllerId: userId,
               zone: entry.isCommander ? ZONES.COMMAND : ZONES.LIBRARY,
@@ -4754,46 +4767,59 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             if (entry.isCommander) importedCommanderCount += 1;
             xOffset = (xOffset + 5) % 80;
           }
+        } catch (error) {
+          console.error("Failed to fetch or parse Scryfall card", entry.name, error);
+          failedImports.push(`${entry.name}: ${error?.message || 'unknown error'}`);
         }
-      } catch {
-        console.error("Failed to fetch", entry.name);
+        await new Promise(r => setTimeout(r, 50));
       }
-      await new Promise(r => setTimeout(r, 50));
-    }
-    // UPDATED: Path
-    const importActorName = myPlayer?.name || displayName || 'Unknown';
-    const importMessage = importedCommanderCount > 0
-      ? `${importActorName} imported ${importedCount} cards and moved ${importedCommanderCount} commander card${importedCommanderCount === 1 ? '' : 's'} to the command zone.`
-      : `${importActorName} imported ${importedCount} cards into their library.`;
-    await runTransaction(db, async (transaction) => {
-      const gameRef = doc(db, 'games_v3', gameId);
-      const snap = await transaction.get(gameRef);
-      if (!snap.exists()) return;
-      const currentGame = snap.data();
-      const currentPlayers = currentGame.players || [];
-      if (!currentPlayers.some((player) => player.id === userId)) return;
-      transaction.update(gameRef, {
-        cards: [...(currentGame.cards || []), ...importedCards],
-        log: arrayUnion(buildGameLogEntry({
-          currentGame,
-          playerId: userId,
-          playerName: importActorName,
-          type: 'IMPORT',
-          category: 'setup',
-          message: importMessage
-        })),
-        undoStack: appendUndoEntry(currentGame, buildUndoEntry({
-          currentGame,
-          actorId: userId,
-          actorName: importActorName,
-          actionLabel: normalizeUndoActionLabel(importMessage, importActorName)
-        })),
-        updatedAt: serverTimestamp()
-      });
-    });
 
-    setImporting(false);
-    setDeckInput('');
+      if (importedCards.length > 0) {
+        // UPDATED: Path
+        const importActorName = myPlayer?.name || displayName || 'Unknown';
+        const importMessage = importedCommanderCount > 0
+          ? `${importActorName} imported ${importedCount} cards and moved ${importedCommanderCount} commander card${importedCommanderCount === 1 ? '' : 's'} to the command zone.`
+          : `${importActorName} imported ${importedCount} cards into their library.`;
+        await runTransaction(db, async (transaction) => {
+          const gameRef = doc(db, 'games_v3', gameId);
+          const snap = await transaction.get(gameRef);
+          if (!snap.exists()) return;
+          const currentGame = snap.data();
+          const currentPlayers = currentGame.players || [];
+          if (!currentPlayers.some((player) => player.id === userId)) return;
+          transaction.update(gameRef, {
+            cards: [...(currentGame.cards || []), ...importedCards],
+            log: arrayUnion(buildGameLogEntry({
+              currentGame,
+              playerId: userId,
+              playerName: importActorName,
+              type: 'IMPORT',
+              category: 'setup',
+              message: importMessage
+            })),
+            undoStack: appendUndoEntry(currentGame, buildUndoEntry({
+              currentGame,
+              actorId: userId,
+              actorName: importActorName,
+              actionLabel: normalizeUndoActionLabel(importMessage, importActorName)
+            })),
+            updatedAt: serverTimestamp()
+          });
+        });
+      }
+
+      if (failedImports.length > 0) {
+        setNotification(`Some cards could not be imported: ${failedImports.slice(0, 3).join('; ')}${failedImports.length > 3 ? '…' : ''}`);
+        setTimeout(() => setNotification(null), 5000);
+      }
+      if (importedCards.length > 0) setDeckInput('');
+    } catch (error) {
+      console.error('Deck import failed', error);
+      setNotification(`Import failed: ${error?.message || 'unknown error'}`);
+      setTimeout(() => setNotification(null), 5000);
+    } finally {
+      setImporting(false);
+    }
   };
 
   const deleteDeck = async () => {

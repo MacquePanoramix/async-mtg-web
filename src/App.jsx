@@ -2,8 +2,7 @@ import React, { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallba
 import { createPortal } from 'react-dom';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged, GoogleAuthProvider, linkWithPopup, signInWithPopup, signInWithRedirect, getRedirectResult, signOut } from 'firebase/auth';
-import { getFirestore, doc, setDoc, collection, onSnapshot, updateDoc, arrayUnion, serverTimestamp, runTransaction, query, orderBy, where, deleteDoc, getDoc, getDocs, addDoc } from 'firebase/firestore';
-import { getFunctions, httpsCallable } from 'firebase/functions';
+import { getFirestore, doc, setDoc, collection, onSnapshot, updateDoc, arrayUnion, serverTimestamp, runTransaction, query, orderBy, where, deleteDoc, getDoc, getDocs, addDoc, writeBatch, limit } from 'firebase/firestore';
 import { X, ArrowRight, Clock, Shield, Skull, Layers, Eye, ChevronDown, ChevronUp, BookOpen, Shuffle, Plus, Copy, UserCheck, EyeOff, RotateCw, Search, Hexagon, Unlock, Lock, Move, Dices, Coins, LayoutGrid, LogOut, Users, User, Bug, Loader2, RefreshCw, AlertTriangle, Repeat, Check, ArrowUp, ArrowDown, MessageSquare, Trash2, Paperclip, Crown, Undo2 } from 'lucide-react';
 
 // --- Firebase Configuration ---
@@ -25,7 +24,6 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-const functions = getFunctions(app);
 // REMOVED: const appId... (no longer needed)
 
 // --- Constants & Types ---
@@ -146,12 +144,33 @@ const logCleanupDeleteError = (gameId, step, error) => {
   });
 };
 
-const hardDeleteGamePermanently = async ({ user, gameId, functionsInstance, skipMembershipCleanup = false }) => {
+const CLEANUP_DELETE_BATCH_SIZE = 450;
+
+const throwCleanupError = (message, code, step) => {
+  const error = new Error(message);
+  error.code = code;
+  error.step = step;
+  throw error;
+};
+
+const deleteEventsSubcollectionInBatches = async (gameId) => {
+  const eventsRef = collection(db, 'games_v3', gameId, 'events');
+  let deletedEvents = 0;
+
+  while (true) {
+    const eventsSnapshot = await getDocs(query(eventsRef, limit(CLEANUP_DELETE_BATCH_SIZE)));
+    if (eventsSnapshot.empty) return deletedEvents;
+
+    const batch = writeBatch(db);
+    eventsSnapshot.docs.forEach((eventDoc) => batch.delete(eventDoc.ref));
+    await batch.commit();
+    deletedEvents += eventsSnapshot.size;
+  }
+};
+
+const hardDeleteGamePermanently = async ({ user, gameId, removeCurrentUserMembership = false }) => {
   if (!user || !gameId) {
-    const error = new Error('Authentication is required.');
-    error.code = 'unauthenticated';
-    error.step = CLEANUP_DELETE_STEPS.VERIFY_AUTH;
-    throw error;
+    throwCleanupError('Authentication is required.', 'unauthenticated', CLEANUP_DELETE_STEPS.VERIFY_AUTH);
   }
 
   const gameRef = doc(db, 'games_v3', gameId);
@@ -163,22 +182,45 @@ const hardDeleteGamePermanently = async ({ user, gameId, functionsInstance, skip
     throw error;
   }
   if (!gameSnap.exists()) {
-    const error = new Error('Game not found in Firebase.');
-    error.code = 'not-found';
-    error.step = CLEANUP_DELETE_STEPS.READ_GAME;
-    throw error;
+    throwCleanupError('Game not found in Firebase.', 'not-found', CLEANUP_DELETE_STEPS.READ_GAME);
   }
 
   const gameData = gameSnap.data() || {};
   if (gameData.hostId !== user.uid) {
-    const error = new Error('Only the host can delete this game.');
-    error.code = 'permission-denied';
-    error.step = CLEANUP_DELETE_STEPS.VERIFY_HOST;
+    throwCleanupError('Only the host can delete this game.', 'permission-denied', CLEANUP_DELETE_STEPS.VERIFY_HOST);
+  }
+
+  let deletedEvents = 0;
+  try {
+    deletedEvents = await deleteEventsSubcollectionInBatches(gameId);
+  } catch (error) {
+    error.step = CLEANUP_DELETE_STEPS.DELETE_EVENTS;
     throw error;
   }
 
-  const hardDeleteGame = httpsCallable(functionsInstance, 'hardDeleteGame');
-  await hardDeleteGame({ gameId, confirm: true, skipMembershipCleanup });
+  try {
+    const deleteGameBatch = writeBatch(db);
+    deleteGameBatch.delete(gameRef);
+    if (removeCurrentUserMembership) {
+      deleteGameBatch.delete(doc(db, 'users', user.uid, 'games', gameId));
+    }
+    await deleteGameBatch.commit();
+  } catch (error) {
+    error.step = CLEANUP_DELETE_STEPS.DELETE_GAME;
+    throw error;
+  }
+
+  try {
+    const confirmSnap = await getDoc(gameRef);
+    if (confirmSnap.exists()) {
+      throwCleanupError('Game still exists after delete.', 'internal', CLEANUP_DELETE_STEPS.CONFIRM_DELETE);
+    }
+  } catch (error) {
+    error.step = error.step || CLEANUP_DELETE_STEPS.CONFIRM_DELETE;
+    throw error;
+  }
+
+  return { deletedEvents };
 };
 
 const ZONE_LABELS = {
@@ -7861,10 +7903,10 @@ export default function App() {
       }
 
       try {
-        await hardDeleteGamePermanently({ user, gameId: game.id, functionsInstance: functions, skipMembershipCleanup: true });
+        await hardDeleteGamePermanently({ user, gameId: game.id, removeCurrentUserMembership: true });
         deletedIds.push(game.id);
       } catch (e) {
-        const step = getErrorStep(e, 'cleanup callable hardDeleteGame');
+        const step = getErrorStep(e, 'client-side hard delete');
         logCleanupDeleteError(game.id, step, e);
         failed.push({ id: game.id, step, message: formatCleanupDeleteError(game.id, e, step) });
       }
@@ -7873,10 +7915,13 @@ export default function App() {
     if (deletedIds.length > 0) {
       setCleanupGames((existing) => existing.filter((game) => !deletedIds.includes(game.id)));
       setMyGames((existing) => existing.filter((game) => !deletedIds.includes(game.id)));
+      await loadCleanupGames();
       showToast(`Deleted ${deletedIds.length} old game${deletedIds.length === 1 ? '' : 's'}.`);
     }
 
-    setCleanupError(`Deleted ${deletedIds.length} games. Failed ${failed.length} games.${failed.length > 0 ? `\n${failed.map((item) => item.message).join('\n')}` : ''}`);
+    const successMessages = deletedIds.map((id) => `Deleted ${id}.`);
+    const statusMessages = [...successMessages, ...failed.map((item) => item.message)];
+    setCleanupError(`Deleted ${deletedIds.length} games. Failed ${failed.length} games.${statusMessages.length > 0 ? `\n${statusMessages.join('\n')}` : ''}`);
 
     setIsCleanupDeleting(false);
     return { failed, deletedIds };
@@ -7890,7 +7935,7 @@ export default function App() {
   };
 
   const deleteGamePermanently = async (gameId) => {
-    await hardDeleteGamePermanently({ user, gameId, functionsInstance: functions });
+    await hardDeleteGamePermanently({ user, gameId, removeCurrentUserMembership: true });
     setMyGames((existing) => existing.filter((g) => g.id !== gameId));
     showToast('Game permanently deleted.');
   };

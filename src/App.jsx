@@ -114,16 +114,67 @@ const isCleanupCandidateOld = (game) => {
   return Date.now() - activityDate.getTime() > CLEANUP_OLD_GAME_MS;
 };
 
+const CLEANUP_DELETE_STEPS = {
+  VERIFY_AUTH: 'Step A: verify current user is signed in',
+  READ_GAME: 'Step B: read the game doc',
+  VERIFY_HOST: 'Step C: verify game.hostId === currentUser.uid',
+  DELETE_EVENTS: 'Step D: delete events subcollection docs in safe batches',
+  DELETE_GAME: 'Step E: delete the game document itself',
+  CONFIRM_DELETE: 'Step F: confirm the game document no longer exists'
+};
+
+const getErrorCode = (error) => error?.details?.code || error?.code || 'unknown';
+const getErrorName = (error) => error?.details?.name || error?.name || 'Error';
+const getErrorMessage = (error) => error?.details?.message || error?.message || 'Unknown error';
+const getErrorStep = (error, fallbackStep = 'unknown step') => error?.details?.step || error?.step || fallbackStep;
+
+const formatCleanupDeleteError = (gameId, error, fallbackStep = 'unknown step') => (
+  `Failed to delete ${gameId} during ${getErrorStep(error, fallbackStep)}: ${getErrorCode(error)} — ${getErrorMessage(error)}`
+);
+
+const logCleanupDeleteError = (gameId, step, error) => {
+  console.error('Old Game Cleanup delete failed', {
+    gameId,
+    step,
+    error,
+    code: getErrorCode(error),
+    detailsCode: error?.details?.code,
+    name: getErrorName(error),
+    detailsName: error?.details?.name,
+    message: getErrorMessage(error),
+    detailsMessage: error?.details?.message
+  });
+};
+
 const hardDeleteGamePermanently = async ({ user, gameId, functionsInstance, skipMembershipCleanup = false }) => {
-  if (!user || !gameId) return;
+  if (!user || !gameId) {
+    const error = new Error('Authentication is required.');
+    error.code = 'unauthenticated';
+    error.step = CLEANUP_DELETE_STEPS.VERIFY_AUTH;
+    throw error;
+  }
 
   const gameRef = doc(db, 'games_v3', gameId);
-  const gameSnap = await getDoc(gameRef);
-  if (!gameSnap.exists()) throw new Error('Game not found in Firebase.');
+  let gameSnap;
+  try {
+    gameSnap = await getDoc(gameRef);
+  } catch (error) {
+    error.step = CLEANUP_DELETE_STEPS.READ_GAME;
+    throw error;
+  }
+  if (!gameSnap.exists()) {
+    const error = new Error('Game not found in Firebase.');
+    error.code = 'not-found';
+    error.step = CLEANUP_DELETE_STEPS.READ_GAME;
+    throw error;
+  }
 
   const gameData = gameSnap.data() || {};
   if (gameData.hostId !== user.uid) {
-    throw new Error('Only the host can delete this game.');
+    const error = new Error('Only the host can delete this game.');
+    error.code = 'permission-denied';
+    error.step = CLEANUP_DELETE_STEPS.VERIFY_HOST;
+    throw error;
   }
 
   const hardDeleteGame = httpsCallable(functionsInstance, 'hardDeleteGame');
@@ -1455,6 +1506,8 @@ const Lobby = ({
   const [pendingDeleteGame, setPendingDeleteGame] = useState(null);
   const [isCleanupOpen, setIsCleanupOpen] = useState(false);
   const [selectedCleanupIds, setSelectedCleanupIds] = useState(() => new Set());
+  const [deletingCleanupIds, setDeletingCleanupIds] = useState(() => new Set());
+  const [failedCleanupMessages, setFailedCleanupMessages] = useState({});
   const [cleanupConfirmText, setCleanupConfirmText] = useState('');
   const isInitLoading = !currentUser;
   const isGoogleConnected = currentUser?.isAnonymous === false;
@@ -1471,6 +1524,8 @@ const Lobby = ({
   const closeCleanup = () => {
     setIsCleanupOpen(false);
     setSelectedCleanupIds(new Set());
+    setDeletingCleanupIds(new Set());
+    setFailedCleanupMessages({});
     setCleanupConfirmText('');
   };
 
@@ -1493,8 +1548,17 @@ const Lobby = ({
 
   const confirmCleanupDelete = async () => {
     if (!canConfirmCleanup) return;
-    const failedIds = await onDeleteCleanupGames(selectedCleanupGames);
-    setSelectedCleanupIds((existing) => new Set([...existing].filter((id) => failedIds.includes(id))));
+    setFailedCleanupMessages({});
+    setDeletingCleanupIds(new Set(selectedCleanupGames.map((game) => game.id)));
+    const result = await onDeleteCleanupGames(selectedCleanupGames);
+    const failedItems = Array.isArray(result) ? result.map((id) => ({ id })) : result?.failed || [];
+    const nextFailedMessages = failedItems.reduce((messages, item) => {
+      if (item?.id) messages[item.id] = item.message || 'Delete failed.';
+      return messages;
+    }, {});
+    setFailedCleanupMessages(nextFailedMessages);
+    setSelectedCleanupIds((existing) => new Set([...existing].filter((id) => failedItems.some((item) => item.id === id))));
+    setDeletingCleanupIds(new Set());
     setCleanupConfirmText('');
   };
 
@@ -1860,6 +1924,8 @@ const Lobby = ({
                   {cleanupGames.map((game) => {
                     const checked = selectedCleanupIds.has(game.id);
                     const isActive = game.id === activeGameId;
+                    const isDeletingGame = deletingCleanupIds.has(game.id);
+                    const failedMessage = failedCleanupMessages[game.id];
                     return (
                       <label
                         key={game.id}
@@ -1876,7 +1942,14 @@ const Lobby = ({
                           <div className="min-w-0 flex-1">
                             <div className="flex flex-col sm:flex-row sm:items-baseline sm:justify-between gap-1">
                               <div className="font-mono text-sm text-white break-all">{game.id}</div>
-                              {isActive && <span className="text-[11px] text-yellow-300">Currently active — not selectable</span>}
+                              <div className="flex flex-wrap items-center gap-2">
+                                {isDeletingGame && (
+                                  <span className="text-[11px] text-blue-200 flex items-center gap-1">
+                                    <Loader2 className="animate-spin" size={12} /> Deleting…
+                                  </span>
+                                )}
+                                {isActive && <span className="text-[11px] text-yellow-300">Currently active — not selectable</span>}
+                              </div>
                             </div>
                             <div className="text-sm text-slate-200 truncate">{(game.title || '').trim() || 'Untitled game'}</div>
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 mt-2 text-xs text-slate-400">
@@ -1887,6 +1960,9 @@ const Lobby = ({
                             </div>
                             {game.lastLogMessage && (
                               <div className="mt-2 text-xs text-slate-500 line-clamp-2">Last log: {game.lastLogMessage}</div>
+                            )}
+                            {failedMessage && (
+                              <div className="mt-2 rounded border border-yellow-700/70 bg-yellow-950/30 p-2 text-xs text-yellow-100 whitespace-pre-wrap">{failedMessage}</div>
                             )}
                           </div>
                         </div>
@@ -7761,7 +7837,15 @@ export default function App() {
   };
 
   const deleteCleanupGames = async (gamesToDelete) => {
-    if (!user) return gamesToDelete.map((game) => game.id);
+    if (!user) {
+      const failed = gamesToDelete.map((game) => ({
+        id: game.id,
+        step: CLEANUP_DELETE_STEPS.VERIFY_AUTH,
+        message: `Failed to delete ${game.id} during ${CLEANUP_DELETE_STEPS.VERIFY_AUTH}: unauthenticated — Authentication is required.`
+      }));
+      setCleanupError(`Deleted 0 games. Failed ${failed.length} games.\n${failed.map((item) => item.message).join('\n')}`);
+      return { failed };
+    }
 
     setIsCleanupDeleting(true);
     setCleanupError('');
@@ -7771,7 +7855,8 @@ export default function App() {
     for (const game of gamesToDelete) {
       if (!game?.id) continue;
       if (game.hostId !== user.uid) {
-        failed.push({ id: game.id, message: 'Not owned by current user.' });
+        const message = `Skipped ${game.id}: you are not the host.`;
+        failed.push({ id: game.id, step: CLEANUP_DELETE_STEPS.VERIFY_HOST, message });
         continue;
       }
 
@@ -7779,8 +7864,9 @@ export default function App() {
         await hardDeleteGamePermanently({ user, gameId: game.id, functionsInstance: functions, skipMembershipCleanup: true });
         deletedIds.push(game.id);
       } catch (e) {
-        console.error(`Failed to delete old game ${game.id}`, e);
-        failed.push({ id: game.id, message: e?.message || 'Unknown error' });
+        const step = getErrorStep(e, 'cleanup callable hardDeleteGame');
+        logCleanupDeleteError(game.id, step, e);
+        failed.push({ id: game.id, step, message: formatCleanupDeleteError(game.id, e, step) });
       }
     }
 
@@ -7790,12 +7876,10 @@ export default function App() {
       showToast(`Deleted ${deletedIds.length} old game${deletedIds.length === 1 ? '' : 's'}.`);
     }
 
-    if (failed.length > 0) {
-      setCleanupError(`Failed to delete: ${failed.map((item) => `${item.id} (${item.message})`).join(', ')}`);
-    }
+    setCleanupError(`Deleted ${deletedIds.length} games. Failed ${failed.length} games.${failed.length > 0 ? `\n${failed.map((item) => item.message).join('\n')}` : ''}`);
 
     setIsCleanupDeleting(false);
-    return failed.map((item) => item.id);
+    return { failed, deletedIds };
   };
 
   const removeGameFromList = async (game) => {

@@ -360,14 +360,51 @@ const getTokenColorAccent = (color, colorIdentity) => {
 const isCreatureTypeLine = (typeLine) => String(typeLine || '').toLowerCase().includes('creature');
 const getZoneLabel = (zone) => ZONE_LABELS[zone] || zone || 'unknown zone';
 const isPublicZone = (zone) => PUBLIC_ZONES.has(zone);
+
+const getUsableCardFaces = (card) => {
+  if (!Array.isArray(card?.card_faces)) return [];
+  const faces = card.card_faces.filter((face) => face && typeof face === 'object' && (
+    face.name || face.type_line || face.oracle_text || face.image_uris?.normal || face.image_uris?.large || face.mana_cost
+  ));
+  return faces.length >= 2 ? faces : [];
+};
+
+const isDoubleFacedCard = (card) => getUsableCardFaces(card).length >= 2;
+
+const getActiveFaceIndex = (card) => {
+  const faces = getUsableCardFaces(card);
+  if (faces.length < 2) return 0;
+  const index = Number.isInteger(card?.activeFaceIndex) ? card.activeFaceIndex : 0;
+  return Math.min(Math.max(index, 0), faces.length - 1);
+};
+
+const getActiveCardFace = (card) => {
+  const faces = getUsableCardFaces(card);
+  return faces.length >= 2 ? faces[getActiveFaceIndex(card)] : null;
+};
+
+const getCardFaceAt = (card, index) => {
+  const faces = getUsableCardFaces(card);
+  if (faces.length < 2) return null;
+  const safeIndex = Math.min(Math.max(Number.isInteger(index) ? index : 0, 0), faces.length - 1);
+  return faces[safeIndex] || null;
+};
+
+const getCardDisplayName = (card, fallback = 'Unknown') => getActiveCardFace(card)?.name || card?.name || fallback;
+const getCardTypeLine = (card, fallback = '') => getActiveCardFace(card)?.type_line || card?.type_line || fallback;
+const getCardManaCost = (card, fallback = '') => getActiveCardFace(card)?.mana_cost || card?.mana_cost || fallback;
+const getCardOracleText = (card, fallback = '') => getActiveCardFace(card)?.oracle_text || card?.oracle_text || card?.rulesText || fallback;
+const getCardPower = (card, fallback = '') => getActiveCardFace(card)?.power || card?.power || fallback;
+const getCardToughness = (card, fallback = '') => getActiveCardFace(card)?.toughness || card?.toughness || fallback;
+const getCardImageUri = (card) => getActiveCardFace(card)?.image_uris?.normal || card?.image_uris?.normal || card?.image_uri || null;
 const getSafeCardName = (card, fallback = 'a card') => {
   if (!card || card.faceDown) return fallback;
-  return card.name || fallback;
+  return getCardDisplayName(card, fallback);
 };
 
 const getSafeMoveCardName = (card, fromZone, toZone) => {
   if (!card || card.faceDown) return 'a face-down card';
-  if (isPublicZone(fromZone) || isPublicZone(toZone)) return card.name || 'a card';
+  if (isPublicZone(fromZone) || isPublicZone(toZone)) return getCardDisplayName(card, 'a card');
   return 'a card';
 };
 
@@ -439,6 +476,7 @@ const UNDOABLE_ACTION_TYPES = new Set([
   'CLEAR_REVEALS',
   'TOGGLE_HAND_REVEAL',
   'TOGGLE_FACE',
+  'SWITCH_CARD_FACE',
   'MOD_COUNTER',
   'TEMP_DAMAGE',
   'PLAYER_COUNTER',
@@ -747,7 +785,7 @@ const clampBattlefieldCenterNormalized = (value, dimensionPx, cardDimensionPx, s
   return clamp(value, min, max);
 };
 
-const isLandCard = (card) => (card?.type_line || '').toLowerCase().includes('land');
+const isLandCard = (card) => getCardTypeLine(card).toLowerCase().includes('land');
 
 const getIsNarrowBattlefield = () => {
   if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
@@ -1192,7 +1230,7 @@ const buildDuplicateDisplayNameMap = (cards = []) => {
   const grouped = new Map();
   cards.forEach((card) => {
     if (!card?.instanceId) return;
-    const key = (card.name || '').trim() || 'Unknown';
+    const key = (getCardDisplayName(card, 'Unknown') || '').trim() || 'Unknown';
     if (!grouped.has(key)) grouped.set(key, []);
     grouped.get(key).push(card.instanceId);
   });
@@ -1224,7 +1262,7 @@ const getPublicTargetDisplayName = (targetId, currentGame, displayNameMap = null
   const publicDisplayNames = displayNameMap || buildDuplicateDisplayNameMap(
     (currentGame?.cards || []).filter((candidate) => isPublicZone(candidate.zone))
   );
-  return publicDisplayNames.get(card.instanceId) || card.name || fallback;
+  return publicDisplayNames.get(card.instanceId) || getCardDisplayName(card, fallback);
 };
 
 const getPublicSourceDisplayName = (sourceId, currentGame, displayNameMap = null, fallback = 'a source') => {
@@ -1239,7 +1277,7 @@ const getPublicSourceDisplayName = (sourceId, currentGame, displayNameMap = null
   const publicDisplayNames = displayNameMap || buildDuplicateDisplayNameMap(
     (currentGame?.cards || []).filter((candidate) => isPublicZone(candidate.zone))
   );
-  return publicDisplayNames.get(sourceCard.instanceId) || sourceCard.name || fallback;
+  return publicDisplayNames.get(sourceCard.instanceId) || getCardDisplayName(sourceCard, fallback);
 };
 
 const getStackItemTargets = (item) => [
@@ -1339,7 +1377,7 @@ const getCombatDisplayName = (cardOrId, currentGame, displayNameMap = null) => {
   const battlefieldDisplayNames = displayNameMap || buildDuplicateDisplayNameMap(
     (currentGame?.cards || []).filter((candidate) => candidate.zone === ZONES.BATTLEFIELD)
   );
-  return battlefieldDisplayNames.get(card.instanceId) || card.name || 'Unknown';
+  return battlefieldDisplayNames.get(card.instanceId) || getCardDisplayName(card, 'Unknown');
 };
 
 const getAttackTargetObjectId = (attackTarget) => attackTarget?.id || attackTarget?.targetId || null;
@@ -1351,7 +1389,7 @@ const getOpponentPlayerForController = (currentGame, controllerId) => {
 
 const getAttackableCardKind = (card) => {
   if (!card || card.faceDown || card.zone !== ZONES.BATTLEFIELD) return null;
-  const typeLine = (card.type_line || '').toLowerCase();
+  const typeLine = getCardTypeLine(card).toLowerCase();
   if (typeLine.includes('planeswalker')) return 'planeswalker';
   if (typeLine.includes('battle')) return 'battle';
   return null;
@@ -1539,8 +1577,8 @@ const advancePassPriorityState = (currentGame, logEntry, onTurnStart, layoutOpti
       const cardIndex = updatedGame.cards.findIndex(c => c.instanceId === item.sourceId);
       if (cardIndex >= 0) {
         const card = { ...updatedGame.cards[cardIndex] };
-        const typeLine = card.type_line || '';
-        const isPerm = !typeLine.includes('Instant') && !typeLine.includes('Sorcery');
+        const typeLine = getCardTypeLine(card).toLowerCase();
+        const isPerm = !typeLine.includes('instant') && !typeLine.includes('sorcery');
         card.zone = isPerm ? ZONES.BATTLEFIELD : ZONES.GRAVEYARD;
         card.tapped = false;
 
@@ -2329,6 +2367,11 @@ const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isD
   const counters = card.counters || {};
   const tempDamage = Math.max(0, markedDamage ?? card.tempDamage ?? 0);
   const reminders = getEntityReminders(card);
+  const displayCardName = getCardDisplayName(card);
+  const displayImageUri = getCardImageUri(card);
+  const displayManaCost = getCardManaCost(card);
+  const displayPower = getCardPower(card);
+  const displayToughness = getCardToughness(card);
 
   // Calculate Target/Source status from BOTH persistent targets AND stack items
   const persistentSource = targets.some(t => t.sourceId === card.instanceId);
@@ -2398,15 +2441,15 @@ const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isD
             </div>
             <span className="text-[10px] font-bold text-slate-400">2 / 2</span>
           </div>
-        ) : card.image_uri ? (
-          <img src={card.image_uri} alt={card.name} className="w-full h-full object-cover" />
+        ) : displayImageUri ? (
+          <img src={displayImageUri} alt={displayCardName} className="w-full h-full object-cover" />
         ) : card.isToken ? (
           <TokenCardPreview token={card} />
         ) : (
           <div className="w-full h-full p-1 flex flex-col items-center justify-center text-center text-xs bg-slate-800">
-            <span className="font-bold text-white leading-tight">{card.name}</span>
-            <span className="text-slate-400 text-[9px] mt-1">{card.mana_cost}</span>
-            {card.power && <span className="absolute bottom-1 right-1 bg-black/50 px-1 rounded text-[9px]">{card.power}/{card.toughness}</span>}
+            <span className="font-bold text-white leading-tight">{displayCardName}</span>
+            <span className="text-slate-400 text-[9px] mt-1">{displayManaCost}</span>
+            {displayPower && <span className="absolute bottom-1 right-1 bg-black/50 px-1 rounded text-[9px]">{displayPower}/{displayToughness}</span>}
           </div>
         )}
 
@@ -3007,8 +3050,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const battlefieldBattles = (game?.cards || []).filter(c => getAttackableCardKind(c) === 'battle');
   const attackTargetOptions = [
     opponent ? { type: 'player', id: opponent.id, targetId: opponent.id, label: `${opponent.name} (Player)`, kind: 'player' } : null,
-    ...opponentPlaneswalkers.map(c => ({ type: 'card', id: c.instanceId, targetId: c.instanceId, label: c.name || 'Planeswalker', kind: 'planeswalker' })),
-    ...battlefieldBattles.map(c => ({ type: 'card', id: c.instanceId, targetId: c.instanceId, label: c.name || 'Battle', kind: 'battle' }))
+    ...opponentPlaneswalkers.map(c => ({ type: 'card', id: c.instanceId, targetId: c.instanceId, label: getCardDisplayName(c, 'Planeswalker'), kind: 'planeswalker' })),
+    ...battlefieldBattles.map(c => ({ type: 'card', id: c.instanceId, targetId: c.instanceId, label: getCardDisplayName(c, 'Battle'), kind: 'battle' }))
   ].filter(Boolean);
 
   const waitingForPlayers = game?.players.length < 2;
@@ -3488,8 +3531,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           const card = { ...updatedCards[cardIndex] };
           const isStackSpell = card.zone === 'stack_zone' || (topItem.itemType || topItem.type || '').toString().toUpperCase().includes('SPELL');
           if (actionType === 'RESOLVE_STACK_TOP' && isStackSpell) {
-            const typeLine = card.type_line || '';
-            const isPermanent = !typeLine.includes('Instant') && !typeLine.includes('Sorcery');
+            const typeLine = getCardTypeLine(card).toLowerCase();
+            const isPermanent = !typeLine.includes('instant') && !typeLine.includes('sorcery');
             card.zone = isPermanent ? ZONES.BATTLEFIELD : ZONES.GRAVEYARD;
             card.tapped = false;
 
@@ -3563,7 +3606,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         }
 
         const randomCard = handCards[Math.floor(Math.random() * handCards.length)];
-        const discardedName = randomCard.name || 'a card';
+        const discardedName = getCardDisplayName(randomCard, 'a card');
         const nextCards = (currentGame.cards || []).map(c => (
           c.instanceId === randomCard.instanceId ? { ...c, zone: ZONES.GRAVEYARD, faceDown: false } : c
         ));
@@ -3960,6 +4003,18 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       updates.cards = newCards;
       updates.log = arrayUnion(makeActionLog('TOGGLE_FACE', nextFaceDown ? `${actorName} turned ${getSafeCardName(card)} face down.` : `${actorName} turned ${getSafeCardName(card, 'a face-down card')} face up${card?.name ? ` as ${card.name}` : ''}.`, { category: 'visibility', cardId: card?.instanceId, cardName: nextFaceDown ? null : card?.name || null }));
 
+    } else if (actionType === 'SWITCH_CARD_FACE') {
+      const card = game.cards.find(c => c.instanceId === payload.cardId);
+      const faces = getUsableCardFaces(card);
+      if (!card || faces.length < 2) return;
+      const fromIndex = getActiveFaceIndex(card);
+      const toIndex = Number.isInteger(payload.faceIndex) ? Math.min(Math.max(payload.faceIndex, 0), faces.length - 1) : ((fromIndex + 1) % faces.length);
+      if (toIndex === fromIndex) return;
+      const fromName = faces[fromIndex]?.name || card.name || 'one face';
+      const toName = faces[toIndex]?.name || card.name || 'another face';
+      updates.cards = game.cards.map(c => c.instanceId === payload.cardId ? { ...c, activeFaceIndex: toIndex } : c);
+      updates.log = arrayUnion(makeActionLog('SWITCH_CARD_FACE', `${actorName} transformed ${fromName} into ${toName}.`, { category: 'card', cardId: card.instanceId, cardName: toName, fromFaceIndex: fromIndex, toFaceIndex: toIndex, fromFaceName: fromName, toFaceName: toName }));
+
     } else if (actionType === 'CHANGE_CONTROL') {
       const changedCard = game.cards.find(c => c.instanceId === payload.cardId);
       const nextControllerId = changedCard?.controllerId === userId ? (opponent?.id || userId) : userId;
@@ -4071,7 +4126,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             const updatedCards = [...game.cards];
             if (cardIndex >= 0) {
               const card = updatedCards[cardIndex];
-              const isPerm = !card.type_line.includes('Instant') && !card.type_line.includes('Sorcery');
+              const typeLine = getCardTypeLine(card).toLowerCase();
+              const isPerm = !typeLine.includes('instant') && !typeLine.includes('sorcery');
               card.zone = isPerm ? ZONES.BATTLEFIELD : ZONES.GRAVEYARD;
               card.tapped = false;
               if (isPerm) {
@@ -4177,8 +4233,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         actorId: userId,
         actorName: myPlayer?.name || 'Unknown',
         cardId: playedCard?.instanceId || payload.cardId,
-        cardName: playedCard?.name || payload.cardName || 'Unknown card',
-        text: `${myPlayer?.name || 'Unknown'} played land: ${playedCard?.name || payload.cardName || 'Unknown card'}`
+        cardName: getCardDisplayName(playedCard, payload.cardName || 'Unknown card'),
+        text: `${myPlayer?.name || 'Unknown'} played land: ${getCardDisplayName(playedCard, payload.cardName || 'Unknown card')}`
       });
 
     } else if (actionType === 'CAST_SPELL') {
@@ -4197,19 +4253,19 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         actorId: userId,
         actorName: myPlayer?.name || 'Unknown',
         cardId: card?.instanceId || payload.cardId,
-        cardName: card?.name || payload.cardName || 'Unknown card',
-        text: `${myPlayer?.name || 'Unknown'} cast ${card?.name || payload.cardName || 'Unknown card'}`
+        cardName: getCardDisplayName(card, payload.cardName || 'Unknown card'),
+        text: `${myPlayer?.name || 'Unknown'} cast ${getCardDisplayName(card, payload.cardName || 'Unknown card')}`
       });
       const stackItem = {
         id: generateCardId(),
         sourceId: card.instanceId,
-        name: card.name,
+        name: getCardDisplayName(card),
         controllerId: userId,
         timestamp: Date.now(),
         targetIds: payload.targetIds || [], // Store array of targets on stack item
         targetPlayerIds: payload.targetPlayerIds || [], // Store array of player targets
-        cardImage: card.image_uri || null, // Added cardImage
-        typeLine: card.type_line || null,
+        cardImage: getCardImageUri(card), // Added cardImage
+        typeLine: getCardTypeLine(card) || null,
         itemType: 'SPELL'
       };
 
@@ -4241,22 +4297,22 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         actorId: userId,
         actorName: myPlayer?.name || 'Unknown',
         cardId: sourceCard?.instanceId || payload.sourceId,
-        cardName: sourceCard?.name || null,
-        text: sourceCard?.name
-          ? `${myPlayer?.name || 'Unknown'} activated ${sourceCard.name}`
+        cardName: sourceCard ? getCardDisplayName(sourceCard) : null,
+        text: sourceCard
+          ? `${myPlayer?.name || 'Unknown'} activated ${getCardDisplayName(sourceCard)}`
           : `${myPlayer?.name || 'Unknown'} activated an ability`
       });
       const stackItem = {
         id: generateCardId(),
         sourceId: payload.sourceId,
-        name: `${sourceCard.name} (Ability)`,
+        name: `${getCardDisplayName(sourceCard)} (Ability)`,
         controllerId: userId,
         timestamp: Date.now(),
         targetIds: payload.targetIds || [],
         targetPlayerIds: payload.targetPlayerIds || [], // Store array of player targets
         type: 'ABILITY',
-        cardImage: sourceCard.image_uri || null, // Added cardImage
-        typeLine: sourceCard.type_line || null,
+        cardImage: getCardImageUri(sourceCard), // Added cardImage
+        typeLine: getCardTypeLine(sourceCard) || null,
         itemType: 'ABILITY'
       };
       const userIndex = game.players.findIndex(p => p.id === userId);
@@ -4434,14 +4490,14 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       const revealEntry = {
         id: generateCardId(),
         cardId: card.instanceId,
-        cardName: card.name,
-        cardImage: card.image_uri,
+        cardName: getCardDisplayName(card),
+        cardImage: getCardImageUri(card),
         revealerId: userId,
         revealerName: myPlayer?.name || 'Unknown',
         timestamp: Date.now()
       };
       updates.reveals = arrayUnion(revealEntry);
-      updates.log = arrayUnion(makeActionLog('REVEAL_CARD', `${actorName} revealed ${card.name}.`, { category: 'reveal', cardId: card.instanceId, cardName: card.name, cardImage: card.image_uri }));
+      updates.log = arrayUnion(makeActionLog('REVEAL_CARD', `${actorName} revealed ${getCardDisplayName(card)}.`, { category: 'reveal', cardId: card.instanceId, cardName: getCardDisplayName(card), cardImage: getCardImageUri(card) }));
 
     } else if (actionType === 'REVEAL_ALL_HAND') {
       const handCards = game.cards.filter(c => c.controllerId === userId && c.zone === ZONES.HAND);
@@ -4454,14 +4510,14 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         const revealEntry = {
           id: generateCardId(),
           cardId: card.instanceId,
-          cardName: card.name,
-          cardImage: card.image_uri,
+          cardName: getCardDisplayName(card),
+          cardImage: getCardImageUri(card),
           revealerId: userId,
           revealerName: myPlayer?.name || 'Unknown',
           timestamp: Date.now() + index // Offset slightly to preserve order
         };
         newRevealEntries.push(revealEntry);
-        newLogEntries.push(makeActionLog('REVEAL_CARD', `${actorName} revealed ${card.name}.`, { category: 'reveal', timestamp: Date.now() + index, cardId: card.instanceId, cardName: card.name, cardImage: card.image_uri }));
+        newLogEntries.push(makeActionLog('REVEAL_CARD', `${actorName} revealed ${getCardDisplayName(card)}.`, { category: 'reveal', timestamp: Date.now() + index, cardId: card.instanceId, cardName: getCardDisplayName(card), cardImage: getCardImageUri(card) }));
       });
 
       if (newRevealEntries.length > 0) {
@@ -4680,6 +4736,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               mana_cost: data.mana_cost,
               type_line: data.type_line,
               image_uri: data.image_uris?.normal || data.card_faces?.[0]?.image_uris?.normal,
+              ...(Array.isArray(data.card_faces) ? { card_faces: data.card_faces } : {}),
+              ...(Array.isArray(data.card_faces) && data.card_faces.length >= 2 ? { activeFaceIndex: 0 } : {}),
               ownerId: userId,
               controllerId: userId,
               zone: entry.isCommander ? ZONES.COMMAND : ZONES.LIBRARY,
@@ -5045,7 +5103,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
   const viewStackItemCard = (item) => {
     const card = game.cards.find(c => c.instanceId === item.sourceId);
-    if (card && card.image_uri) {
+    if (card && getCardImageUri(card)) {
       setZoomedCard(card);
     } else if (item.cardImage) {
       setZoomedCard({ name: item.name, image_uri: item.cardImage });
@@ -5263,7 +5321,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const getDisplayCardName = (cardOrId) => {
     const card = typeof cardOrId === 'string' ? cardsMap.get(cardOrId) : cardOrId;
     if (!card) return 'Unknown';
-    return allBattlefieldDisplayNames.get(card.instanceId) || card.name || 'Unknown';
+    return allBattlefieldDisplayNames.get(card.instanceId) || getCardDisplayName(card, 'Unknown');
   };
 
   const getTargetInfoFor = (cardOrStackItem) => getCardTargetInfo(cardOrStackItem, game, allBattlefieldDisplayNames);
@@ -5329,7 +5387,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     if (!card) return fallback;
     if (card.faceDown) return 'a face-down card';
     if (!isPublicZone(card.zone)) return fallback;
-    return card.name || fallback;
+    return getCardDisplayName(card, fallback);
   };
   const getStackItemSourceCard = (item) => cardsMap.get(item?.sourceId) || null;
   const getStackItemName = (item) => {
@@ -5342,13 +5400,13 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     if (rawType.includes('ABILITY')) return 'Ability';
     if (rawType.includes('SPELL')) return 'Spell';
     const sourceCard = getStackItemSourceCard(item);
-    const sourceTypeLine = item?.typeLine || (isPublicZone(sourceCard?.zone) ? sourceCard?.type_line : '') || '';
+    const sourceTypeLine = item?.typeLine || (isPublicZone(sourceCard?.zone) ? getCardTypeLine(sourceCard) : '') || '';
     if (sourceTypeLine) return sourceTypeLine.toLowerCase().includes('ability') ? 'Ability' : 'Spell';
     return null;
   };
   const getStackItemTypeLine = (item) => {
     const sourceCard = getStackItemSourceCard(item);
-    const typeLine = (item?.typeLine || (isPublicZone(sourceCard?.zone) ? sourceCard?.type_line : '') || '').trim();
+    const typeLine = (item?.typeLine || (isPublicZone(sourceCard?.zone) ? getCardTypeLine(sourceCard) : '') || '').trim();
     return typeLine || null;
   };
   const getStackTargetDisplayNames = (item) => getCardTargetInfo(item, game, allBattlefieldDisplayNames).targetDisplayNames;
@@ -5416,7 +5474,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const attackingCards = Object.keys(combatAttackers)
     .map((id) => cardsMap.get(id))
     .filter((c) => c && c.zone === ZONES.BATTLEFIELD);
-  const validBlockerCandidates = myBattlefield.filter((c) => (c.type_line || '').toLowerCase().includes('creature'));
+  const validBlockerCandidates = myBattlefield.filter((c) => getCardTypeLine(c).toLowerCase().includes('creature'));
   const validBlockTargetAttackers = attackingCards.filter((c) => c.controllerId !== viewAsPlayerId);
   const activeAttackers = validBlockTargetAttackers;
   const getCombatDisplayCardName = (cardOrId) => getCombatDisplayName(cardOrId, game, allBattlefieldDisplayNames);
@@ -5801,7 +5859,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                 <span className="text-[10px] text-purple-300 uppercase vertical-text">Revealed</span>
                 {oppHand.map(c => (
                   <div key={c.instanceId} className="w-12 h-16 shrink-0 relative">
-                    <img src={c.image_uri} className="w-full h-full rounded object-cover opacity-80" />
+                    <img src={getCardImageUri(c)} className="w-full h-full rounded object-cover opacity-80" />
                   </div>
                 ))}
               </div>
@@ -6437,7 +6495,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         <div className="fixed bottom-40 left-0 right-0 z-[90] flex justify-center pointer-events-none px-4">
           <div className="bg-blue-600 text-white p-3 rounded-lg shadow-xl text-center font-bold animate-in fade-in slide-in-from-bottom-4 border-2 border-blue-400 flex flex-col gap-2 pointer-events-auto max-w-md w-full">
             <div className="flex justify-center items-center gap-2">
-              <span>Select targets for: {targetingState.source.name}</span>
+              <span>Select targets for: {getCardDisplayName(targetingState.source)}</span>
               <span className="bg-white text-blue-600 px-2 rounded-full text-xs">{targetingState.selectedIds.length}</span>
             </div>
             <div className="flex justify-center gap-4 text-xs mt-1">
@@ -6455,7 +6513,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           <div className="bg-fuchsia-700 text-white p-3 rounded-lg shadow-xl text-center font-bold animate-in fade-in slide-in-from-bottom-4 border-2 border-fuchsia-300 flex flex-col gap-2 pointer-events-auto max-w-md w-full">
             <div className="flex justify-center items-center gap-2">
               <Paperclip size={16} />
-              <span>Attach {attachmentState.source?.name || 'card'} to a permanent</span>
+              <span>Attach {getCardDisplayName(attachmentState.source, 'card')} to a permanent</span>
             </div>
             <div className="text-xs text-fuchsia-100">Tap another battlefield permanent. Self-attach is ignored.</div>
             <button onClick={() => setAttachmentState(null)} className="text-fuchsia-100 underline hover:text-white text-xs">Cancel</button>
@@ -6469,7 +6527,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             <div className="flex items-center justify-between mb-3">
               <div>
                 <h3 className="font-bold text-white">Attach to player</h3>
-                <p className="text-xs text-slate-400">{attachmentPlayerPickerCard.name}</p>
+                <p className="text-xs text-slate-400">{getCardDisplayName(attachmentPlayerPickerCard)}</p>
               </div>
               <button onClick={() => setAttachmentPlayerPickerCard(null)}><X size={16} className="text-slate-400" /></button>
             </div>
@@ -6763,7 +6821,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           <div className="flex-1 overflow-y-auto grid grid-cols-4 gap-2 content-start">
             {game.cards.filter(c => c.ownerId === viewZone.ownerId && c.zone === viewZone.zone).map(c => (
               <div key={c.instanceId} className="relative" onClick={() => { setSelectedCard(c); setViewZone(null); }}>
-                <img src={c.image_uri} className="w-full rounded opacity-70 hover:opacity-100" />
+                <img src={getCardImageUri(c)} alt={getCardDisplayName(c)} className="w-full rounded opacity-70 hover:opacity-100" />
                 {c.isCommander && <div className="absolute left-1 top-1 rounded-full bg-amber-500 px-1.5 py-0.5 text-[9px] font-black uppercase text-slate-950">Commander</div>}
               </div>
             ))}
@@ -6792,8 +6850,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                 if (!c) return null;
                 return (
                   <div key={c.instanceId} className="flex items-center gap-2 bg-slate-900 p-2 rounded border border-slate-700">
-                    <img src={c.image_uri} className="w-10 h-14 rounded object-cover" />
-                    <span className="flex-1 text-sm text-white truncate">{c.name}</span>
+                    <img src={getCardImageUri(c)} alt={getCardDisplayName(c)} className="w-10 h-14 rounded object-cover" />
+                    <span className="flex-1 text-sm text-white truncate">{getCardDisplayName(c)}</span>
                     <div className="flex flex-col gap-1">
                       <button
                         onClick={() => moveReorderItem(i, -1)}
@@ -6998,12 +7056,12 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           <div className="flex-1 overflow-y-auto grid grid-cols-2 sm:grid-cols-4 gap-2 content-start">
             {game.cards
               .filter(c => c.ownerId === searchLibraryOwner && c.zone === ZONES.LIBRARY)
-              .filter(c => c.name.toLowerCase().includes(searchQuery.toLowerCase()))
+              .filter(c => getCardDisplayName(c).toLowerCase().includes(searchQuery.toLowerCase()))
               .map(c => (
                 <div key={c.instanceId} className="relative group" onClick={() => setSelectedCard(c)}>
-                  <img src={c.image_uri} className="w-full rounded" />
+                  <img src={getCardImageUri(c)} alt={getCardDisplayName(c)} className="w-full rounded" />
                   <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex flex-col items-center justify-center gap-2">
-                    <span className="text-xs font-bold text-white mb-1">{c.name}</span>
+                    <span className="text-xs font-bold text-white mb-1">{getCardDisplayName(c)}</span>
                     <button onClick={(e) => {e.stopPropagation(); handleAction('MOVE_ZONE', { cardId: c.instanceId, targetZone: ZONES.HAND }); setSearchLibraryOwner(null);}} className="bg-blue-600 text-xs px-2 py-1 rounded">To Hand</button>
                     <button onClick={(e) => {e.stopPropagation(); handleAction('MOVE_ZONE', { cardId: c.instanceId, targetZone: ZONES.BATTLEFIELD }); setSearchLibraryOwner(null);}} className="bg-green-600 text-xs px-2 py-1 rounded">To Play</button>
                     <button onClick={(e) => {e.stopPropagation(); handleAction('MOVE_ZONE', { cardId: c.instanceId, targetZone: ZONES.GRAVEYARD }); setSearchLibraryOwner(null);}} className="bg-red-600 text-xs px-2 py-1 rounded">To GY</button>
@@ -7084,7 +7142,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                   <div className="rounded bg-slate-900/60 p-3 text-sm text-slate-400">No commander damage marked.</div>
                 ) : rows.map(({ card, amount }) => (
                   <div key={card.instanceId} className="flex items-center justify-between rounded bg-slate-900/70 px-3 py-2 text-sm">
-                    <span className="font-semibold text-slate-100">{card.name || 'Commander'}</span>
+                    <span className="font-semibold text-slate-100">{getCardDisplayName(card, 'Commander')}</span>
                     <span className="font-black text-amber-200">{amount} / 21</span>
                   </div>
                 ))}
@@ -7098,7 +7156,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       {peekCard && (
         <div className="fixed inset-0 bg-black/90 z-[70] flex flex-col items-center justify-center p-4" onClick={() => setPeekCard(null)}>
           <h3 className="text-white text-lg font-bold mb-4 flex items-center gap-2"><EyeOff /> Peeking at Face-Down Card</h3>
-          <img src={peekCard.image_uri} alt={peekCard.name} className="max-w-full max-h-[70vh] rounded-xl shadow-2xl border-4 border-blue-500" />
+          <img src={getCardImageUri(peekCard)} alt={getCardDisplayName(peekCard)} className="max-w-full max-h-[70vh] rounded-xl shadow-2xl border-4 border-blue-500" />
           <p className="text-slate-400 mt-4 text-sm">Only you can see this.</p>
         </div>
       )}
@@ -7162,7 +7220,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               {scryCard.ownerId === userId ? 'Scry 1: Top of Library' : 'Peek: Top of Opponent Library'}
             </h3>
             <div className="flex justify-center">
-              <img src={scryCard.image_uri} alt={scryCard.name} className="h-64 rounded-lg shadow-xl" />
+              <img src={getCardImageUri(scryCard)} alt={getCardDisplayName(scryCard)} className="h-64 rounded-lg shadow-xl" />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <button onClick={() => handleAction('SCRY_KEEP_TOP')} className="bg-slate-600 hover:bg-slate-500 py-3 rounded-lg font-bold">Keep on Top</button>
@@ -7225,6 +7283,46 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                       <div className="text-xs text-slate-400">No reminders on this card.</div>
                     )}
                     {canAct && <ReminderTool label="Add Reminder" onAdd={(reminder) => addCardReminder(selectedCard.instanceId, reminder)} />}
+                  </section>
+                );
+              })()}
+
+              {(() => {
+                const liveSelectedCard = cardsMap.get(selectedCard.instanceId) || selectedCard;
+                const faces = getUsableCardFaces(liveSelectedCard);
+                const canSeeFaceTools = isDoubleFacedCard(liveSelectedCard) && (!liveSelectedCard.faceDown || liveSelectedCard.controllerId === viewAsPlayerId || liveSelectedCard.ownerId === viewAsPlayerId);
+                if (!canSeeFaceTools) return null;
+                const activeIndex = getActiveFaceIndex(liveSelectedCard);
+                const activeFace = faces[activeIndex];
+                const otherIndex = (activeIndex + 1) % faces.length;
+                const otherFace = getCardFaceAt(liveSelectedCard, otherIndex);
+                const otherImage = otherFace?.image_uris?.normal || otherFace?.image_uris?.large || null;
+                return (
+                  <section className="space-y-2 rounded-lg border border-cyan-500/40 bg-cyan-950/20 p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <h3 className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-cyan-200"><Repeat size={12} /> Double-faced card</h3>
+                      <span className="rounded-full border border-cyan-400/40 bg-cyan-900/40 px-2 py-0.5 text-[10px] font-bold text-cyan-100">Face {activeIndex + 1}/{faces.length}</span>
+                    </div>
+                    <div className="text-sm text-slate-100">Current face: <span className="font-bold">{activeFace?.name || getCardDisplayName(liveSelectedCard)}</span></div>
+                    <div className="rounded-lg border border-slate-700 bg-slate-950/40 p-2">
+                      <div className="flex gap-2">
+                        {otherImage && <img src={otherImage} alt={otherFace?.name || 'Other face'} className="h-24 w-16 rounded object-cover border border-slate-700" />}
+                        <div className="min-w-0 flex-1 space-y-1">
+                          <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">View other face</div>
+                          <div className="font-bold text-slate-100 leading-tight">{otherFace?.name || 'Other face'}</div>
+                          <div className="text-xs font-semibold text-cyan-100/90">{otherFace?.type_line || '—'}</div>
+                          <div className="max-h-24 overflow-y-auto whitespace-pre-wrap text-xs text-slate-300">{getCardOracleText({ ...liveSelectedCard, activeFaceIndex: otherIndex }, 'No rules text.')}</div>
+                        </div>
+                      </div>
+                    </div>
+                    {canAct && liveSelectedCard.controllerId === viewAsPlayerId && (
+                      <button
+                        onClick={() => { handleAction('SWITCH_CARD_FACE', { cardId: liveSelectedCard.instanceId, faceIndex: otherIndex }); setSelectedCard(null); }}
+                        className="min-h-10 w-full rounded-lg border border-cyan-500/50 bg-cyan-900/50 p-2 text-sm font-bold text-cyan-50 hover:bg-cyan-800/70 flex items-center justify-center gap-2"
+                      >
+                        <Repeat size={14} /> Transform / Switch to {otherFace?.name || 'other face'}
+                      </button>
+                    )}
                   </section>
                 );
               })()}
@@ -7312,10 +7410,10 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                   {canAct && selectedCard.controllerId === viewAsPlayerId && (
                     <>
                       <div className="grid grid-cols-2 gap-2">
-                        {isAttackersStep && (selectedCard.type_line || '').toLowerCase().includes('creature') && (
+                        {isAttackersStep && getCardTypeLine(selectedCard).toLowerCase().includes('creature') && (
                           <button onClick={() => setAttackTargetPickerCard(selectedCard)} className="min-h-10 bg-red-900/50 hover:bg-red-800 text-red-100 p-2 rounded-lg text-sm border border-red-700">Attack...</button>
                         )}
-                        {isBlockersStep && (selectedCard.type_line || '').toLowerCase().includes('creature') && (
+                        {isBlockersStep && getCardTypeLine(selectedCard).toLowerCase().includes('creature') && (
                           <button onClick={() => setBlockPickerCard(selectedCard)} className="min-h-10 bg-blue-900/50 hover:bg-blue-800 text-blue-100 p-2 rounded-lg text-sm border border-blue-700">Block...</button>
                         )}
                       </div>
@@ -7447,7 +7545,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                             <button onClick={() => { if (!canAct) return; setTargetingState({ source: selectedCard, mode: 'MANUAL', selectedIds: [] }); setSelectedCard(null); }} className="min-h-10 bg-slate-700 hover:bg-slate-600 text-slate-300 p-2 rounded-lg text-sm flex items-center justify-center gap-2 border border-slate-600">Target... 🎯</button>
                             <button disabled={clearableTargets.length === 0} onClick={() => clearTargets(selectedCard)} className={`col-span-2 min-h-10 p-2 rounded-lg text-sm flex items-center justify-center gap-2 ${clearableTargets.length === 0 ? 'bg-slate-800/60 text-slate-500 cursor-not-allowed border border-slate-700' : 'bg-slate-700 hover:bg-slate-600 text-slate-300'}`}>✖ Clear Targets</button>
                             <button onClick={() => { handleAction('CLONE_CARD', { cardId: selectedCard.instanceId }); setSelectedCard(null); }} className="min-h-10 bg-slate-700 text-slate-300 p-2 rounded-lg text-sm flex items-center justify-center gap-2"><Copy size={12}/> Clone</button>
-                            <button onClick={() => { handleAction('CHANGE_CONTROL', { cardId: selectedCard.instanceId, cardName: selectedCard.name }); setSelectedCard(null); }} className="min-h-10 bg-slate-700 text-slate-300 p-2 rounded-lg text-sm flex items-center justify-center gap-2"><UserCheck size={12}/> Give Control</button>
+                            <button onClick={() => { handleAction('CHANGE_CONTROL', { cardId: selectedCard.instanceId, cardName: getCardDisplayName(selectedCard) }); setSelectedCard(null); }} className="min-h-10 bg-slate-700 text-slate-300 p-2 rounded-lg text-sm flex items-center justify-center gap-2"><UserCheck size={12}/> Give Control</button>
                           </div>
                         )}
                       </>
@@ -7630,7 +7728,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               {zoomedCard.isToken ? (
                 <TokenCardPreview token={zoomedCard} size="large" />
               ) : (
-                <img src={zoomedCard.image_uri} alt={zoomedCard.name} className="max-w-full max-h-[80vh] rounded-xl shadow-2xl" />
+                <img src={getCardImageUri(zoomedCard)} alt={getCardDisplayName(zoomedCard)} className="max-w-full max-h-[80vh] rounded-xl shadow-2xl" />
               )}
             </div>
             {(() => {

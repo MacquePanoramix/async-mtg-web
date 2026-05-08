@@ -1,0 +1,141 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // User-scoped index for "My Games" and cleanup list references.
+    match /users/{uid}/games/{gameId} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    match /games_v3/{gameId} {
+      function isSignedIn() {
+        return request.auth != null;
+      }
+
+      function isHost() {
+        return isSignedIn() && resource.data.hostId == request.auth.uid;
+      }
+
+      function playerAt(index) {
+        return resource.data.players[index];
+      }
+
+      function isPlayer() {
+        return isSignedIn() &&
+          resource.data.players is list &&
+          (
+            (resource.data.players.size() > 0 && playerAt(0).id == request.auth.uid) ||
+            (resource.data.players.size() > 1 && playerAt(1).id == request.auth.uid)
+          );
+      }
+
+      function isJoiningAsPlayer2() {
+        return isSignedIn()
+          && resource.data.players is list
+          && request.resource.data.players is list
+          && resource.data.players.size() == 1
+          && request.resource.data.players.size() == 2
+          && request.resource.data.players[0].id == resource.data.players[0].id
+          && request.resource.data.players[1].id == request.auth.uid;
+      }
+
+      function isSpectator() {
+        return isSignedIn()
+          && resource.data.spectatorIds is list
+          && resource.data.spectatorIds.hasAny([request.auth.uid]);
+      }
+
+      function isChatOnlyUpdate() {
+        return request.resource.data.diff(resource.data).changedKeys().hasOnly(['log'])
+          && resource.data.log is list
+          && request.resource.data.log is list
+          && request.resource.data.log.size() == resource.data.log.size() + 1
+          && request.resource.data.log[request.resource.data.log.size() - 1].type == 'CHAT'
+          && request.resource.data.log[request.resource.data.log.size() - 1].playerId == request.auth.uid;
+      }
+
+      function isSpectatorJoinUpdate() {
+        return isSignedIn()
+          && request.resource.data.diff(resource.data).changedKeys().hasOnly(['spectatorIds'])
+          && resource.data.spectatorIds is list
+          && request.resource.data.spectatorIds is list
+          && request.resource.data.spectatorIds.size() == resource.data.spectatorIds.size() + 1
+          && request.resource.data.spectatorIds.hasAll(resource.data.spectatorIds)
+          && request.auth.uid in request.resource.data.spectatorIds
+          && !(request.auth.uid in resource.data.spectatorIds);
+      }
+
+      function isProxyAutopassUpdate() {
+        let changed = request.resource.data.diff(resource.data).changedKeys();
+        let oldPriority = resource.data.priorityPlayerId;
+        let oldAutopass = resource.data.autopass == null ? {} : resource.data.autopass;
+        let oldCfg = oldPriority == null ? null : oldAutopass[oldPriority];
+        let newLogSize = request.resource.data.log.size();
+        let oldLogSize = resource.data.log.size();
+        let last = request.resource.data.log[newLogSize - 1];
+
+        return isPlayer()
+          && oldPriority != null
+          && oldCfg != null
+          && oldCfg.mode is string
+          && oldCfg.mode != 'off'
+          && resource.data.log is list
+          && request.resource.data.log is list
+          && changed.hasOnly([
+            'phase',
+            'step',
+            'turnNumber',
+            'activePlayerIndex',
+            'priorityIndex',
+            'priorityPlayerId',
+            'stack',
+            'cards',
+            'log',
+            'autopass'
+          ])
+          && newLogSize == oldLogSize + 1
+          && (last.type == 'AUTOPASS' || last.type == 'AUTOPASS_PROXY')
+          && last.playerId == oldPriority
+          && last.actorId == request.auth.uid;
+      }
+
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+
+      allow update: if
+        isPlayer()
+        || isJoiningAsPlayer2()
+        || isSpectatorJoinUpdate()
+        || (isSpectator() && isChatOnlyUpdate())
+        || isProxyAutopassUpdate();
+
+      // Hosts may hard-delete their own game documents for old game cleanup.
+      allow delete: if isHost();
+
+      match /events/{eventId} {
+        function parentGame() {
+          return get(/databases/$(database)/documents/games_v3/$(gameId)).data;
+        }
+
+        function isHostOfParentGame() {
+          return request.auth != null && parentGame().hostId == request.auth.uid;
+        }
+
+        function isPlayerOnThisGame() {
+          return request.auth != null
+            && parentGame().players is list
+            && (
+              (parentGame().players.size() > 0 && parentGame().players[0].id == request.auth.uid)
+              ||
+              (parentGame().players.size() > 1 && parentGame().players[1].id == request.auth.uid)
+            );
+        }
+
+        allow read: if request.auth != null;
+        allow create: if isPlayerOnThisGame();
+        allow update: if false;
+        allow delete: if isHostOfParentGame();
+      }
+    }
+  }
+}

@@ -405,6 +405,50 @@ const getCardImageUri = (card) => {
   if (faceImageUri) return faceImageUri;
   return getBestImageUriFromImageUris(card?.image_uris) || card?.image_uri || null;
 };
+
+const isDebugActionsEnabled = () => {
+  if (typeof window === 'undefined') return false;
+  try {
+    const params = new URLSearchParams(window.location.search || '');
+    return params.get('debugActions') === '1' || window.localStorage?.getItem('debugActions') === '1';
+  } catch {
+    return false;
+  }
+};
+
+const debugActionsLog = (message, details = {}) => {
+  if (!isDebugActionsEnabled()) return;
+  console.log(`[Debug card actions] ${message}`, details);
+};
+
+const debugActionsError = (message, details = {}) => {
+  if (!isDebugActionsEnabled()) return;
+  console.error(`[Debug card actions] ${message}`, details);
+};
+
+
+const debugObjectsDiffer = (a, b) => {
+  if (!a || !b) return false;
+  try {
+    return JSON.stringify(a) !== JSON.stringify(b);
+  } catch {
+    return a !== b;
+  }
+};
+
+const summarizeDebugElement = (element) => {
+  if (!element) return null;
+  return {
+    tagName: element.tagName,
+    id: element.id || null,
+    className: typeof element.className === 'string' ? element.className : null,
+    text: element.textContent?.trim().slice(0, 120) || null,
+    ariaLabel: element.getAttribute?.('aria-label') || null,
+    role: element.getAttribute?.('role') || null,
+    pointerEvents: typeof window !== 'undefined' ? window.getComputedStyle(element).pointerEvents : null
+  };
+};
+
 const getSafeCardName = (card, fallback = 'a card') => {
   if (!card || card.faceDown) return fallback;
   return getCardDisplayName(card, fallback);
@@ -2870,6 +2914,112 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const gameLogTurnKeys = Object.keys(gameLogByTurn).sort((a, b) => Number(b) - Number(a));
   // FIX: Safety check for players array
   const myPlayer = viewAsPlayer;
+  const getSelectedCardDebugSnapshot = useCallback((card = selectedCard, extra = {}) => {
+    const liveCard = card?.instanceId ? (game?.cards || []).find((candidate) => candidate.instanceId === card.instanceId) : null;
+    const debugCard = liveCard || card || null;
+    const faces = getUsableCardFaces(debugCard);
+    const activeFaceIndex = getActiveFaceIndex(debugCard);
+    const typeLine = getCardTypeLine(debugCard, '');
+    const lowerTypeLine = typeLine.toLowerCase();
+    const ownerId = debugCard?.ownerId || null;
+    const controllerId = debugCard?.controllerId || null;
+    const isLand = isLandCard(debugCard);
+    const isInstantOrSorcery = lowerTypeLine.includes('instant') || lowerTypeLine.includes('sorcery');
+    const isPermanent = Boolean(typeLine && !isInstantOrSorcery);
+    const canPlayLandCondition = Boolean(canAct && debugCard?.zone === ZONES.HAND && controllerId === viewAsPlayerId && isLand);
+    const canCastCondition = Boolean(canAct && debugCard?.zone === ZONES.HAND && controllerId === viewAsPlayerId && !isLand);
+    const transformAvailable = Boolean(isDoubleFacedCard(debugCard) && (!debugCard?.faceDown || controllerId === viewAsPlayerId || ownerId === viewAsPlayerId));
+    return {
+      buttonName: extra.buttonName || null,
+      disabled: Boolean(extra.disabled),
+      disabledReason: extra.disabledReason || '',
+      actionType: extra.actionType || null,
+      payload: extra.payload || null,
+      selectedCardInstanceId: card?.instanceId || null,
+      selectedCardName: card?.name || null,
+      selectedCardZone: card?.zone || null,
+      selectedCardOwnerId: card?.ownerId || null,
+      selectedCardControllerId: card?.controllerId || null,
+      liveCardFound: Boolean(liveCard),
+      selectedCardDiffersFromLiveCard: Boolean(card && liveCard && debugObjectsDiffer(card, liveCard)),
+      liveCard: liveCard || null,
+      zone: debugCard?.zone || null,
+      ownerId,
+      controllerId,
+      activeFaceIndex,
+      cardFacesLength: Array.isArray(debugCard?.card_faces) ? debugCard.card_faces.length : 0,
+      usableFaceCount: faces.length,
+      displayName: getCardDisplayName(debugCard, 'Unknown'),
+      typeLine,
+      currentUserId: userId,
+      currentPlayerId: viewAsPlayerId,
+      activePlayerId: game?.turnPlayerId || game?.players?.[game?.activePlayerIndex]?.id || null,
+      priorityPlayerId: game?.priorityPlayerId || null,
+      canAct,
+      isLand,
+      isInstantOrSorcery,
+      isPermanent,
+      canPlayLandCondition,
+      canCastCondition,
+      transformAvailable,
+      ...extra
+    };
+  }, [selectedCard, game?.cards, game?.turnPlayerId, game?.activePlayerIndex, game?.priorityPlayerId, game?.players, userId, viewAsPlayerId, canAct]);
+
+  const debugCardActionClick = (buttonName, actionType, payload, event, card = selectedCard) => {
+    if (!isDebugActionsEnabled()) return;
+    const elementAtPoint = typeof document !== 'undefined' && event?.clientX != null && event?.clientY != null
+      ? document.elementFromPoint(event.clientX, event.clientY)
+      : null;
+    debugActionsLog('CLICK FIRED', {
+      ...getSelectedCardDebugSnapshot(card, { buttonName, actionType, payload }),
+      click: {
+        clientX: event?.clientX ?? null,
+        clientY: event?.clientY ?? null,
+        currentTarget: summarizeDebugElement(event?.currentTarget),
+        target: summarizeDebugElement(event?.target),
+        elementFromPoint: summarizeDebugElement(elementAtPoint),
+        elementFromPointIsButton: Boolean(event?.currentTarget && elementAtPoint === event.currentTarget),
+        currentTargetContainsElementFromPoint: Boolean(event?.currentTarget && elementAtPoint && event.currentTarget.contains(elementAtPoint))
+      }
+    });
+  };
+
+  const renderDebuggableCardActionButton = ({ buttonName, actionType, payload, card = selectedCard, disabled = false, disabledReason = '', className, children, onClick, ...buttonProps }) => {
+    const debugSnapshot = getSelectedCardDebugSnapshot(card, { buttonName, actionType, payload, disabled, disabledReason });
+    debugActionsLog(`render button: ${buttonName}`, debugSnapshot);
+    return (
+      <button
+        {...buttonProps}
+        disabled={disabled}
+        className={className}
+        onClick={(event) => {
+          debugCardActionClick(buttonName, actionType, payload, event, card);
+          if (disabled) return;
+          onClick?.(event);
+        }}
+      >
+        {children}
+      </button>
+    );
+  };
+
+  useEffect(() => {
+    if (!isDebugActionsEnabled() || !selectedCard) return undefined;
+    const handlePointerProbe = (event) => {
+      const elementAtPoint = document.elementFromPoint(event.clientX, event.clientY);
+      debugActionsLog('document pointer probe while card action panel open', {
+        clientX: event.clientX,
+        clientY: event.clientY,
+        target: summarizeDebugElement(event.target),
+        elementFromPoint: summarizeDebugElement(elementAtPoint),
+        selectedCard: getSelectedCardDebugSnapshot(selectedCard)
+      });
+    };
+    document.addEventListener('pointerdown', handlePointerProbe, true);
+    return () => document.removeEventListener('pointerdown', handlePointerProbe, true);
+  }, [selectedCard, game?.cards, game?.priorityPlayerId, game?.turnPlayerId, viewAsPlayerId, userId, canAct, getSelectedCardDebugSnapshot]);
+
   const commanderModeEnabled = isCommanderGame(game);
   const getCommanderDamage = (card, targetPlayerId) => Math.max(0, card?.commanderDamage?.[targetPlayerId] || 0);
   const getCommanderDamageRowsForPlayer = (playerId) => (game?.cards || [])
@@ -3283,6 +3433,38 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   };
 
   const handleAction = async (actionType, payload = {}) => {
+    const debugActions = isDebugActionsEnabled();
+    if (debugActions) {
+      const payloadCardId = payload?.cardId || payload?.sourceId || payload?.targetId || null;
+      const payloadCard = payloadCardId ? (game?.cards || []).find((card) => card.instanceId === payloadCardId) : null;
+      const liveSelectedCard = selectedCard?.instanceId ? (game?.cards || []).find((card) => card.instanceId === selectedCard.instanceId) : null;
+      console.groupCollapsed(`[Debug card actions] handleAction start: ${actionType}`);
+      console.log('actionType', actionType);
+      console.log('payload', payload);
+      console.log('selectedCard', selectedCard || null);
+      console.log('selectedCard stale check', {
+        selectedCardId: selectedCard?.instanceId || null,
+        liveCardFound: Boolean(liveSelectedCard),
+        differsFromLiveCard: Boolean(selectedCard && liveSelectedCard && debugObjectsDiffer(selectedCard, liveSelectedCard)),
+        liveSelectedCard: liveSelectedCard || null
+      });
+      console.log('game/player state', {
+        gameId,
+        currentPlayerId: userId,
+        viewAsPlayerId,
+        hasGame: Boolean(game),
+        hasCards: Array.isArray(game?.cards),
+        cardCount: game?.cards?.length || 0,
+        hasPlayers: Array.isArray(game?.players),
+        playerCount: game?.players?.length || 0,
+        activePlayerId: game?.turnPlayerId || game?.players?.[game?.activePlayerIndex]?.id || null,
+        priorityPlayerId: game?.priorityPlayerId || null,
+        payloadCard: payloadCard || null
+      });
+      console.groupEnd();
+    }
+
+    try {
     if (!game) return;
     if (isSpectator && actionType !== 'SEND_CHAT') {
       setNotification("Spectators can't take game actions.");
@@ -4563,6 +4745,17 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     }
     if (pendingRecapEvents.length > 0) {
       await Promise.all(pendingRecapEvents.map((event) => appendEvent(gameId, event)));
+    }
+    } catch (error) {
+      debugActionsError(`handleAction threw: ${actionType}`, {
+        actionType,
+        payload,
+        message: error?.message || String(error),
+        stack: error?.stack || null,
+        selectedCard: selectedCard || null,
+        relevantCard: payload?.cardId ? (game?.cards || []).find((card) => card.instanceId === payload.cardId) || null : null
+      });
+      throw error;
     }
   };
 
@@ -7341,14 +7534,41 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                         </div>
                       </div>
                     </div>
-                    {canAct && liveSelectedCard.controllerId === viewAsPlayerId && (
-                      <button
-                        onClick={() => { handleAction('SWITCH_CARD_FACE', { cardId: liveSelectedCard.instanceId, faceIndex: otherIndex }); setSelectedCard(null); }}
-                        className="min-h-10 w-full rounded-lg border border-cyan-500/50 bg-cyan-900/50 p-2 text-sm font-bold text-cyan-50 hover:bg-cyan-800/70 flex items-center justify-center gap-2"
-                      >
-                        <Repeat size={14} /> Transform / Switch to {otherFace?.name || 'other face'}
-                      </button>
-                    )}
+                    {canAct && liveSelectedCard.controllerId === viewAsPlayerId && renderDebuggableCardActionButton({
+                      buttonName: 'Transform / Switch Face',
+                      actionType: 'SWITCH_CARD_FACE',
+                      payload: { cardId: liveSelectedCard.instanceId, faceIndex: otherIndex },
+                      card: liveSelectedCard,
+                      className: "min-h-10 w-full rounded-lg border border-cyan-500/50 bg-cyan-900/50 p-2 text-sm font-bold text-cyan-50 hover:bg-cyan-800/70 flex items-center justify-center gap-2",
+                      onClick: () => { handleAction('SWITCH_CARD_FACE', { cardId: liveSelectedCard.instanceId, faceIndex: otherIndex }); setSelectedCard(null); },
+                      children: <><Repeat size={14} /> Transform / Switch to {otherFace?.name || 'other face'}</>
+                    })}
+                  </section>
+                );
+              })()}
+
+              {isDebugActionsEnabled() && selectedCard && (() => {
+                const snapshot = getSelectedCardDebugSnapshot(selectedCard);
+                return (
+                  <section className="space-y-2 rounded-lg border border-yellow-400/50 bg-yellow-950/20 p-3 text-xs">
+                    <h3 className="flex items-center gap-1.5 text-[11px] font-black uppercase tracking-wider text-yellow-200"><Bug size={12} /> Debug card actions</h3>
+                    <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-slate-200">
+                      <div className="text-slate-400">Selected id</div><div className="truncate font-mono">{snapshot.selectedCardInstanceId || '—'}</div>
+                      <div className="text-slate-400">Live card found?</div><div className={snapshot.liveCardFound ? 'text-green-300' : 'text-red-300'}>{snapshot.liveCardFound ? 'yes' : 'no'}</div>
+                      <div className="text-slate-400">Stale/different?</div><div className={snapshot.selectedCardDiffersFromLiveCard ? 'text-amber-300' : 'text-slate-200'}>{snapshot.selectedCardDiffersFromLiveCard ? 'yes' : 'no'}</div>
+                      <div className="text-slate-400">Zone</div><div>{snapshot.zone || '—'}</div>
+                      <div className="text-slate-400">Owner/controller</div><div className="truncate font-mono">{snapshot.ownerId || '—'} / {snapshot.controllerId || '—'}</div>
+                      <div className="text-slate-400">Active face</div><div>{snapshot.activeFaceIndex}</div>
+                      <div className="text-slate-400">Face count</div><div>{snapshot.cardFacesLength} raw / {snapshot.usableFaceCount} usable</div>
+                      <div className="text-slate-400">Display name</div><div className="truncate">{snapshot.displayName || '—'}</div>
+                      <div className="text-slate-400">Type line</div><div className="truncate">{snapshot.typeLine || '—'}</div>
+                      <div className="text-slate-400">Land?</div><div>{snapshot.isLand ? 'yes' : 'no'}</div>
+                      <div className="text-slate-400">Spell kind</div><div>{snapshot.isInstantOrSorcery ? 'instant/sorcery' : snapshot.isPermanent ? 'permanent' : 'unknown'}</div>
+                      <div className="text-slate-400">canPlayLand</div><div>{snapshot.canPlayLandCondition ? 'yes' : 'no'}</div>
+                      <div className="text-slate-400">canCast</div><div>{snapshot.canCastCondition ? 'yes' : 'no'}</div>
+                      <div className="text-slate-400">Transform available?</div><div>{snapshot.transformAvailable ? 'yes' : 'no'}</div>
+                      <div className="text-slate-400">User / priority</div><div className="truncate font-mono">{snapshot.currentUserId || '—'} / {snapshot.priorityPlayerId || '—'}</div>
+                    </div>
                   </section>
                 );
               })()}
@@ -7395,9 +7615,30 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                 <section className="space-y-2 rounded-lg border border-slate-700/80 bg-slate-900/30 p-3">
                   <h3 className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Targets / Abilities</h3>
                   <div className="grid grid-cols-2 gap-2">
-                    <button onClick={() => { handleAction('PLAY_LAND', { cardId: selectedCard.instanceId }); setSelectedCard(null); }} className="min-h-10 bg-amber-900/50 hover:bg-amber-800 text-amber-100 p-2 rounded-lg text-sm font-medium border border-amber-800">Play Land</button>
-                    <button onClick={() => { handleAction('CAST_SPELL', { cardId: selectedCard.instanceId }); setSelectedCard(null); }} className="min-h-10 bg-purple-900/50 hover:bg-purple-800 text-purple-100 p-2 rounded-lg text-sm font-medium border border-purple-800">Cast Spell</button>
-                    <button onClick={() => { if (!canAct) return; setTargetingState({ source: selectedCard, mode: 'CAST', selectedIds: [] }); setSelectedCard(null); }} className="col-span-2 min-h-10 bg-purple-900/50 hover:bg-purple-800 text-purple-100 p-2 rounded-lg text-sm font-medium border border-purple-800 flex items-center justify-center gap-2">Cast + Target 🎯</button>
+                    {renderDebuggableCardActionButton({
+                      buttonName: 'Play Land',
+                      actionType: 'PLAY_LAND',
+                      payload: { cardId: selectedCard.instanceId },
+                      className: "min-h-10 bg-amber-900/50 hover:bg-amber-800 text-amber-100 p-2 rounded-lg text-sm font-medium border border-amber-800",
+                      onClick: () => { handleAction('PLAY_LAND', { cardId: selectedCard.instanceId }); setSelectedCard(null); },
+                      children: 'Play Land'
+                    })}
+                    {renderDebuggableCardActionButton({
+                      buttonName: 'Cast Spell',
+                      actionType: 'CAST_SPELL',
+                      payload: { cardId: selectedCard.instanceId },
+                      className: "min-h-10 bg-purple-900/50 hover:bg-purple-800 text-purple-100 p-2 rounded-lg text-sm font-medium border border-purple-800",
+                      onClick: () => { handleAction('CAST_SPELL', { cardId: selectedCard.instanceId }); setSelectedCard(null); },
+                      children: 'Cast Spell'
+                    })}
+                    {renderDebuggableCardActionButton({
+                      buttonName: 'Cast + Target',
+                      actionType: 'SET_TARGETING_STATE_CAST',
+                      payload: { sourceId: selectedCard.instanceId, mode: 'CAST', selectedIds: [] },
+                      className: "col-span-2 min-h-10 bg-purple-900/50 hover:bg-purple-800 text-purple-100 p-2 rounded-lg text-sm font-medium border border-purple-800 flex items-center justify-center gap-2",
+                      onClick: () => { if (!canAct) return; setTargetingState({ source: selectedCard, mode: 'CAST', selectedIds: [] }); setSelectedCard(null); },
+                      children: 'Cast + Target 🎯'
+                    })}
                     <button onClick={() => { handleAction('MOVE_ZONE', { cardId: selectedCard.instanceId, targetZone: ZONES.BATTLEFIELD }); handleAction('TOGGLE_FACE', { cardId: selectedCard.instanceId }); setSelectedCard(null); }} className="col-span-2 min-h-10 bg-slate-700 text-slate-300 p-2 rounded-lg text-sm">Play Face Down (Morph)</button>
                   </div>
                 </section>
@@ -7584,8 +7825,22 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                 <section className="space-y-2 rounded-lg border border-slate-700/80 bg-slate-900/30 p-3">
                   <h3 className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Move Card</h3>
                   <div className="grid grid-cols-2 gap-2">
-                    <button onClick={() => { handleAction('MOVE_ZONE', { cardId: selectedCard.instanceId, targetZone: ZONES.GRAVEYARD }); setSelectedCard(null); }} className="min-h-10 bg-slate-700 hover:bg-red-900/50 text-white p-2 rounded-lg text-sm font-medium">To Graveyard</button>
-                    <button onClick={() => { handleAction('MOVE_ZONE', { cardId: selectedCard.instanceId, targetZone: ZONES.EXILE }); setSelectedCard(null); }} className="min-h-10 bg-slate-700 text-slate-300 p-2 rounded-lg text-sm font-medium">To Exile</button>
+                    {renderDebuggableCardActionButton({
+                      buttonName: 'Move to Graveyard',
+                      actionType: 'MOVE_ZONE',
+                      payload: { cardId: selectedCard.instanceId, targetZone: ZONES.GRAVEYARD },
+                      className: "min-h-10 bg-slate-700 hover:bg-red-900/50 text-white p-2 rounded-lg text-sm font-medium",
+                      onClick: () => { handleAction('MOVE_ZONE', { cardId: selectedCard.instanceId, targetZone: ZONES.GRAVEYARD }); setSelectedCard(null); },
+                      children: 'To Graveyard'
+                    })}
+                    {renderDebuggableCardActionButton({
+                      buttonName: 'Move to Exile',
+                      actionType: 'MOVE_ZONE',
+                      payload: { cardId: selectedCard.instanceId, targetZone: ZONES.EXILE },
+                      className: "min-h-10 bg-slate-700 text-slate-300 p-2 rounded-lg text-sm font-medium",
+                      onClick: () => { handleAction('MOVE_ZONE', { cardId: selectedCard.instanceId, targetZone: ZONES.EXILE }); setSelectedCard(null); },
+                      children: 'To Exile'
+                    })}
                     <button onClick={() => { handleAction('MOVE_ZONE', { cardId: selectedCard.instanceId, targetZone: ZONES.HAND }); setSelectedCard(null); }} className="min-h-10 bg-slate-700 text-slate-300 p-2 rounded-lg text-sm font-medium">To Hand</button>
                     {selectedCard.zone !== ZONES.BATTLEFIELD && selectedCard.zone !== ZONES.HAND && (
                       <button onClick={() => { handleAction('MOVE_ZONE', { cardId: selectedCard.instanceId, targetZone: ZONES.BATTLEFIELD }); setSelectedCard(null); }} className="min-h-10 bg-purple-900/50 text-white p-2 rounded-lg text-sm font-medium">Return to Battlefield</button>

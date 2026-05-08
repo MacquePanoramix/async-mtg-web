@@ -2,7 +2,7 @@ import React, { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallba
 import { createPortal } from 'react-dom';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged, GoogleAuthProvider, linkWithPopup, signInWithPopup, signInWithRedirect, getRedirectResult, signOut } from 'firebase/auth';
-import { getFirestore, doc, setDoc, collection, onSnapshot, updateDoc, arrayUnion, serverTimestamp, runTransaction, query, orderBy, deleteDoc, getDoc, addDoc } from 'firebase/firestore';
+import { getFirestore, doc, setDoc, collection, onSnapshot, updateDoc, arrayUnion, serverTimestamp, runTransaction, query, orderBy, where, deleteDoc, getDoc, getDocs, addDoc } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { X, ArrowRight, Clock, Shield, Skull, Layers, Eye, ChevronDown, ChevronUp, BookOpen, Shuffle, Plus, Copy, UserCheck, EyeOff, RotateCw, Search, Hexagon, Unlock, Lock, Move, Dices, Coins, LayoutGrid, LogOut, Users, User, Bug, Loader2, RefreshCw, AlertTriangle, Repeat, Check, ArrowUp, ArrowDown, MessageSquare, Trash2, Paperclip, Crown, Undo2 } from 'lucide-react';
 
@@ -85,6 +85,50 @@ const ZONES = {
 
 
 const getPhaseLabel = (phaseId) => PHASES.find((phase) => phase.id === phaseId)?.label || phaseId || 'Unknown step';
+
+const CLEANUP_OLD_GAME_DAYS = 7;
+const CLEANUP_OLD_GAME_MS = CLEANUP_OLD_GAME_DAYS * 24 * 60 * 60 * 1000;
+
+const toDateValue = (value) => {
+  if (!value) return null;
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+  if (typeof value.toDate === 'function') {
+    const date = value.toDate();
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+  if (typeof value === 'number' || typeof value === 'string') {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+  return null;
+};
+
+const formatCleanupDate = (value) => {
+  const date = toDateValue(value);
+  return date ? date.toLocaleString() : '—';
+};
+
+const isCleanupCandidateOld = (game) => {
+  const activityDate = toDateValue(game?.updatedAt) || toDateValue(game?.createdAt);
+  if (!activityDate) return false;
+  return Date.now() - activityDate.getTime() > CLEANUP_OLD_GAME_MS;
+};
+
+const hardDeleteGamePermanently = async ({ user, gameId, functionsInstance, skipMembershipCleanup = false }) => {
+  if (!user || !gameId) return;
+
+  const gameRef = doc(db, 'games_v3', gameId);
+  const gameSnap = await getDoc(gameRef);
+  if (!gameSnap.exists()) throw new Error('Game not found in Firebase.');
+
+  const gameData = gameSnap.data() || {};
+  if (gameData.hostId !== user.uid) {
+    throw new Error('Only the host can delete this game.');
+  }
+
+  const hardDeleteGame = httpsCallable(functionsInstance, 'hardDeleteGame');
+  await hardDeleteGame({ gameId, confirm: true, skipMembershipCleanup });
+};
 
 const ZONE_LABELS = {
   [ZONES.LIBRARY]: 'library',
@@ -1386,6 +1430,13 @@ const Lobby = ({
   onJoin,
   onWatch,
   onDeleteGame,
+  onLoadCleanupGames,
+  onDeleteCleanupGames,
+  cleanupGames,
+  isCleanupLoading,
+  isCleanupDeleting,
+  cleanupError,
+  activeGameId,
   onContinueWithGoogle,
   onSignOut,
   myGames,
@@ -1402,9 +1453,50 @@ const Lobby = ({
   const [code, setCode] = useState('');
   const [mode, setMode] = useState('menu');
   const [pendingDeleteGame, setPendingDeleteGame] = useState(null);
+  const [isCleanupOpen, setIsCleanupOpen] = useState(false);
+  const [selectedCleanupIds, setSelectedCleanupIds] = useState(() => new Set());
+  const [cleanupConfirmText, setCleanupConfirmText] = useState('');
   const isInitLoading = !currentUser;
   const isGoogleConnected = currentUser?.isAnonymous === false;
   const effectiveName = name || suggestedName || '';
+  const selectedCleanupGames = cleanupGames.filter((game) => selectedCleanupIds.has(game.id));
+  const requiresDeleteText = selectedCleanupGames.length > 1;
+  const canConfirmCleanup = selectedCleanupGames.length > 0 && (!requiresDeleteText || cleanupConfirmText === 'DELETE') && !isCleanupDeleting;
+
+  const openCleanup = async () => {
+    setIsCleanupOpen(true);
+    await onLoadCleanupGames();
+  };
+
+  const closeCleanup = () => {
+    setIsCleanupOpen(false);
+    setSelectedCleanupIds(new Set());
+    setCleanupConfirmText('');
+  };
+
+  const toggleCleanupGame = (gameId) => {
+    setSelectedCleanupIds((existing) => {
+      const next = new Set(existing);
+      if (next.has(gameId)) next.delete(gameId);
+      else next.add(gameId);
+      return next;
+    });
+  };
+
+  const selectOldInactiveCleanupGames = () => {
+    setSelectedCleanupIds(new Set(
+      cleanupGames
+        .filter((game) => game.id !== activeGameId && isCleanupCandidateOld(game))
+        .map((game) => game.id)
+    ));
+  };
+
+  const confirmCleanupDelete = async () => {
+    if (!canConfirmCleanup) return;
+    const failedIds = await onDeleteCleanupGames(selectedCleanupGames);
+    setSelectedCleanupIds((existing) => new Set([...existing].filter((id) => failedIds.includes(id))));
+    setCleanupConfirmText('');
+  };
 
   const openGameFromHistory = (game) => {
     const params = new URLSearchParams({ room: game.roomCode });
@@ -1629,7 +1721,17 @@ const Lobby = ({
           </div>
 
           <div className="border border-slate-700 rounded-lg p-3 space-y-2">
-            <div className="text-sm font-semibold text-slate-300">My Games</div>
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-sm font-semibold text-slate-300">My Games</div>
+              <button
+                onClick={openCleanup}
+                disabled={isInitLoading || isActionLoading || isCleanupLoading}
+                className="text-[11px] bg-slate-900 hover:bg-slate-700 disabled:opacity-50 text-slate-300 border border-slate-700 rounded px-2 py-1 flex items-center gap-1"
+              >
+                {isCleanupLoading ? <Loader2 className="animate-spin" size={12} /> : <Trash2 size={12} />}
+                Clean up old games
+              </button>
+            </div>
             {myGames.length === 0 ? (
               <div className="text-xs text-slate-500">No recent games yet.</div>
             ) : (
@@ -1691,6 +1793,141 @@ const Lobby = ({
               >
                 Confirm
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isCleanupOpen && (
+        <div className="fixed inset-0 z-50 bg-black/75 flex items-end sm:items-center justify-center p-3 sm:p-4">
+          <div className="bg-slate-800 w-full sm:max-w-2xl max-h-[88vh] rounded-t-2xl sm:rounded-xl border border-slate-700 shadow-2xl flex flex-col overflow-hidden">
+            <div className="p-4 border-b border-slate-700 flex items-start justify-between gap-3">
+              <div>
+                <div className="text-lg font-bold text-white">Old Game Cleanup</div>
+                <div className="text-xs text-slate-400">Host-owned games only. Nothing is deleted until you select games and confirm.</div>
+              </div>
+              <button
+                onClick={closeCleanup}
+                disabled={isCleanupDeleting}
+                className="p-2 rounded bg-slate-900 hover:bg-slate-700 text-slate-300"
+                aria-label="Close cleanup"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="p-4 space-y-3 overflow-y-auto">
+              <div className="rounded-lg border border-red-700/70 bg-red-950/30 p-3 text-sm text-red-100 flex gap-2">
+                <AlertTriangle className="shrink-0 text-red-300" size={18} />
+                <div>This permanently deletes the selected games and their event history from Firebase. This cannot be undone.</div>
+              </div>
+
+              {cleanupError && (
+                <div className="rounded-lg border border-yellow-700/70 bg-yellow-950/30 p-3 text-sm text-yellow-100 whitespace-pre-wrap">
+                  {cleanupError}
+                </div>
+              )}
+
+              <div className="flex flex-col sm:flex-row gap-2 sm:items-center sm:justify-between">
+                <div className="text-xs text-slate-400">{cleanupGames.length} host-owned candidate{cleanupGames.length === 1 ? '' : 's'} found.</div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={onLoadCleanupGames}
+                    disabled={isCleanupLoading || isCleanupDeleting}
+                    className="flex-1 sm:flex-none bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white px-3 py-2 rounded text-sm flex items-center justify-center gap-2"
+                  >
+                    {isCleanupLoading ? <Loader2 className="animate-spin" size={14} /> : <RefreshCw size={14} />}
+                    Refresh
+                  </button>
+                  <button
+                    onClick={selectOldInactiveCleanupGames}
+                    disabled={isCleanupLoading || isCleanupDeleting || cleanupGames.length === 0}
+                    className="flex-1 sm:flex-none bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white px-3 py-2 rounded text-sm"
+                  >
+                    Select old/inactive games
+                  </button>
+                </div>
+              </div>
+
+              {isCleanupLoading ? (
+                <div className="py-8 text-center text-slate-400 flex items-center justify-center gap-2">
+                  <Loader2 className="animate-spin" size={18} /> Loading games…
+                </div>
+              ) : cleanupGames.length === 0 ? (
+                <div className="rounded-lg border border-slate-700 bg-slate-900 p-4 text-sm text-slate-400">No old zombie game candidates found for your user.</div>
+              ) : (
+                <div className="space-y-2">
+                  {cleanupGames.map((game) => {
+                    const checked = selectedCleanupIds.has(game.id);
+                    const isActive = game.id === activeGameId;
+                    return (
+                      <label
+                        key={game.id}
+                        className={`block rounded-lg border p-3 ${checked ? 'border-red-500 bg-red-950/20' : 'border-slate-700 bg-slate-900'} ${isActive ? 'opacity-60' : ''}`}
+                      >
+                        <div className="flex items-start gap-3">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            disabled={isActive || isCleanupDeleting}
+                            onChange={() => toggleCleanupGame(game.id)}
+                            className="mt-1 h-4 w-4 accent-red-600"
+                          />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-col sm:flex-row sm:items-baseline sm:justify-between gap-1">
+                              <div className="font-mono text-sm text-white break-all">{game.id}</div>
+                              {isActive && <span className="text-[11px] text-yellow-300">Currently active — not selectable</span>}
+                            </div>
+                            <div className="text-sm text-slate-200 truncate">{(game.title || '').trim() || 'Untitled game'}</div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 mt-2 text-xs text-slate-400">
+                              <div>Created: <span className="text-slate-300">{formatCleanupDate(game.createdAt)}</span></div>
+                              <div>Updated: <span className="text-slate-300">{formatCleanupDate(game.updatedAt)}</span></div>
+                              <div>Players: <span className="text-slate-300">{game.playerCount}</span></div>
+                              <div>Cards: <span className="text-slate-300">{game.cardCount}</span></div>
+                            </div>
+                            {game.lastLogMessage && (
+                              <div className="mt-2 text-xs text-slate-500 line-clamp-2">Last log: {game.lastLogMessage}</div>
+                            )}
+                          </div>
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div className="p-4 border-t border-slate-700 space-y-3 bg-slate-900">
+              {requiresDeleteText && (
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">Type DELETE to confirm deleting {selectedCleanupGames.length} games.</label>
+                  <input
+                    type="text"
+                    value={cleanupConfirmText}
+                    onChange={(e) => setCleanupConfirmText(e.target.value)}
+                    disabled={isCleanupDeleting}
+                    className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white focus:ring-2 focus:ring-red-500 outline-none"
+                    placeholder="DELETE"
+                  />
+                </div>
+              )}
+              <div className="flex flex-col-reverse sm:flex-row gap-2 sm:justify-end">
+                <button
+                  onClick={closeCleanup}
+                  disabled={isCleanupDeleting}
+                  className="bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white px-4 py-2 rounded"
+                >
+                  Close
+                </button>
+                <button
+                  onClick={confirmCleanupDelete}
+                  disabled={!canConfirmCleanup}
+                  className="bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-4 py-2 rounded font-bold flex items-center justify-center gap-2"
+                >
+                  {isCleanupDeleting ? <Loader2 className="animate-spin" size={16} /> : <Trash2 size={16} />}
+                  Delete selected ({selectedCleanupGames.length})
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -7031,6 +7268,10 @@ export default function App() {
   const [isAuthStartupLoading, setIsAuthStartupLoading] = useState(true);
   const [playerName, setPlayerName] = useState('');
   const [myGames, setMyGames] = useState([]);
+  const [cleanupGames, setCleanupGames] = useState([]);
+  const [isCleanupLoading, setIsCleanupLoading] = useState(false);
+  const [isCleanupDeleting, setIsCleanupDeleting] = useState(false);
+  const [cleanupError, setCleanupError] = useState('');
   const [toastMessage, setToastMessage] = useState('');
   const [pendingUrlEntry, setPendingUrlEntry] = useState(null);
   const isExitingRef = useRef(false);
@@ -7477,6 +7718,86 @@ export default function App() {
     setTimeout(() => setToastMessage(''), 2500);
   };
 
+  const loadCleanupGames = async () => {
+    if (!user) return;
+    setIsCleanupLoading(true);
+    setCleanupError('');
+
+    try {
+      const cleanupQuery = query(collection(db, 'games_v3'), where('hostId', '==', user.uid));
+      const snapshot = await getDocs(cleanupQuery);
+      const games = snapshot.docs.map((gameDoc) => {
+        const gameData = gameDoc.data() || {};
+        const players = Array.isArray(gameData.players) ? gameData.players : [];
+        const cards = Array.isArray(gameData.cards) ? gameData.cards : [];
+        const logEntries = Array.isArray(gameData.log) ? gameData.log : [];
+        const lastLog = logEntries.length > 0 ? logEntries[logEntries.length - 1] : null;
+
+        return {
+          id: gameDoc.id,
+          title: gameData.title || '',
+          createdAt: gameData.createdAt || null,
+          updatedAt: gameData.updatedAt || null,
+          hostId: gameData.hostId || '',
+          playerCount: players.length,
+          cardCount: cards.length,
+          lastLogMessage: typeof lastLog?.message === 'string' ? lastLog.message : ''
+        };
+      });
+
+      games.sort((a, b) => {
+        const aTime = (toDateValue(a.updatedAt) || toDateValue(a.createdAt))?.getTime() || 0;
+        const bTime = (toDateValue(b.updatedAt) || toDateValue(b.createdAt))?.getTime() || 0;
+        return aTime - bTime;
+      });
+
+      setCleanupGames(games);
+    } catch (e) {
+      console.error('Failed to load old game cleanup candidates', e);
+      setCleanupError(e?.message || 'Failed to load cleanup candidates.');
+    } finally {
+      setIsCleanupLoading(false);
+    }
+  };
+
+  const deleteCleanupGames = async (gamesToDelete) => {
+    if (!user) return gamesToDelete.map((game) => game.id);
+
+    setIsCleanupDeleting(true);
+    setCleanupError('');
+    const failed = [];
+    const deletedIds = [];
+
+    for (const game of gamesToDelete) {
+      if (!game?.id) continue;
+      if (game.hostId !== user.uid) {
+        failed.push({ id: game.id, message: 'Not owned by current user.' });
+        continue;
+      }
+
+      try {
+        await hardDeleteGamePermanently({ user, gameId: game.id, functionsInstance: functions, skipMembershipCleanup: true });
+        deletedIds.push(game.id);
+      } catch (e) {
+        console.error(`Failed to delete old game ${game.id}`, e);
+        failed.push({ id: game.id, message: e?.message || 'Unknown error' });
+      }
+    }
+
+    if (deletedIds.length > 0) {
+      setCleanupGames((existing) => existing.filter((game) => !deletedIds.includes(game.id)));
+      setMyGames((existing) => existing.filter((game) => !deletedIds.includes(game.id)));
+      showToast(`Deleted ${deletedIds.length} old game${deletedIds.length === 1 ? '' : 's'}.`);
+    }
+
+    if (failed.length > 0) {
+      setCleanupError(`Failed to delete: ${failed.map((item) => `${item.id} (${item.message})`).join(', ')}`);
+    }
+
+    setIsCleanupDeleting(false);
+    return failed.map((item) => item.id);
+  };
+
   const removeGameFromList = async (game) => {
     if (!user || !game?.id) return;
     await deleteDoc(doc(db, 'users', user.uid, 'games', game.id));
@@ -7485,19 +7806,7 @@ export default function App() {
   };
 
   const deleteGamePermanently = async (gameId) => {
-    if (!user || !gameId) return;
-
-    const gameRef = doc(db, 'games_v3', gameId);
-    const gameSnap = await getDoc(gameRef);
-    if (!gameSnap.exists()) throw new Error('Game not found in Firebase.');
-
-    const gameData = gameSnap.data() || {};
-    if (gameData.hostId !== user.uid) {
-      throw new Error('Only the host can delete this game.');
-    }
-
-    const hardDeleteGame = httpsCallable(functions, 'hardDeleteGame');
-    await hardDeleteGame({ gameId, confirm: true });
+    await hardDeleteGamePermanently({ user, gameId, functionsInstance: functions });
     setMyGames((existing) => existing.filter((g) => g.id !== gameId));
     showToast('Game permanently deleted.');
   };
@@ -7598,6 +7907,13 @@ export default function App() {
       onJoin={joinGame}
       onWatch={watchGame}
       onDeleteGame={deleteLobbyGame}
+      onLoadCleanupGames={loadCleanupGames}
+      onDeleteCleanupGames={deleteCleanupGames}
+      cleanupGames={cleanupGames}
+      isCleanupLoading={isCleanupLoading}
+      isCleanupDeleting={isCleanupDeleting}
+      cleanupError={cleanupError}
+      activeGameId={activeGameId}
       onContinueWithGoogle={continueWithGoogle}
       onSignOut={handleSignOut}
       myGames={myGames}

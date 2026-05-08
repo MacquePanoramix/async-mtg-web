@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged, GoogleAuthProvider, linkWithPopup, signInWithPopup, signInWithRedirect, getRedirectResult, signOut } from 'firebase/auth';
 import { getFirestore, doc, setDoc, collection, onSnapshot, updateDoc, arrayUnion, serverTimestamp, runTransaction, query, orderBy, where, deleteDoc, getDoc, getDocs, addDoc, writeBatch, limit } from 'firebase/firestore';
-import { X, ArrowRight, Clock, Shield, Skull, Layers, Eye, ChevronDown, ChevronUp, BookOpen, Shuffle, Plus, Copy, UserCheck, EyeOff, RotateCw, Search, Hexagon, Unlock, Lock, Move, Dices, Coins, LayoutGrid, LogOut, Users, User, Bug, Loader2, RefreshCw, AlertTriangle, Repeat, Check, ArrowUp, ArrowDown, MessageSquare, Trash2, Paperclip, Crown, Undo2 } from 'lucide-react';
+import { X, ArrowRight, Clock, Shield, Skull, Layers, Eye, ChevronDown, ChevronUp, BookOpen, Shuffle, Plus, Copy, UserCheck, EyeOff, RotateCw, Search, Hexagon, Unlock, Lock, Move, Dices, Coins, LayoutGrid, LogOut, Users, User, Bug, Loader2, RefreshCw, AlertTriangle, Repeat, Check, ArrowUp, ArrowDown, MessageSquare, Trash2, Paperclip, Crown, Undo2, Bell } from 'lucide-react';
 
 // --- Firebase Configuration ---
 // UPDATED: Using standard Vite env vars
@@ -55,6 +55,23 @@ const PLAYER_COUNTER_BADGE_LABELS = {
 
 const COMMANDER_SECTION_HEADERS = new Set(['commander', 'commanders']);
 const DECK_SECTION_HEADERS = new Set(['deck', 'main deck', 'mainboard']);
+
+const REMINDER_EXPIRATION = {
+  CLEANUP: 'cleanup',
+  MANUAL: 'manual'
+};
+
+const REMINDER_PRESETS = [
+  { label: '+1/+1 until EOT', expires: REMINDER_EXPIRATION.CLEANUP },
+  { label: '+2/+2 until EOT', expires: REMINDER_EXPIRATION.CLEANUP },
+  { label: '+3/+3 until EOT', expires: REMINDER_EXPIRATION.CLEANUP },
+  { label: 'Flying until EOT', expires: REMINDER_EXPIRATION.CLEANUP },
+  { label: "Can’t block", expires: REMINDER_EXPIRATION.CLEANUP },
+  { label: 'Must attack', expires: REMINDER_EXPIRATION.CLEANUP },
+  { label: "Doesn’t untap", expires: REMINDER_EXPIRATION.MANUAL },
+  { label: 'Sacrifice at end step', expires: REMINDER_EXPIRATION.CLEANUP },
+  { label: 'Return later', expires: REMINDER_EXPIRATION.MANUAL }
+];
 
 const PHASES = [
   { id: 'untap', label: 'Untap' },
@@ -449,7 +466,12 @@ const UNDOABLE_ACTION_TYPES = new Set([
   'UNSET_COMMANDER',
   'COMMANDER_TAX',
   'COMMANDER_DAMAGE',
-  'DECK_DELETE'
+  'DECK_DELETE',
+  'ADD_CARD_REMINDER',
+  'REMOVE_CARD_REMINDER',
+  'ADD_PLAYER_REMINDER',
+  'REMOVE_PLAYER_REMINDER',
+  'CLEAR_CLEANUP_REMINDERS'
 ]);
 
 const cloneUndoValue = (value) => {
@@ -538,6 +560,83 @@ const generateGameId = () => {
   }
   return result;
 };
+
+const getEntityReminders = (entity) => Array.isArray(entity?.reminders) ? entity.reminders.filter(Boolean) : [];
+
+const sanitizeReminderText = (text) => String(text || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+
+const normalizeReminderExpiration = (expires) => expires === REMINDER_EXPIRATION.MANUAL ? REMINDER_EXPIRATION.MANUAL : REMINDER_EXPIRATION.CLEANUP;
+
+const buildReminder = ({ text, expires, createdBy }) => ({
+  id: `${Date.now()}-${generateCardId()}`,
+  text: sanitizeReminderText(text),
+  expires: normalizeReminderExpiration(expires),
+  createdAt: Date.now(),
+  createdBy: createdBy || null
+});
+
+const getReminderTitle = (reminder) => `${reminder?.text || 'Reminder'}${reminder?.expires === REMINDER_EXPIRATION.MANUAL ? ' · Manual' : ' · Clear at cleanup'}`;
+
+const ReminderTool = ({ label = 'Add Reminder', onAdd, disabled = false }) => {
+  const [customText, setCustomText] = useState('');
+  const [expires, setExpires] = useState(REMINDER_EXPIRATION.CLEANUP);
+  const addPreset = (preset) => {
+    if (disabled) return;
+    onAdd?.({ text: preset.label, expires: preset.expires || expires });
+  };
+  const addCustom = () => {
+    const text = sanitizeReminderText(customText);
+    if (!text || disabled) return;
+    onAdd?.({ text, expires });
+    setCustomText('');
+    setExpires(REMINDER_EXPIRATION.CLEANUP);
+  };
+
+  return (
+    <div className="rounded-lg border border-violet-500/30 bg-violet-950/20 p-3 space-y-2">
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-violet-200"><Bell size={12} /> {label}</h3>
+        <select
+          value={expires}
+          onChange={(event) => setExpires(normalizeReminderExpiration(event.target.value))}
+          disabled={disabled}
+          className="rounded border border-slate-600 bg-slate-900 px-2 py-1 text-[11px] font-bold text-slate-100"
+          aria-label="Reminder expiration"
+        >
+          <option value={REMINDER_EXPIRATION.CLEANUP}>Clear at cleanup</option>
+          <option value={REMINDER_EXPIRATION.MANUAL}>Manual</option>
+        </select>
+      </div>
+      <div className="grid grid-cols-2 gap-1.5">
+        {REMINDER_PRESETS.map((preset) => (
+          <button
+            key={preset.label}
+            type="button"
+            onClick={() => addPreset(preset)}
+            disabled={disabled}
+            className="min-h-8 rounded border border-slate-600 bg-slate-800 px-2 py-1 text-left text-[11px] font-bold text-slate-100 hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+            title={preset.expires === REMINDER_EXPIRATION.MANUAL ? 'Defaults to manual' : 'Defaults to cleanup'}
+          >
+            {preset.label}
+          </button>
+        ))}
+      </div>
+      <div className="flex gap-2">
+        <input
+          value={customText}
+          onChange={(event) => setCustomText(event.target.value)}
+          onKeyDown={(event) => { if (event.key === 'Enter') addCustom(); }}
+          maxLength={80}
+          disabled={disabled}
+          placeholder="Custom reminder…"
+          className="min-w-0 flex-1 rounded border border-slate-600 bg-slate-950 px-2 py-2 text-sm text-white placeholder:text-slate-500 focus:border-violet-400 focus:outline-none"
+        />
+        <button type="button" onClick={addCustom} disabled={disabled || !sanitizeReminderText(customText)} className="rounded bg-violet-700 px-3 py-2 text-xs font-black text-white hover:bg-violet-600 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400">Custom…</button>
+      </div>
+    </div>
+  );
+};
+
 
 const generateCardId = () => Math.random().toString(36).substr(2, 9);
 
@@ -2229,6 +2328,7 @@ const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isD
   const isFaceDown = card.faceDown;
   const counters = card.counters || {};
   const tempDamage = Math.max(0, markedDamage ?? card.tempDamage ?? 0);
+  const reminders = getEntityReminders(card);
 
   // Calculate Target/Source status from BOTH persistent targets AND stack items
   const persistentSource = targets.some(t => t.sourceId === card.instanceId);
@@ -2335,6 +2435,19 @@ const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isD
         {zone === ZONES.BATTLEFIELD && attachedCount > 0 && (
           <div className="absolute left-1 top-[3.1rem] z-30 pointer-events-none flex items-center gap-0.5 rounded-md border border-violet-200/80 bg-violet-800/95 px-1.5 py-0.5 text-[9px] font-black leading-none text-white shadow-[0_1px_6px_rgba(0,0,0,0.65)]" title={`${attachedCount} attached`}>
             <Paperclip size={9} /> {attachedCount}
+          </div>
+        )}
+
+        {zone === ZONES.BATTLEFIELD && reminders.length > 0 && (
+          <div className="absolute bottom-1 left-1 right-1 z-30 pointer-events-none flex flex-col gap-0.5">
+            {reminders.slice(0, 2).map((reminder) => (
+              <div key={reminder.id} className="max-w-full truncate rounded border border-violet-200/70 bg-violet-950/95 px-1.5 py-0.5 text-[8px] font-black leading-none text-violet-50 shadow-[0_1px_6px_rgba(0,0,0,0.65)]" title={getReminderTitle(reminder)}>
+                🔔 {reminder.text}
+              </div>
+            ))}
+            {reminders.length > 2 && (
+              <div className="w-fit rounded border border-violet-200/50 bg-violet-950/90 px-1.5 py-0.5 text-[8px] font-black leading-none text-violet-100">+{reminders.length - 2}</div>
+            )}
           </div>
         )}
 
@@ -2718,6 +2831,9 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const getVisiblePlayerCounters = (player) => Object.entries(player?.counters || {})
     .filter(([key, value]) => (commanderModeEnabled || key !== 'commanderTax') && Number(value) > 0)
     .map(([key, value]) => ({ key, label: PLAYER_COUNTER_BADGE_LABELS[key] || PLAYER_COUNTER_LABELS[key] || key, value }));
+  const getPlayerReminders = (playerId) => getEntityReminders((game?.players || []).find((player) => player.id === playerId));
+  const removePlayerReminder = (playerId, reminderId) => handleAction('REMOVE_PLAYER_REMINDER', { targetPlayerId: playerId, reminderId });
+  const removeCardReminder = (cardId, reminderId) => handleAction('REMOVE_CARD_REMINDER', { cardId, reminderId });
   const lastSeen = isSpectator ? spectatorLastSeenChatAt : (myPlayer?.lastSeenChatAt || 0);
   const unreadCount = chatMessages.filter(m => m.timestamp > lastSeen && m.playerId !== userId).length;
   useEffect(() => {
@@ -3652,6 +3768,50 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         counterMessage = `${actorName} ${payload.amount > 0 ? 'added' : 'removed'} ${changeAmount} Commander Damage.`;
       }
       updates.log = arrayUnion(makeActionLog('PLAYER_COUNTER', counterMessage, { category: 'counter' }));
+
+    } else if (actionType === 'ADD_CARD_REMINDER') {
+      const card = game.cards.find(c => c.instanceId === payload.cardId);
+      const reminder = buildReminder({ text: payload.text, expires: payload.expires, createdBy: userId });
+      if (!card || !reminder.text) return;
+      updates.cards = game.cards.map(c => c.instanceId === payload.cardId ? { ...c, reminders: [...getEntityReminders(c), reminder] } : c);
+      updates.log = arrayUnion(makeActionLog('ADD_CARD_REMINDER', `${actorName} added reminder to ${getSafeCardName(card)}: ${reminder.text}.`, { category: 'reminder', cardId: card.instanceId, cardName: getSafeCardName(card), reminderId: reminder.id, reminderText: reminder.text, expires: reminder.expires }));
+
+    } else if (actionType === 'REMOVE_CARD_REMINDER') {
+      const card = game.cards.find(c => c.instanceId === payload.cardId);
+      const reminder = getEntityReminders(card).find(item => item.id === payload.reminderId);
+      if (!card || !reminder) return;
+      updates.cards = game.cards.map(c => c.instanceId === payload.cardId ? { ...c, reminders: getEntityReminders(c).filter(item => item.id !== payload.reminderId) } : c);
+      updates.log = arrayUnion(makeActionLog('REMOVE_CARD_REMINDER', `${actorName} removed reminder from ${getSafeCardName(card)}: ${reminder.text}.`, { category: 'reminder', cardId: card.instanceId, cardName: getSafeCardName(card), reminderId: reminder.id, reminderText: reminder.text }));
+
+    } else if (actionType === 'ADD_PLAYER_REMINDER') {
+      const targetPlayerId = payload.targetPlayerId || userId;
+      const targetPlayer = game.players.find(p => p.id === targetPlayerId);
+      const reminder = buildReminder({ text: payload.text, expires: payload.expires, createdBy: userId });
+      if (!targetPlayer || !reminder.text) return;
+      updates.players = game.players.map(p => p.id === targetPlayerId ? { ...p, reminders: [...getEntityReminders(p), reminder] } : p);
+      updates.log = arrayUnion(makeActionLog('ADD_PLAYER_REMINDER', `${actorName} added reminder to ${targetPlayer.name || 'Player'}: ${reminder.text}.`, { category: 'reminder', targetPlayerId, targetPlayerName: targetPlayer.name || 'Player', reminderId: reminder.id, reminderText: reminder.text, expires: reminder.expires }));
+
+    } else if (actionType === 'REMOVE_PLAYER_REMINDER') {
+      const targetPlayerId = payload.targetPlayerId || userId;
+      const targetPlayer = game.players.find(p => p.id === targetPlayerId);
+      const reminder = getEntityReminders(targetPlayer).find(item => item.id === payload.reminderId);
+      if (!targetPlayer || !reminder) return;
+      updates.players = game.players.map(p => p.id === targetPlayerId ? { ...p, reminders: getEntityReminders(p).filter(item => item.id !== payload.reminderId) } : p);
+      updates.log = arrayUnion(makeActionLog('REMOVE_PLAYER_REMINDER', `${actorName} removed reminder from ${targetPlayer.name || 'Player'}: ${reminder.text}.`, { category: 'reminder', targetPlayerId, targetPlayerName: targetPlayer.name || 'Player', reminderId: reminder.id, reminderText: reminder.text }));
+
+    } else if (actionType === 'CLEAR_CLEANUP_REMINDERS') {
+      const nextCards = (game.cards || []).map(c => ({ ...c, reminders: getEntityReminders(c).filter(reminder => reminder.expires !== REMINDER_EXPIRATION.CLEANUP) }));
+      const nextPlayers = (game.players || []).map(p => ({ ...p, reminders: getEntityReminders(p).filter(reminder => reminder.expires !== REMINDER_EXPIRATION.CLEANUP) }));
+      const removedCount = (game.cards || []).reduce((count, c) => count + getEntityReminders(c).filter(reminder => reminder.expires === REMINDER_EXPIRATION.CLEANUP).length, 0)
+        + (game.players || []).reduce((count, p) => count + getEntityReminders(p).filter(reminder => reminder.expires === REMINDER_EXPIRATION.CLEANUP).length, 0);
+      if (removedCount === 0) {
+        setNotification('No cleanup reminders to clear.');
+        setTimeout(() => setNotification(null), 2200);
+        return;
+      }
+      updates.cards = nextCards;
+      updates.players = nextPlayers;
+      updates.log = arrayUnion(makeActionLog('CLEAR_CLEANUP_REMINDERS', `${actorName} cleared cleanup reminders.`, { category: 'reminder', removedCount }));
 
     } else if (actionType === 'SET_COMMANDER') {
       if (!isCommanderGame(game)) return;
@@ -5132,6 +5292,9 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const latestUndoEntry = getLatestUndoEntry();
   const undoButtonDisabled = !canUndoLatestAction;
   const handleDrawCard = () => handleAction('DRAW_CARD');
+  const addCardReminder = (cardId, reminder) => handleAction('ADD_CARD_REMINDER', { cardId, ...reminder });
+  const addPlayerReminder = (playerId, reminder) => handleAction('ADD_PLAYER_REMINDER', { targetPlayerId: playerId, ...reminder });
+  const clearCleanupReminders = () => handleAction('CLEAR_CLEANUP_REMINDERS');
   const hasDeckLoaded = [
     ZONES.LIBRARY,
     ZONES.HAND,
@@ -5618,6 +5781,17 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                   {commanderModeEnabled && getZoneCount(opponent.id, ZONES.COMMAND) > 0 && (
                     <button onClick={() => setViewZone({ zone: ZONES.COMMAND, ownerId: opponent.id })} className="rounded border border-amber-500/50 bg-slate-700 px-2 py-0.5 font-bold text-amber-100">CZ: {getZoneCount(opponent.id, ZONES.COMMAND)}</button>
                   )}
+                  {getPlayerReminders(opponent.id).map((reminder) => (
+                    <button
+                      key={reminder.id}
+                      type="button"
+                      onClick={(event) => { event.stopPropagation(); if (canAct) removePlayerReminder(opponent.id, reminder.id); }}
+                      className="max-w-[9rem] truncate rounded border border-violet-500/50 bg-violet-950/60 px-2 py-0.5 text-left font-bold text-violet-100"
+                      title={`${getReminderTitle(reminder)}${canAct ? ' · Tap to remove' : ''}`}
+                    >
+                      🔔 {reminder.text}
+                    </button>
+                  ))}
                 </div>
               )}
             </div>
@@ -5872,6 +6046,17 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                 {commanderModeEnabled && getTotalCommanderDamageToPlayer(viewAsPlayerId) > 0 && (
                   <button onClick={(e) => { e.stopPropagation(); setCommanderDamageSummaryPlayerId(viewAsPlayerId); }} className="rounded border border-amber-500/50 bg-amber-900/50 px-1.5 py-0.5 text-[10px] font-bold text-amber-100">Cmd: {getTotalCommanderDamageToPlayer(viewAsPlayerId)}</button>
                 )}
+                {getPlayerReminders(viewAsPlayerId).map((reminder) => (
+                  <button
+                    key={reminder.id}
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); if (canAct) removePlayerReminder(viewAsPlayerId, reminder.id); }}
+                    className="max-w-[9rem] truncate rounded border border-violet-500/50 bg-violet-950/60 px-1.5 py-0.5 text-left text-[10px] font-bold text-violet-100"
+                    title={`${getReminderTitle(reminder)}${canAct ? ' · Tap to remove' : ''}`}
+                  >
+                    🔔 {reminder.text}
+                  </button>
+                ))}
               </div>
             </div>
 
@@ -6191,6 +6376,18 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                     );
                   })}
                 </div>
+              </section>
+
+              <section className="rounded-xl border border-violet-500/30 bg-violet-950/20 p-4">
+                <h3 className="text-sm font-black uppercase tracking-wider text-violet-200 mb-2">Reminder cleanup</h3>
+                <button
+                  type="button"
+                  onClick={clearCleanupReminders}
+                  className="min-h-12 w-full rounded-xl border border-violet-500/50 bg-violet-900/40 px-4 py-3 text-left font-bold text-violet-50 hover:bg-violet-800/50"
+                >
+                  Clear cleanup reminders
+                  <div className="text-xs font-normal text-violet-200/80">Removes only reminders set to “Clear at cleanup”; manual reminders stay.</div>
+                </button>
               </section>
 
               <section className="grid grid-cols-1 gap-2">
@@ -6844,6 +7041,27 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               >
                 Add Custom Player Counter
               </button>
+              <div className="rounded-lg border border-violet-500/30 bg-violet-950/10 p-3">
+                <div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-violet-200">Player reminders</div>
+                {getPlayerReminders(viewAsPlayerId).length > 0 ? (
+                  <div className="mb-3 flex flex-wrap gap-1.5">
+                    {getPlayerReminders(viewAsPlayerId).map((reminder) => (
+                      <button
+                        key={reminder.id}
+                        type="button"
+                        onClick={() => removePlayerReminder(viewAsPlayerId, reminder.id)}
+                        className="max-w-full truncate rounded border border-violet-500/50 bg-violet-950/70 px-2 py-1 text-xs font-bold text-violet-50"
+                        title={`${getReminderTitle(reminder)} · Tap to remove`}
+                      >
+                        🔔 {reminder.text} <span className="text-violet-300">×</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="mb-3 text-xs text-slate-400">No player reminders.</div>
+                )}
+                <ReminderTool label="Add Player Reminder" onAdd={(reminder) => addPlayerReminder(viewAsPlayerId, reminder)} disabled={!canAct} />
+              </div>
             </div>
           </div>
         </div>
@@ -6981,6 +7199,34 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                     )}
                   </section>
                 ) : null;
+              })()}
+
+              {selectedCard.zone === ZONES.BATTLEFIELD && (() => {
+                const liveSelectedCard = cardsMap.get(selectedCard.instanceId) || selectedCard;
+                const reminders = getEntityReminders(liveSelectedCard);
+                return (
+                  <section className="space-y-2 rounded-lg border border-violet-500/40 bg-violet-950/20 p-3">
+                    <h3 className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-violet-200"><Bell size={12} /> Reminders</h3>
+                    {reminders.length > 0 ? (
+                      <div className="flex flex-wrap gap-1.5">
+                        {reminders.map((reminder) => (
+                          <button
+                            key={reminder.id}
+                            type="button"
+                            onClick={() => removeCardReminder(selectedCard.instanceId, reminder.id)}
+                            className="max-w-full truncate rounded border border-violet-500/50 bg-violet-950/80 px-2 py-1 text-left text-xs font-bold text-violet-50"
+                            title={`${getReminderTitle(reminder)} · Tap to remove`}
+                          >
+                            🔔 {reminder.text} <span className="text-violet-300">×</span>
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-xs text-slate-400">No reminders on this card.</div>
+                    )}
+                    {canAct && <ReminderTool label="Add Reminder" onAdd={(reminder) => addCardReminder(selectedCard.instanceId, reminder)} />}
+                  </section>
+                );
               })()}
 
               {selectedCard.isToken && (

@@ -1243,13 +1243,67 @@ const getCombatDisplayName = (cardOrId, currentGame, displayNameMap = null) => {
   return battlefieldDisplayNames.get(card.instanceId) || card.name || 'Unknown';
 };
 
-const getCombatAttackTargetName = (attackTarget, currentGame, displayNameMap = null) => {
-  if (!attackTarget || typeof attackTarget !== 'object') return null;
-  if (attackTarget.type === 'player') {
-    return (currentGame?.players || []).find((player) => player.id === attackTarget.targetId)?.name || 'Player';
+const getAttackTargetObjectId = (attackTarget) => attackTarget?.id || attackTarget?.targetId || null;
+
+const getOpponentPlayerForController = (currentGame, controllerId) => {
+  const players = currentGame?.players || [];
+  return players.find((player) => player.id !== controllerId) || players[0] || null;
+};
+
+const getAttackableCardKind = (card) => {
+  if (!card || card.faceDown || card.zone !== ZONES.BATTLEFIELD) return null;
+  const typeLine = (card.type_line || '').toLowerCase();
+  if (typeLine.includes('planeswalker')) return 'planeswalker';
+  if (typeLine.includes('battle')) return 'battle';
+  return null;
+};
+
+const getAttackTargetLabelPrefix = (kind) => {
+  if (kind === 'planeswalker') return 'Planeswalker';
+  if (kind === 'battle') return 'Battle';
+  if (kind === 'player') return 'Player';
+  return null;
+};
+
+const normalizeAttackTarget = (attackTarget, currentGame, attackerCard = null, displayNameMap = null) => {
+  if (!attackTarget || typeof attackTarget !== 'object') {
+    const defender = getOpponentPlayerForController(currentGame, attackerCard?.controllerId);
+    return defender ? { type: 'player', id: defender.id, targetId: defender.id, label: defender.name || 'Player', kind: 'player' } : null;
   }
-  if (attackTarget.type === 'planeswalker') return `PW: ${getCombatDisplayName(attackTarget.targetId, currentGame, displayNameMap)}`;
-  return attackTarget.name || null;
+
+  const rawType = attackTarget.type || 'player';
+  const rawId = getAttackTargetObjectId(attackTarget);
+  if (rawType === 'player') {
+    const playerId = rawId || getOpponentPlayerForController(currentGame, attackerCard?.controllerId)?.id || null;
+    const player = (currentGame?.players || []).find((candidate) => candidate.id === playerId);
+    return {
+      ...attackTarget,
+      type: 'player',
+      id: playerId,
+      targetId: playerId,
+      label: attackTarget.label || player?.name || 'Player',
+      kind: 'player'
+    };
+  }
+
+  const targetCard = (currentGame?.cards || []).find((candidate) => candidate.instanceId === rawId);
+  const detectedKind = getAttackableCardKind(targetCard);
+  const kind = attackTarget.kind || (rawType === 'planeswalker' || rawType === 'battle' ? rawType : detectedKind) || 'card';
+  const cardLabel = targetCard ? getCombatDisplayName(targetCard, currentGame, displayNameMap) : null;
+  return {
+    ...attackTarget,
+    type: 'card',
+    id: rawId,
+    targetId: rawId,
+    label: attackTarget.label || cardLabel || attackTarget.name || 'Card',
+    kind
+  };
+};
+
+const getCombatAttackTargetName = (attackTarget, currentGame, displayNameMap = null, attackerCard = null) => {
+  const normalizedTarget = normalizeAttackTarget(attackTarget, currentGame, attackerCard, displayNameMap);
+  if (!normalizedTarget) return null;
+  return normalizedTarget.label || null;
 };
 
 const getCardCombatInfo = (card, currentGame, displayNameMapOverride = null) => {
@@ -1260,7 +1314,8 @@ const getCardCombatInfo = (card, currentGame, displayNameMapOverride = null) => 
   const displayNameMap = displayNameMapOverride || buildDuplicateDisplayNameMap(
     (currentGame?.cards || []).filter((candidate) => candidate.zone === ZONES.BATTLEFIELD)
   );
-  const attackingTarget = instanceId && Object.prototype.hasOwnProperty.call(attackers, instanceId) ? attackers[instanceId] : null;
+  const hasAttackerAssignment = Boolean(instanceId && Object.prototype.hasOwnProperty.call(attackers, instanceId));
+  const attackingTarget = hasAttackerAssignment ? attackers[instanceId] : null;
   const blockedByIds = instanceId
     ? Object.entries(blockers)
       .filter(([, attackerIds]) => Array.isArray(attackerIds) && attackerIds.includes(instanceId))
@@ -1272,9 +1327,9 @@ const getCardCombatInfo = (card, currentGame, displayNameMapOverride = null) => 
     cardId: instanceId,
     cardName: card?.name || 'Unknown',
     controllerId: card?.controllerId || null,
-    isAttacking: Boolean(attackingTarget),
-    attackingTargetId: attackingTarget?.targetId || null,
-    attackingTargetName: getCombatAttackTargetName(attackingTarget, currentGame, displayNameMap),
+    isAttacking: hasAttackerAssignment,
+    attackingTargetId: normalizeAttackTarget(attackingTarget, currentGame, card, displayNameMap)?.id || null,
+    attackingTargetName: getCombatAttackTargetName(attackingTarget, currentGame, displayNameMap, card),
     isBlocked: blockedByIds.length > 0,
     blockedByIds,
     blockedByDisplayNames: blockedByIds.map((id) => getCombatDisplayName(id, currentGame, displayNameMap)),
@@ -2832,10 +2887,12 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
   const isAttackersStep = game?.phase === 'combat_attackers';
   const isBlockersStep = game?.phase === 'combat_blockers';
-  const opponentPlaneswalkers = (game?.cards || []).filter(c => c.controllerId !== viewAsPlayerId && c.zone === ZONES.BATTLEFIELD && (c.type_line || '').toLowerCase().includes('planeswalker'));
+  const opponentPlaneswalkers = (game?.cards || []).filter(c => c.controllerId !== viewAsPlayerId && getAttackableCardKind(c) === 'planeswalker');
+  const battlefieldBattles = (game?.cards || []).filter(c => getAttackableCardKind(c) === 'battle');
   const attackTargetOptions = [
-    opponent ? { type: 'player', targetId: opponent.id, label: `${opponent.name} (Player)` } : null,
-    ...opponentPlaneswalkers.map(c => ({ type: 'planeswalker', targetId: c.instanceId, label: c.name }))
+    opponent ? { type: 'player', id: opponent.id, targetId: opponent.id, label: `${opponent.name} (Player)`, kind: 'player' } : null,
+    ...opponentPlaneswalkers.map(c => ({ type: 'card', id: c.instanceId, targetId: c.instanceId, label: c.name || 'Planeswalker', kind: 'planeswalker' })),
+    ...battlefieldBattles.map(c => ({ type: 'card', id: c.instanceId, targetId: c.instanceId, label: c.name || 'Battle', kind: 'battle' }))
   ].filter(Boolean);
 
   const waitingForPlayers = game?.players.length < 2;
@@ -3770,14 +3827,16 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
     } else if (actionType === 'SET_ATTACK_TARGET') {
       if (game.phase !== 'combat_attackers') return;
-      const attackTarget = payload.attackTarget || { type: 'player', targetId: opponent?.id || null };
+      const attackingCard = game.cards.find(c => c.instanceId === payload.cardId);
+      const attackTarget = normalizeAttackTarget(payload.attackTarget || { type: 'player', id: opponent?.id || null, targetId: opponent?.id || null }, game, attackingCard);
+      if (!attackTarget) return;
       const nextAttackers = { ...(game.combat?.attackers || {}) };
       nextAttackers[payload.cardId] = attackTarget;
       updates.combat = {
         attackers: nextAttackers,
         blockers: game.combat?.blockers || {}
       };
-      updates.log = arrayUnion(makeActionLog('SET_ATTACK_TARGET', `${actorName} attacked ${getCombatAttackTargetName(attackTarget, game) || 'a target'} with ${getSafeCardName(game.cards.find(c => c.instanceId === payload.cardId), payload.cardName || 'a creature')}.`, { category: 'combat', cardId: payload.cardId, targetId: attackTarget.targetId, targetType: attackTarget.type }));
+      updates.log = arrayUnion(makeActionLog('SET_ATTACK_TARGET', `${actorName} attacks ${getCombatAttackTargetName(attackTarget, game, null, attackingCard) || 'a target'} with ${getSafeCardName(attackingCard, payload.cardName || 'a creature')}.`, { category: 'combat', cardId: payload.cardId, targetId: attackTarget.id, targetType: attackTarget.type, targetKind: attackTarget.kind }));
 
     } else if (actionType === 'TOGGLE_BLOCK_TARGET') {
       if (game.phase !== 'combat_blockers') return;
@@ -5198,10 +5257,10 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const validBlockTargetAttackers = attackingCards.filter((c) => c.controllerId !== viewAsPlayerId);
   const activeAttackers = validBlockTargetAttackers;
   const getCombatDisplayCardName = (cardOrId) => getCombatDisplayName(cardOrId, game, allBattlefieldDisplayNames);
-  const getAttackTargetLabel = (attackTarget) => getCombatAttackTargetName(attackTarget, game, allBattlefieldDisplayNames);
+  const getAttackTargetLabel = (attackTarget, attackerCard = null) => getCombatAttackTargetName(attackTarget, game, allBattlefieldDisplayNames, attackerCard);
   const getCardAttackTargetLabel = (cardId) => {
     if (!Object.prototype.hasOwnProperty.call(combatAttackers, cardId)) return null;
-    return getAttackTargetLabel(combatAttackers[cardId]);
+    return getAttackTargetLabel(combatAttackers[cardId], cardsMap.get(cardId));
   };
   const getRenderedCardCombatInfo = (card, renderContext) => {
     const combatInfo = getCardCombatInfo(card, game, allBattlefieldDisplayNames);
@@ -5239,6 +5298,14 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     }
     return rows;
   };
+
+  const attackSummaryGroups = attackingCards.reduce((groups, attacker) => {
+    const label = getCardAttackTargetLabel(attacker.instanceId) || 'Defender';
+    const existingGroup = groups.find((group) => group.label === label);
+    if (existingGroup) existingGroup.attackers.push(attacker);
+    else groups.push({ label, attackers: [attacker] });
+    return groups;
+  }, []);
 
   console.log('[COMBAT_DEBUG]', {
     phase: game.phase,
@@ -5643,8 +5710,10 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               <div className="font-bold text-slate-200 uppercase tracking-wider">Combat Summary</div>
               <div>
                 <div className="text-red-300 font-semibold">Attackers</div>
-                {attackingCards.length === 0 ? <div className="text-slate-400">None</div> : attackingCards.map((attacker) => (
-                  <div key={attacker.instanceId} className="text-slate-200">{getCombatDisplayCardName(attacker)} → {getCardCombatInfo(attacker, game, allBattlefieldDisplayNames).attackingTargetName || 'Defender'}</div>
+                {attackSummaryGroups.length === 0 ? <div className="text-slate-400">None</div> : attackSummaryGroups.map((group) => (
+                  <div key={group.label} className="text-slate-200">
+                    <span className="font-semibold">Attacking {group.label}:</span> {group.attackers.map((attacker) => getCombatDisplayCardName(attacker)).join(', ')}
+                  </div>
                 ))}
               </div>
               <div>
@@ -7171,15 +7240,16 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             <div className="space-y-2">
               {attackTargetOptions.map((option) => (
                 <button
-                  key={`${option.type}-${option.targetId}`}
+                  key={`${option.kind || option.type}-${option.id || option.targetId}`}
                   onClick={async () => {
-                    await setAttackTarget(attackTargetPickerCard.instanceId, { type: option.type, targetId: option.targetId });
+                    await setAttackTarget(attackTargetPickerCard.instanceId, option);
                     setAttackTargetPickerCard(null);
                     setSelectedCard(null);
                   }}
                   className="w-full text-left px-3 py-2 rounded bg-slate-700 hover:bg-slate-600 text-sm text-slate-100"
                 >
-                  {option.type === 'planeswalker' ? `PW: ${getDisplayCardName(option.targetId)}` : option.label}
+                  <div className="font-medium">{option.label}</div>
+                  <div className="text-[11px] text-slate-400">{getAttackTargetLabelPrefix(option.kind)}</div>
                 </button>
               ))}
             </div>

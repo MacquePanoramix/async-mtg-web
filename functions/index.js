@@ -34,7 +34,7 @@ exports.hardDeleteGame = onCall(async (request) => {
     throw new HttpsError('unauthenticated', 'Authentication is required.');
   }
 
-  const { gameId, confirm } = request.data || {};
+  const { gameId, confirm, skipMembershipCleanup } = request.data || {};
 
   if (confirm !== true) {
     throw new HttpsError(
@@ -87,7 +87,7 @@ exports.hardDeleteGame = onCall(async (request) => {
 
   const membershipUidSet = new Set([hostId, ...playerIds, ...spectatorIds].filter(Boolean));
   let deletedMembershipDocs = 0;
-  if (membershipUidSet.size > 0) {
+  if (skipMembershipCleanup !== true && membershipUidSet.size > 0) {
     const membershipBatch = db.batch();
     membershipUidSet.forEach((uid) => {
       membershipBatch.delete(db.collection('users').doc(uid).collection('games').doc(trimmedGameId));
@@ -100,7 +100,8 @@ exports.hardDeleteGame = onCall(async (request) => {
     gameId: trimmedGameId,
     requestedBy: callerUid,
     deletedEvents,
-    deletedMembershipDocs
+    deletedMembershipDocs,
+    skippedMembershipCleanup: skipMembershipCleanup === true
   });
 
   return {
@@ -108,6 +109,7 @@ exports.hardDeleteGame = onCall(async (request) => {
     message: `Game ${trimmedGameId} was permanently deleted.`,
     gameId: trimmedGameId,
     deletedEvents,
-    deletedMembershipDocs
+    deletedMembershipDocs,
+    skippedMembershipCleanup: skipMembershipCleanup === true
   };
 });

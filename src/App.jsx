@@ -56,6 +56,53 @@ const PLAYER_COUNTER_BADGE_LABELS = {
 const COMMANDER_SECTION_HEADERS = new Set(['commander', 'commanders']);
 const DECK_SECTION_HEADERS = new Set(['deck', 'main deck', 'mainboard']);
 
+
+const PLAYER_STATUS_LABELS = {
+  monarch: 'Monarch',
+  initiative: 'Initiative',
+  citysBlessing: "City’s Blessing"
+};
+const PLAYER_STATUS_BADGE_STYLES = {
+  monarch: 'border-amber-500/50 bg-amber-950/60 text-amber-100',
+  initiative: 'border-emerald-500/50 bg-emerald-950/60 text-emerald-100',
+  citysBlessing: 'border-cyan-500/50 bg-cyan-950/60 text-cyan-100',
+  ring: 'border-orange-500/50 bg-orange-950/60 text-orange-100',
+  custom: 'border-violet-500/50 bg-violet-950/60 text-violet-100'
+};
+const DAY_NIGHT_LABELS = { day: 'Day', night: 'Night' };
+const MAX_CUSTOM_PLAYER_STATUS_LENGTH = 48;
+const MAX_CUSTOM_PLAYER_STATUSES = 8;
+
+const clampRingTemptationLevel = (value) => clamp(Number.parseInt(value, 10) || 0, 0, 4);
+
+const sanitizeCustomPlayerStatusText = (text) => String(text || '').replace(/\s+/g, ' ').trim().slice(0, MAX_CUSTOM_PLAYER_STATUS_LENGTH);
+
+const getPlayerStatuses = (player = {}) => {
+  const statuses = player?.statuses && typeof player.statuses === 'object' ? player.statuses : {};
+  return {
+    monarch: Boolean(statuses.monarch),
+    initiative: Boolean(statuses.initiative),
+    citysBlessing: Boolean(statuses.citysBlessing),
+    ringBearerLevel: clampRingTemptationLevel(statuses.ringBearerLevel),
+    custom: Array.isArray(statuses.custom)
+      ? statuses.custom.map(sanitizeCustomPlayerStatusText).filter(Boolean).slice(0, MAX_CUSTOM_PLAYER_STATUSES)
+      : []
+  };
+};
+
+const getPlayerStatusBadges = (player = {}) => {
+  const statuses = getPlayerStatuses(player);
+  const badges = [];
+  if (statuses.monarch) badges.push({ key: 'monarch', label: PLAYER_STATUS_LABELS.monarch, style: PLAYER_STATUS_BADGE_STYLES.monarch });
+  if (statuses.initiative) badges.push({ key: 'initiative', label: PLAYER_STATUS_LABELS.initiative, style: PLAYER_STATUS_BADGE_STYLES.initiative });
+  if (statuses.citysBlessing) badges.push({ key: 'citysBlessing', label: PLAYER_STATUS_LABELS.citysBlessing, style: PLAYER_STATUS_BADGE_STYLES.citysBlessing });
+  if (statuses.ringBearerLevel > 0) badges.push({ key: 'ring', label: `Ring ${statuses.ringBearerLevel}`, style: PLAYER_STATUS_BADGE_STYLES.ring });
+  statuses.custom.forEach((text, index) => badges.push({ key: `custom-${index}-${text}`, label: text, style: PLAYER_STATUS_BADGE_STYLES.custom, customIndex: index }));
+  return badges;
+};
+
+const getDayNightValue = (game = {}) => (game?.dayNight === 'day' || game?.dayNight === 'night' ? game.dayNight : null);
+
 const REMINDER_EXPIRATION = {
   CLEANUP: 'cleanup',
   MANUAL: 'manual'
@@ -1237,7 +1284,8 @@ const UNDO_STATE_FIELDS = [
   'reveals',
   'targets',
   'autopass',
-  'gameMode'
+  'gameMode',
+  'dayNight'
 ];
 const STACK_ONLY_UNDO_STATE_FIELDS = [
   'stack',
@@ -1250,6 +1298,7 @@ const PLAYERS_ONLY_UNDO_STATE_FIELDS = ['players'];
 const COMBAT_ONLY_UNDO_STATE_FIELDS = ['combat'];
 const TARGETS_ONLY_UNDO_STATE_FIELDS = ['targets'];
 const REVEALS_ONLY_UNDO_STATE_FIELDS = ['reveals'];
+const DAY_NIGHT_ONLY_UNDO_STATE_FIELDS = ['dayNight'];
 
 const appendUndoFieldIfUpdated = (fields, updates, field) => (
   updates && Object.prototype.hasOwnProperty.call(updates, field)
@@ -1275,6 +1324,11 @@ const UNDO_FIELDS_BY_ACTION_TYPE = {
   REMOVE_CARD_REMINDER: CARDS_ONLY_UNDO_STATE_FIELDS,
   ADD_PLAYER_REMINDER: PLAYERS_ONLY_UNDO_STATE_FIELDS,
   REMOVE_PLAYER_REMINDER: PLAYERS_ONLY_UNDO_STATE_FIELDS,
+  PLAYER_STATUS_TOGGLE: PLAYERS_ONLY_UNDO_STATE_FIELDS,
+  RING_TEMPTATION: PLAYERS_ONLY_UNDO_STATE_FIELDS,
+  PLAYER_STATUS_ADD_CUSTOM: PLAYERS_ONLY_UNDO_STATE_FIELDS,
+  PLAYER_STATUS_REMOVE_CUSTOM: PLAYERS_ONLY_UNDO_STATE_FIELDS,
+  SET_DAY_NIGHT: DAY_NIGHT_ONLY_UNDO_STATE_FIELDS,
   CLEAR_CLEANUP_REMINDERS: ({ updates } = {}) => ['cards', 'players'].filter((field) => updates && Object.prototype.hasOwnProperty.call(updates, field)),
   SET_ATTACK_TARGET: COMBAT_ONLY_UNDO_STATE_FIELDS,
   TOGGLE_BLOCK_TARGET: COMBAT_ONLY_UNDO_STATE_FIELDS,
@@ -1344,6 +1398,11 @@ const UNDOABLE_ACTION_TYPES = new Set([
   'REMOVE_CARD_REMINDER',
   'ADD_PLAYER_REMINDER',
   'REMOVE_PLAYER_REMINDER',
+  'PLAYER_STATUS_TOGGLE',
+  'RING_TEMPTATION',
+  'PLAYER_STATUS_ADD_CUSTOM',
+  'PLAYER_STATUS_REMOVE_CUSTOM',
+  'SET_DAY_NIGHT',
   'CLEAR_CLEANUP_REMINDERS'
 ]);
 
@@ -4120,6 +4179,15 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     .filter(([key, value]) => (commanderModeEnabled || key !== 'commanderTax') && Number(value) > 0)
     .map(([key, value]) => ({ key, label: PLAYER_COUNTER_BADGE_LABELS[key] || PLAYER_COUNTER_LABELS[key] || key, value }));
   const getPlayerReminders = (playerId) => getEntityReminders((game?.players || []).find((player) => player.id === playerId));
+  const renderPlayerStatusBadges = (player, size = 'compact') => getPlayerStatusBadges(player).map((badge) => (
+    <span
+      key={badge.key}
+      className={`${size === 'tiny' ? 'max-w-[9rem] px-1.5 py-0.5 text-[10px]' : 'max-w-[11rem] px-2 py-0.5 text-xs'} truncate rounded border font-bold ${badge.style}`}
+      title={badge.label}
+    >
+      {badge.label}
+    </span>
+  ));
   const removePlayerReminder = (playerId, reminderId) => handleAction('REMOVE_PLAYER_REMINDER', { targetPlayerId: playerId, reminderId });
   const removeCardReminder = (cardId, reminderId) => handleAction('REMOVE_CARD_REMINDER', { cardId, reminderId });
   const lastSeen = isSpectator ? spectatorLastSeenChatAt : (myPlayer?.lastSeenChatAt || 0);
@@ -5266,6 +5334,85 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         counterMessage = `${actorName} ${payload.amount > 0 ? 'added' : 'removed'} ${changeAmount} Commander Damage.`;
       }
       updates.log = arrayUnion(makeActionLog('PLAYER_COUNTER', counterMessage, { category: 'counter' }));
+
+    } else if (actionType === 'PLAYER_STATUS_TOGGLE') {
+      const targetPlayerId = payload.targetPlayerId || userId;
+      const statusType = payload.statusType;
+      const targetPlayer = game.players.find(p => p.id === targetPlayerId);
+      if (!targetPlayer || !['monarch', 'initiative', 'citysBlessing'].includes(statusType)) return;
+      const targetStatuses = getPlayerStatuses(targetPlayer);
+      const willEnable = !targetStatuses[statusType];
+      const nextPlayers = game.players.map((player) => {
+        const statuses = getPlayerStatuses(player);
+        if ((statusType === 'monarch' || statusType === 'initiative') && player.id !== targetPlayerId) {
+          return { ...player, statuses: { ...statuses, [statusType]: false } };
+        }
+        if (player.id === targetPlayerId) {
+          return { ...player, statuses: { ...statuses, [statusType]: willEnable } };
+        }
+        return player;
+      });
+      updates.players = nextPlayers;
+      optimisticPatch = { players: nextPlayers };
+      const targetName = targetPlayer.name || 'Player';
+      let message = `${targetName} ${willEnable ? 'gained' : 'lost'} ${PLAYER_STATUS_LABELS[statusType]}.`;
+      if (statusType === 'monarch') message = willEnable ? `${targetName} became the monarch.` : `${targetName} stopped being the monarch.`;
+      if (statusType === 'initiative') message = willEnable ? `${targetName} took the initiative.` : `${targetName} lost the initiative.`;
+      updates.log = arrayUnion(makeActionLog('PLAYER_STATUS_TOGGLE', message, { category: 'status', targetPlayerId, targetPlayerName: targetName, statusType, enabled: willEnable }));
+
+    } else if (actionType === 'RING_TEMPTATION') {
+      const targetPlayerId = payload.targetPlayerId || userId;
+      const targetPlayer = game.players.find(p => p.id === targetPlayerId);
+      if (!targetPlayer) return;
+      const statuses = getPlayerStatuses(targetPlayer);
+      const nextLevel = clampRingTemptationLevel(payload.setLevel !== undefined ? payload.setLevel : statuses.ringBearerLevel + (payload.amount || 0));
+      if (nextLevel === statuses.ringBearerLevel) return;
+      const nextPlayers = game.players.map((player) => player.id === targetPlayerId ? { ...player, statuses: { ...getPlayerStatuses(player), ringBearerLevel: nextLevel } } : player);
+      updates.players = nextPlayers;
+      optimisticPatch = { players: nextPlayers };
+      const targetName = targetPlayer.name || 'Player';
+      const message = nextLevel > statuses.ringBearerLevel
+        ? `${targetName} advanced Ring temptation to ${nextLevel}.`
+        : `${targetName} reduced Ring temptation to ${nextLevel}.`;
+      updates.log = arrayUnion(makeActionLog('RING_TEMPTATION', message, { category: 'status', targetPlayerId, targetPlayerName: targetName, ringBearerLevel: nextLevel }));
+
+    } else if (actionType === 'PLAYER_STATUS_ADD_CUSTOM') {
+      const targetPlayerId = payload.targetPlayerId || userId;
+      const targetPlayer = game.players.find(p => p.id === targetPlayerId);
+      const text = sanitizeCustomPlayerStatusText(payload.text);
+      if (!targetPlayer || !text) return;
+      const statuses = getPlayerStatuses(targetPlayer);
+      if (statuses.custom.includes(text) || statuses.custom.length >= MAX_CUSTOM_PLAYER_STATUSES) return;
+      const nextCustom = [...statuses.custom, text];
+      const nextPlayers = game.players.map((player) => player.id === targetPlayerId ? { ...player, statuses: { ...getPlayerStatuses(player), custom: nextCustom } } : player);
+      updates.players = nextPlayers;
+      optimisticPatch = { players: nextPlayers };
+      const targetName = targetPlayer.name || 'Player';
+      updates.log = arrayUnion(makeActionLog('PLAYER_STATUS_ADD_CUSTOM', `${targetName} added status: ${text}.`, { category: 'status', targetPlayerId, targetPlayerName: targetName, statusText: text }));
+
+    } else if (actionType === 'PLAYER_STATUS_REMOVE_CUSTOM') {
+      const targetPlayerId = payload.targetPlayerId || userId;
+      const targetPlayer = game.players.find(p => p.id === targetPlayerId);
+      if (!targetPlayer) return;
+      const statuses = getPlayerStatuses(targetPlayer);
+      const removeIndex = Number.isInteger(payload.index) ? payload.index : statuses.custom.findIndex((text) => text === payload.text);
+      const removedText = statuses.custom[removeIndex];
+      if (!removedText) return;
+      const nextCustom = statuses.custom.filter((_, index) => index !== removeIndex);
+      const nextPlayers = game.players.map((player) => player.id === targetPlayerId ? { ...player, statuses: { ...getPlayerStatuses(player), custom: nextCustom } } : player);
+      updates.players = nextPlayers;
+      optimisticPatch = { players: nextPlayers };
+      const targetName = targetPlayer.name || 'Player';
+      updates.log = arrayUnion(makeActionLog('PLAYER_STATUS_REMOVE_CUSTOM', `${targetName} removed status: ${removedText}.`, { category: 'status', targetPlayerId, targetPlayerName: targetName, statusText: removedText }));
+
+    } else if (actionType === 'SET_DAY_NIGHT') {
+      const nextDayNight = payload.value === 'day' || payload.value === 'night' ? payload.value : null;
+      const currentDayNight = getDayNightValue(game);
+      if (nextDayNight === currentDayNight) return;
+      updates.dayNight = nextDayNight;
+      optimisticPatch = { dayNight: nextDayNight };
+      const message = nextDayNight ? `The game became ${DAY_NIGHT_LABELS[nextDayNight]}.` : 'Day/Night was unset.';
+      updates.log = arrayUnion(makeActionLog('SET_DAY_NIGHT', message, { category: 'status', dayNight: nextDayNight }));
 
     } else if (actionType === 'ADD_CARD_REMINDER') {
       const card = game.cards.find(c => c.instanceId === payload.cardId);
@@ -7293,6 +7440,11 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             <span className="font-bold text-sm text-purple-300">
               {PHASES.find(p => p.id === game.phase)?.label}
             </span>
+            {getDayNightValue(game) && (
+              <span className={`mt-1 w-fit rounded-full border px-2 py-0.5 text-[10px] font-black uppercase tracking-wider ${getDayNightValue(game) === 'day' ? 'border-amber-300/50 bg-amber-900/50 text-amber-100' : 'border-indigo-300/50 bg-indigo-950/70 text-indigo-100'}`}>
+                {DAY_NIGHT_LABELS[getDayNightValue(game)]}
+              </span>
+            )}
           </div>
         </button>
 
@@ -7517,6 +7669,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                   {getVisiblePlayerCounters(opponent).map((counter) => (
                     <span key={counter.key} className="rounded bg-slate-700 px-2 py-0.5 text-slate-100" title={counter.label}>{counter.label}: {counter.value}</span>
                   ))}
+                  {renderPlayerStatusBadges(opponent)}
                   {commanderModeEnabled && getTotalCommanderDamageToPlayer(opponent.id) > 0 && (
                     <button onClick={() => setCommanderDamageSummaryPlayerId(opponent.id)} className="rounded border border-amber-500/50 bg-amber-900/50 px-2 py-0.5 font-bold text-amber-100">Cmd: {getTotalCommanderDamageToPlayer(opponent.id)}</button>
                   )}
@@ -7803,6 +7956,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                 {getVisiblePlayerCounters(myPlayer).map((counter) => (
                   <span key={counter.key} className="rounded bg-slate-700 px-1.5 py-0.5 text-[10px] text-slate-100" title={counter.label}>{counter.label}: {counter.value}</span>
                 ))}
+                {renderPlayerStatusBadges(myPlayer, 'tiny')}
                 {commanderModeEnabled && getTotalCommanderDamageToPlayer(viewAsPlayerId) > 0 && (
                   <button onClick={(e) => { e.stopPropagation(); setCommanderDamageSummaryPlayerId(viewAsPlayerId); }} className="rounded border border-amber-500/50 bg-amber-900/50 px-1.5 py-0.5 text-[10px] font-bold text-amber-100">Cmd: {getTotalCommanderDamageToPlayer(viewAsPlayerId)}</button>
                 )}
@@ -8954,8 +9108,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       {/* Player Stats Modal */}
       {playerStatsOpen && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={() => setPlayerStatsOpen(false)}>
-          <div className="bg-slate-800 p-6 rounded-xl w-full max-w-sm border border-slate-600" onClick={e => e.stopPropagation()}>
-            <h3 className="text-xl font-bold mb-4 text-white">Player Counters</h3>
+          <div className="max-h-[88vh] w-full max-w-sm overflow-y-auto rounded-xl border border-slate-600 bg-slate-800 p-5" onClick={e => e.stopPropagation()}>
+            <h3 className="text-xl font-bold mb-4 text-white">Player Counters & Statuses</h3>
             <div className="space-y-4">
               {[...defaultPlayerCounters, ...Object.keys(myPlayer?.counters || {}).filter(type => !defaultPlayerCounters.includes(type) && (commanderModeEnabled || type !== 'commanderTax'))].map(type => (
                 <div key={type} className="flex justify-between items-center bg-slate-700 p-3 rounded">
@@ -8997,6 +9151,87 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                   <div className="mb-3 text-xs text-slate-400">No player reminders.</div>
                 )}
                 <ReminderTool label="Add Player Reminder" onAdd={(reminder) => addPlayerReminder(viewAsPlayerId, reminder)} disabled={!canAct} />
+              </div>
+
+              <div className="rounded-lg border border-amber-500/30 bg-slate-900/60 p-3">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <div>
+                    <div className="text-[11px] font-bold uppercase tracking-wider text-amber-200">Player Status Badges</div>
+                    <div className="text-[11px] text-slate-400">Manual only. No rules automation.</div>
+                  </div>
+                  <span className="rounded-full border border-slate-600 px-2 py-0.5 text-[10px] font-bold text-slate-300">Status</span>
+                </div>
+                <div className="mb-3 rounded-lg border border-slate-700 bg-slate-950/70 p-2">
+                  <div className="mb-2 text-[10px] font-black uppercase tracking-widest text-slate-400">Day / Night</div>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {[
+                      { value: 'day', label: 'Day' },
+                      { value: 'night', label: 'Night' },
+                      { value: null, label: 'Unset' }
+                    ].map((option) => {
+                      const active = getDayNightValue(game) === option.value;
+                      return (
+                        <button
+                          key={option.label}
+                          type="button"
+                          onClick={() => handleAction('SET_DAY_NIGHT', { value: option.value })}
+                          disabled={!canAct}
+                          className={`min-h-9 rounded border px-2 py-1 text-xs font-black ${active ? 'border-purple-400 bg-purple-700 text-white' : 'border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700'} disabled:opacity-50`}
+                        >
+                          {option.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+                <div className="space-y-3">
+                  {(game.players || []).map((player) => {
+                    const statuses = getPlayerStatuses(player);
+                    return (
+                      <div key={player.id} className="rounded-lg border border-slate-700 bg-slate-950/60 p-2">
+                        <div className="mb-2 flex items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="truncate text-sm font-bold text-white">{player.name || 'Player'}</div>
+                            <div className="mt-1 flex flex-wrap gap-1">{renderPlayerStatusBadges(player, 'tiny')}</div>
+                          </div>
+                          <div className="flex items-center gap-1 rounded border border-orange-500/30 bg-orange-950/30 px-2 py-1 text-xs font-black text-orange-100">
+                            Ring {statuses.ringBearerLevel}
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-3 gap-1.5">
+                          <button type="button" disabled={!canAct} onClick={() => handleAction('PLAYER_STATUS_TOGGLE', { targetPlayerId: player.id, statusType: 'monarch' })} className={`min-h-9 rounded px-2 py-1 text-[11px] font-black ${statuses.monarch ? 'bg-amber-600 text-slate-950' : 'bg-slate-800 text-slate-200'} disabled:opacity-50`}>Monarch</button>
+                          <button type="button" disabled={!canAct} onClick={() => handleAction('PLAYER_STATUS_TOGGLE', { targetPlayerId: player.id, statusType: 'initiative' })} className={`min-h-9 rounded px-2 py-1 text-[11px] font-black ${statuses.initiative ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-200'} disabled:opacity-50`}>Initiative</button>
+                          <button type="button" disabled={!canAct} onClick={() => handleAction('PLAYER_STATUS_TOGGLE', { targetPlayerId: player.id, statusType: 'citysBlessing' })} className={`min-h-9 rounded px-2 py-1 text-[11px] font-black ${statuses.citysBlessing ? 'bg-cyan-600 text-white' : 'bg-slate-800 text-slate-200'} disabled:opacity-50`}>City</button>
+                        </div>
+                        <div className="mt-2 grid grid-cols-[2.5rem_1fr_2.5rem] items-center gap-1.5">
+                          <button type="button" disabled={!canAct || statuses.ringBearerLevel <= 0} onClick={() => handleAction('RING_TEMPTATION', { targetPlayerId: player.id, amount: -1 })} className="min-h-9 rounded bg-slate-800 text-lg font-black text-red-300 disabled:opacity-40">-</button>
+                          <div className="rounded bg-slate-900 px-2 py-2 text-center text-xs font-bold text-orange-100">Ring temptation {statuses.ringBearerLevel} / 4</div>
+                          <button type="button" disabled={!canAct || statuses.ringBearerLevel >= 4} onClick={() => handleAction('RING_TEMPTATION', { targetPlayerId: player.id, amount: 1 })} className="min-h-9 rounded bg-slate-800 text-lg font-black text-green-300 disabled:opacity-40">+</button>
+                        </div>
+                        {statuses.custom.length > 0 && (
+                          <div className="mt-2 flex flex-wrap gap-1.5">
+                            {statuses.custom.map((text, index) => (
+                              <button key={`${text}-${index}`} type="button" disabled={!canAct} onClick={() => handleAction('PLAYER_STATUS_REMOVE_CUSTOM', { targetPlayerId: player.id, index })} className="max-w-full truncate rounded border border-violet-500/50 bg-violet-950/70 px-2 py-1 text-xs font-bold text-violet-50 disabled:opacity-50" title="Tap to remove custom status">
+                                {text} <span className="text-violet-300">×</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        <button
+                          type="button"
+                          disabled={!canAct || statuses.custom.length >= MAX_CUSTOM_PLAYER_STATUSES}
+                          onClick={() => {
+                            const text = window.prompt(`Add custom status for ${player.name || 'Player'}`);
+                            if (text) handleAction('PLAYER_STATUS_ADD_CUSTOM', { targetPlayerId: player.id, text });
+                          }}
+                          className="mt-2 w-full rounded border border-dashed border-violet-500/50 bg-violet-950/20 px-2 py-1.5 text-xs font-bold text-violet-100 hover:bg-violet-900/40 disabled:opacity-50"
+                        >
+                          Add Custom Status
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             </div>
           </div>
@@ -10018,10 +10253,12 @@ export default function App() {
           life: startingLife,
           turnOrder: 0,
           counters: { poison: 0, energy: 0, experience: 0 },
+          statuses: { monarch: false, initiative: false, citysBlessing: false, ringBearerLevel: 0, custom: [] },
           handRevealed: false,
           lastSeenChatAt: Date.now()
         }],
         phase: 'main1',
+        dayNight: null,
         activePlayerIndex: 0,
         priorityIndex: 0,
         priorityPlayerId: user.uid,
@@ -10088,6 +10325,7 @@ export default function App() {
             life: getStartingLifeForMode(getGameMode(gameData)),
             turnOrder: players.length,
             counters: { poison: 0, energy: 0, experience: 0 },
+            statuses: { monarch: false, initiative: false, citysBlessing: false, ringBearerLevel: 0, custom: [] },
             handRevealed: false,
             lastSeenChatAt: Date.now()
           };

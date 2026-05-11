@@ -426,6 +426,13 @@ const debugActionsError = (message, details = {}) => {
   console.error(`[Debug card actions] ${message}`, details);
 };
 
+const getActionPerfNow = () => (typeof performance !== 'undefined' && typeof performance.now === 'function' ? performance.now() : Date.now());
+
+const logActionPerf = (actionType, details = {}) => {
+  if (!isDebugActionsEnabled()) return;
+  debugActionsLog('action perf', { actionType, ...details });
+};
+
 
 const COMPACT_IMAGE_URI_KEYS = ['small', 'normal', 'large'];
 const COMPACT_CARD_FACE_FIELDS = [
@@ -577,10 +584,29 @@ const normalizeUndoStackForFirestore = (undoStack = []) => Array.isArray(undoSta
 
 const normalizeGameUpdatesForFirestore = (updates = {}, debugContext = 'card write') => {
   if (!updates || typeof updates !== 'object') return updates;
+  const debugEnabled = isDebugActionsEnabled();
+  const startedAt = debugEnabled ? getActionPerfNow() : 0;
   const normalized = { ...updates };
-  if (Array.isArray(normalized.cards)) normalized.cards = normalizeGameCardsForFirestore(normalized.cards);
+  const updatesIncludeCards = Array.isArray(normalized.cards);
+  const undoStackIncludesCards = Array.isArray(normalized.undoStack)
+    && normalized.undoStack.some((entry) => Array.isArray(entry?.previousState?.cards));
+  if (updatesIncludeCards) normalized.cards = normalizeGameCardsForFirestore(normalized.cards);
   if (Array.isArray(normalized.undoStack)) normalized.undoStack = normalizeUndoStackForFirestore(normalized.undoStack);
-  if (Array.isArray(normalized.cards)) logDebugCardWriteSize(debugContext, normalized.cards, normalized);
+  if (updatesIncludeCards) logDebugCardWriteSize(debugContext, normalized.cards, normalized);
+  if (debugEnabled) {
+    const elapsedMs = getActionPerfNow() - startedAt;
+    logActionPerf(debugContext, {
+      phase: 'normalizeGameUpdatesForFirestore',
+      updateFields: Object.keys(updates),
+      updatesIncludeCards,
+      undoStackIncludesCards,
+      previousStateFields: Array.isArray(normalized.undoStack)
+        ? Object.keys(normalized.undoStack[normalized.undoStack.length - 1]?.previousState || {})
+        : [],
+      cardCount: updatesIncludeCards ? normalized.cards.length : 0,
+      elapsedMs: Math.round(elapsedMs * 10) / 10
+    });
+  }
   return normalized;
 };
 
@@ -699,6 +725,12 @@ const UNDO_STATE_FIELDS = [
   'autopass',
   'gameMode'
 ];
+const STACK_ONLY_UNDO_STATE_FIELDS = [
+  'stack',
+  'priorityIndex',
+  'priorityPlayerId',
+  'consecutivePasses'
+];
 const UNDOABLE_ACTION_TYPES = new Set([
   'DRAW_CARD',
   'MULLIGAN',
@@ -756,18 +788,21 @@ const cloneUndoValue = (value) => {
   return JSON.parse(JSON.stringify(value));
 };
 
-const buildUndoPreviousState = (currentGame = {}) => {
+const buildUndoPreviousState = (currentGame = {}, fields = UNDO_STATE_FIELDS) => {
   const previousState = {};
-  UNDO_STATE_FIELDS.forEach((field) => {
+  const selectedFields = Array.isArray(fields) && fields.length > 0 ? [...new Set(fields)] : UNDO_STATE_FIELDS;
+  selectedFields.forEach((field) => {
     if (currentGame[field] !== undefined) previousState[field] = field === 'cards' ? normalizeGameCardsForFirestore(cloneUndoValue(currentGame[field])) : cloneUndoValue(currentGame[field]);
   });
-  if (previousState.combat === undefined) previousState.combat = getEmptyCombatState();
-  if (previousState.stack === undefined) previousState.stack = [];
-  if (previousState.cards === undefined) previousState.cards = [];
-  else previousState.cards = normalizeGameCardsForFirestore(previousState.cards);
-  if (previousState.players === undefined) previousState.players = [];
-  if (previousState.reveals === undefined) previousState.reveals = [];
-  if (previousState.targets === undefined) previousState.targets = [];
+  if (selectedFields.includes('combat') && previousState.combat === undefined) previousState.combat = getEmptyCombatState();
+  if (selectedFields.includes('stack') && previousState.stack === undefined) previousState.stack = [];
+  if (selectedFields.includes('cards')) {
+    if (previousState.cards === undefined) previousState.cards = [];
+    else previousState.cards = normalizeGameCardsForFirestore(previousState.cards);
+  }
+  if (selectedFields.includes('players') && previousState.players === undefined) previousState.players = [];
+  if (selectedFields.includes('reveals') && previousState.reveals === undefined) previousState.reveals = [];
+  if (selectedFields.includes('targets') && previousState.targets === undefined) previousState.targets = [];
   return previousState;
 };
 
@@ -782,19 +817,32 @@ const normalizeUndoActionLabel = (message, actorName) => {
   return label || 'last game action';
 };
 
-const buildUndoEntry = ({ currentGame, actorId, actorName, actionLabel }) => ({
-  id: `${Date.now()}-${generateCardId()}`,
-  timestamp: Date.now(),
-  actorId: actorId || null,
-  actorName: actorName || 'Unknown',
-  actionLabel: actionLabel || 'last game action',
-  previousState: buildUndoPreviousState(currentGame)
-});
+const buildUndoEntry = ({ currentGame, actorId, actorName, actionLabel, fields, actionType }) => {
+  const selectedFields = Array.isArray(fields) && fields.length > 0 ? [...new Set(fields)] : UNDO_STATE_FIELDS;
+  const startedAt = getActionPerfNow();
+  const previousState = buildUndoPreviousState(currentGame, selectedFields);
+  const elapsedMs = getActionPerfNow() - startedAt;
+  logActionPerf(actionType || 'UNDO_ENTRY', {
+    phase: 'buildUndoEntry',
+    includesCards: Object.prototype.hasOwnProperty.call(previousState, 'cards'),
+    previousStateFields: Object.keys(previousState),
+    cardCount: Array.isArray(previousState.cards) ? previousState.cards.length : 0,
+    elapsedMs: Math.round(elapsedMs * 10) / 10
+  });
+  return {
+    id: `${Date.now()}-${generateCardId()}`,
+    timestamp: Date.now(),
+    actorId: actorId || null,
+    actorName: actorName || 'Unknown',
+    actionLabel: actionLabel || 'last game action',
+    previousState
+  };
+};
 
-const appendUndoEntry = (currentGame, undoEntry) => normalizeUndoStackForFirestore([
+const appendUndoEntry = (currentGame, undoEntry) => [
   ...((currentGame?.undoStack || []).slice(-(MAX_UNDO_STACK_ENTRIES - 1))),
   undoEntry
-]);
+];
 
 const getUndoRestoreUpdates = (previousState = {}) => {
   const updates = {};
@@ -3915,6 +3963,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
     if (actionType === 'COPY_STACK_ITEM') {
       let copiedStackItemId = null;
+      const transactionStartedAt = getActionPerfNow();
       await runTransaction(db, async (transaction) => {
         const snap = await transaction.get(gameRef);
         if (!snap.exists()) return;
@@ -3952,10 +4001,17 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             currentGame,
             actorId: userId,
             actorName: transactionActorName,
-            actionLabel: normalizeUndoActionLabel(stackLogEntry.message, transactionActorName)
+            actionLabel: normalizeUndoActionLabel(stackLogEntry.message, transactionActorName),
+            fields: STACK_ONLY_UNDO_STATE_FIELDS,
+            actionType
           })),
           updatedAt: serverTimestamp()
         }, actionType));
+      });
+      logActionPerf(actionType, {
+        phase: 'firestoreTransaction',
+        updatesIncludeCards: false,
+        elapsedMs: Math.round((getActionPerfNow() - transactionStartedAt) * 10) / 10
       });
       if (copiedStackItemId) {
         setSelectedStackItemId(copiedStackItemId);
@@ -3965,6 +4021,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     }
 
     if (actionType === 'RESOLVE_STACK_TOP' || actionType === 'COUNTER_STACK_TOP') {
+      const transactionStartedAt = getActionPerfNow();
+      let transactionUpdatesIncludeCards = false;
       await runTransaction(db, async (transaction) => {
         const snap = await transaction.get(gameRef);
         if (!snap.exists()) return;
@@ -4025,6 +4083,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           cardName
         });
 
+        const undoFields = cardsChanged ? UNDO_STATE_FIELDS : STACK_ONLY_UNDO_STATE_FIELDS;
         const stackUpdates = {
           stack: currentStack,
           consecutivePasses: 0,
@@ -4035,13 +4094,21 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             currentGame,
             actorId: userId,
             actorName: logActorName,
-            actionLabel: normalizeUndoActionLabel(stackLogEntry.message, logActorName)
+            actionLabel: normalizeUndoActionLabel(stackLogEntry.message, logActorName),
+            fields: undoFields,
+            actionType
           })),
           updatedAt: serverTimestamp()
         };
         if (cardsChanged) stackUpdates.cards = updatedCards;
+        transactionUpdatesIncludeCards = cardsChanged;
 
         transaction.update(gameRef, normalizeGameUpdatesForFirestore(stackUpdates, actionType));
+      });
+      logActionPerf(actionType, {
+        phase: 'firestoreTransaction',
+        updatesIncludeCards: transactionUpdatesIncludeCards,
+        elapsedMs: Math.round((getActionPerfNow() - transactionStartedAt) * 10) / 10
       });
       setSelectedStackItemId(null);
       setStackDetailOpen(false);

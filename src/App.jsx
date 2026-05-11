@@ -1053,6 +1053,43 @@ const STACK_ONLY_UNDO_STATE_FIELDS = [
   'priorityPlayerId',
   'consecutivePasses'
 ];
+const CARDS_ONLY_UNDO_STATE_FIELDS = ['cards'];
+const PLAYERS_ONLY_UNDO_STATE_FIELDS = ['players'];
+const COMBAT_ONLY_UNDO_STATE_FIELDS = ['combat'];
+const TARGETS_ONLY_UNDO_STATE_FIELDS = ['targets'];
+
+const appendUndoFieldIfUpdated = (fields, updates, field) => (
+  updates && Object.prototype.hasOwnProperty.call(updates, field)
+    ? [...fields, field]
+    : fields
+);
+
+const UNDO_FIELDS_BY_ACTION_TYPE = {
+  DRAW_CARD: CARDS_ONLY_UNDO_STATE_FIELDS,
+  PLAY_LAND: CARDS_ONLY_UNDO_STATE_FIELDS,
+  CAST_SPELL: ['cards', ...STACK_ONLY_UNDO_STATE_FIELDS],
+  MOVE_ZONE: ({ updates } = {}) => appendUndoFieldIfUpdated(CARDS_ONLY_UNDO_STATE_FIELDS, updates, 'combat'),
+  MOVE_TO_LIBRARY: ({ updates } = {}) => appendUndoFieldIfUpdated(CARDS_ONLY_UNDO_STATE_FIELDS, updates, 'combat'),
+  TAP_TOGGLE: CARDS_ONLY_UNDO_STATE_FIELDS,
+  SWITCH_CARD_FACE: CARDS_ONLY_UNDO_STATE_FIELDS,
+  ADD_CARD_REMINDER: CARDS_ONLY_UNDO_STATE_FIELDS,
+  REMOVE_CARD_REMINDER: CARDS_ONLY_UNDO_STATE_FIELDS,
+  ADD_PLAYER_REMINDER: PLAYERS_ONLY_UNDO_STATE_FIELDS,
+  REMOVE_PLAYER_REMINDER: PLAYERS_ONLY_UNDO_STATE_FIELDS,
+  CLEAR_CLEANUP_REMINDERS: ({ updates } = {}) => ['cards', 'players'].filter((field) => updates && Object.prototype.hasOwnProperty.call(updates, field)),
+  SET_ATTACK_TARGET: COMBAT_ONLY_UNDO_STATE_FIELDS,
+  TOGGLE_BLOCK_TARGET: COMBAT_ONLY_UNDO_STATE_FIELDS,
+  TARGET: TARGETS_ONLY_UNDO_STATE_FIELDS,
+  CLEAR_TARGETS: TARGETS_ONLY_UNDO_STATE_FIELDS
+};
+
+const getUndoFieldsForAction = (actionType, context = {}) => {
+  const configuredFields = UNDO_FIELDS_BY_ACTION_TYPE[actionType];
+  if (!configuredFields) return UNDO_STATE_FIELDS;
+  const fields = typeof configuredFields === 'function' ? configuredFields(context) : configuredFields;
+  return Array.isArray(fields) && fields.length > 0 ? [...new Set(fields)] : UNDO_STATE_FIELDS;
+};
+
 const UNDOABLE_ACTION_TYPES = new Set([
   'DRAW_CARD',
   'MULLIGAN',
@@ -5586,7 +5623,14 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         const transactionActorName = currentPlayers.find((player) => player.id === userId)?.name || actorName;
         transaction.update(gameRef, normalizeGameUpdatesForFirestore({
           ...updates,
-          undoStack: appendUndoEntry(currentGame, buildUndoEntry({ currentGame, actorId: userId, actorName: transactionActorName, actionLabel })),
+          undoStack: appendUndoEntry(currentGame, buildUndoEntry({
+            currentGame,
+            actorId: userId,
+            actorName: transactionActorName,
+            actionLabel,
+            fields: getUndoFieldsForAction(actionType, { updates }),
+            actionType
+          })),
           updatedAt: serverTimestamp()
         }, actionType));
       });

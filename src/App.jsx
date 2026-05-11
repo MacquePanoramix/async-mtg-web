@@ -476,6 +476,12 @@ const IMPORTANT_PERF_ACTIONS = new Set([
   'ADD_CARD_REMINDER',
   'REMOVE_CARD_REMINDER',
   'DRAW_CARD',
+  'BATCH_DRAW_LIBRARY',
+  'BATCH_MILL_LIBRARY',
+  'BATCH_REVEAL_LIBRARY',
+  'BATCH_EXILE_LIBRARY',
+  'BATCH_SCRY_LIBRARY',
+  'BATCH_SURVEIL_LIBRARY',
   'PASS',
   'PASS_PRIORITY'
 ]);
@@ -1243,6 +1249,7 @@ const CARDS_ONLY_UNDO_STATE_FIELDS = ['cards'];
 const PLAYERS_ONLY_UNDO_STATE_FIELDS = ['players'];
 const COMBAT_ONLY_UNDO_STATE_FIELDS = ['combat'];
 const TARGETS_ONLY_UNDO_STATE_FIELDS = ['targets'];
+const REVEALS_ONLY_UNDO_STATE_FIELDS = ['reveals'];
 
 const appendUndoFieldIfUpdated = (fields, updates, field) => (
   updates && Object.prototype.hasOwnProperty.call(updates, field)
@@ -1252,6 +1259,12 @@ const appendUndoFieldIfUpdated = (fields, updates, field) => (
 
 const UNDO_FIELDS_BY_ACTION_TYPE = {
   DRAW_CARD: CARDS_ONLY_UNDO_STATE_FIELDS,
+  BATCH_DRAW_LIBRARY: CARDS_ONLY_UNDO_STATE_FIELDS,
+  BATCH_MILL_LIBRARY: CARDS_ONLY_UNDO_STATE_FIELDS,
+  BATCH_EXILE_LIBRARY: CARDS_ONLY_UNDO_STATE_FIELDS,
+  BATCH_SCRY_LIBRARY: CARDS_ONLY_UNDO_STATE_FIELDS,
+  BATCH_SURVEIL_LIBRARY: CARDS_ONLY_UNDO_STATE_FIELDS,
+  BATCH_REVEAL_LIBRARY: REVEALS_ONLY_UNDO_STATE_FIELDS,
   PLAY_LAND: CARDS_ONLY_UNDO_STATE_FIELDS,
   CAST_SPELL: ['cards', ...STACK_ONLY_UNDO_STATE_FIELDS],
   MOVE_ZONE: ({ updates } = {}) => appendUndoFieldIfUpdated(CARDS_ONLY_UNDO_STATE_FIELDS, updates, 'combat'),
@@ -1278,6 +1291,12 @@ const getUndoFieldsForAction = (actionType, context = {}) => {
 
 const UNDOABLE_ACTION_TYPES = new Set([
   'DRAW_CARD',
+  'BATCH_DRAW_LIBRARY',
+  'BATCH_MILL_LIBRARY',
+  'BATCH_REVEAL_LIBRARY',
+  'BATCH_EXILE_LIBRARY',
+  'BATCH_SCRY_LIBRARY',
+  'BATCH_SURVEIL_LIBRARY',
   'MULLIGAN',
   'IMPORT',
   'PLAY_LAND',
@@ -3589,6 +3608,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const [diceMenuOpen, setDiceMenuOpen] = useState(false);
   const [customDieSize, setCustomDieSize] = useState('12');
   const [libraryMenuOpen, setLibraryMenuOpen] = useState(false);
+  const [libraryBatchOpen, setLibraryBatchOpen] = useState(false);
+  const [libraryBatchCount, setLibraryBatchCount] = useState('3');
   const [libraryMenuPos, setLibraryMenuPos] = useState(null);
   const [notification, setNotification] = useState(null);
   const [boardUnlocked, setBoardUnlocked] = useState(false);
@@ -3635,6 +3656,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const [blockPickerCard, setBlockPickerCard] = useState(null);
 
   const [reorderModal, setReorderModal] = useState(null); // { ownerId, n, orderedIds }
+  const [libraryReviewModal, setLibraryReviewModal] = useState(null); // { mode, ownerId, n, allIds, orderedIds, movedIds }
   const [customCounterModal, setCustomCounterModal] = useState(null); // { cardId, label, amount }
   const [damageModal, setDamageModal] = useState(null); // { cardId, amount }
   const [tokenModal, setTokenModal] = useState(null); // Token Tools panel custom form
@@ -4420,6 +4442,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     setAttackTargetPickerCard(null);
     setBlockPickerCard(null);
     setReorderModal(null);
+    setLibraryReviewModal(null);
+    setLibraryBatchOpen(false);
     setCustomCounterModal(null);
     setDamageModal(null);
     setTokenModal(null);
@@ -5815,6 +5839,87 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       optimisticPatch = { cards: newCards };
       updates.log = arrayUnion(makeActionLog('DRAW_CARD', `${actorName} drew a card.`, { category: 'draw' }));
 
+    } else if (actionType === 'BATCH_DRAW_LIBRARY' || actionType === 'BATCH_MILL_LIBRARY' || actionType === 'BATCH_EXILE_LIBRARY') {
+      const requested = clamp(Number.parseInt(payload.n, 10) || 1, 1, 99);
+      const targetZone = actionType === 'BATCH_DRAW_LIBRARY' ? ZONES.HAND : actionType === 'BATCH_MILL_LIBRARY' ? ZONES.GRAVEYARD : ZONES.EXILE;
+      const libCards = game.cards.filter(c => c.ownerId === userId && c.zone === ZONES.LIBRARY);
+      const movedCards = libCards.slice(0, Math.min(requested, libCards.length));
+      if (movedCards.length === 0) {
+        setNotification('No cards left in library.');
+        setTimeout(() => setNotification(null), 2000);
+        return;
+      }
+      const movedIds = new Set(movedCards.map(c => c.instanceId));
+      const newCards = game.cards.map(c => movedIds.has(c.instanceId) ? { ...c, zone: targetZone, tapped: false, faceDown: false } : c);
+      updates.cards = newCards;
+      optimisticPatch = { cards: newCards };
+      const count = movedCards.length;
+      const plural = count === 1 ? 'card' : 'cards';
+      if (actionType === 'BATCH_DRAW_LIBRARY') {
+        updates.log = arrayUnion(makeActionLog('BATCH_DRAW_LIBRARY', `${actorName} drew ${count} ${plural}.`, { category: 'draw', count }));
+      } else if (actionType === 'BATCH_MILL_LIBRARY') {
+        updates.log = arrayUnion(makeActionLog('BATCH_MILL_LIBRARY', `${actorName} milled ${count} ${plural}.`, { category: 'library', count }));
+      } else {
+        updates.log = arrayUnion(makeActionLog('BATCH_EXILE_LIBRARY', `${actorName} exiled the top ${count} ${plural} of their library.`, { category: 'library', count }));
+      }
+
+    } else if (actionType === 'BATCH_REVEAL_LIBRARY') {
+      const requested = clamp(Number.parseInt(payload.n, 10) || 1, 1, 99);
+      const libCards = game.cards.filter(c => c.ownerId === userId && c.zone === ZONES.LIBRARY);
+      const revealedCards = libCards.slice(0, Math.min(requested, libCards.length));
+      if (revealedCards.length === 0) {
+        setNotification('No cards left in library to reveal.');
+        setTimeout(() => setNotification(null), 2000);
+        return;
+      }
+      const now = Date.now();
+      const revealEntries = revealedCards.map((card, index) => ({
+        id: generateCardId(),
+        cardId: card.instanceId,
+        cardName: getCardDisplayName(card),
+        cardImage: getCardImageUri(card),
+        revealerId: userId,
+        revealerName: myPlayer?.name || 'Unknown',
+        timestamp: now + index
+      }));
+      const count = revealedCards.length;
+      updates.reveals = arrayUnion(...revealEntries);
+      updates.log = arrayUnion(makeActionLog('BATCH_REVEAL_LIBRARY', `${actorName} revealed the top ${count} ${count === 1 ? 'card' : 'cards'} of their library.`, { category: 'reveal', count }));
+
+    } else if (actionType === 'BATCH_SCRY_LIBRARY' || actionType === 'BATCH_SURVEIL_LIBRARY') {
+      const ownerId = payload.ownerId || userId;
+      if (ownerId !== userId) return;
+      const requested = clamp(Number.parseInt(payload.n, 10) || 1, 1, 99);
+      const currentLib = game.cards.filter(c => c.ownerId === ownerId && c.zone === ZONES.LIBRARY);
+      const reviewed = currentLib.slice(0, Math.min(requested, currentLib.length));
+      if (reviewed.length === 0) return;
+      const reviewedMap = new Map(reviewed.map(c => [c.instanceId, c]));
+      const reviewedIds = new Set(reviewed.map(c => c.instanceId));
+      const movedIds = (payload.movedIds || []).filter(id => reviewedMap.has(id));
+      const movedSet = new Set(movedIds);
+      const keptTop = (payload.keptTopIds || []).filter(id => reviewedMap.has(id) && !movedSet.has(id)).map(id => reviewedMap.get(id));
+      const remainingReviewedKept = reviewed.filter(c => !movedSet.has(c.instanceId) && !keptTop.some(top => top.instanceId === c.instanceId));
+      const keptCards = [...keptTop, ...remainingReviewedKept];
+      const restLibrary = currentLib.filter(c => !reviewedIds.has(c.instanceId));
+
+      if (actionType === 'BATCH_SCRY_LIBRARY') {
+        const bottomCards = movedIds.map(id => reviewedMap.get(id)).filter(Boolean);
+        const nextLibraryQueue = [...keptCards, ...restLibrary, ...bottomCards];
+        updates.cards = game.cards.map(c => (c.ownerId === ownerId && c.zone === ZONES.LIBRARY) ? (nextLibraryQueue.shift() || c) : c);
+        optimisticPatch = { cards: updates.cards };
+        updates.log = arrayUnion(makeActionLog('BATCH_SCRY_LIBRARY', `${actorName} scryed ${reviewed.length}.`, { category: 'library', count: reviewed.length }));
+      } else {
+        const graveyardCards = movedIds.map(id => reviewedMap.get(id)).filter(Boolean);
+        const nextLibraryQueue = [...keptCards, ...restLibrary];
+        updates.cards = game.cards.map(c => {
+          if (movedSet.has(c.instanceId)) return { ...c, zone: ZONES.GRAVEYARD, tapped: false, faceDown: false };
+          if (c.ownerId === ownerId && c.zone === ZONES.LIBRARY) return nextLibraryQueue.shift() || c;
+          return c;
+        });
+        optimisticPatch = { cards: updates.cards };
+        updates.log = arrayUnion(makeActionLog('BATCH_SURVEIL_LIBRARY', `${actorName} surveilled ${reviewed.length}.`, { category: 'library', count: reviewed.length, graveyardCount: graveyardCards.length }));
+      }
+
     } else if (actionType === 'MOVE_ZONE') {
       const movingCard = game.cards.find(c => c.instanceId === payload.cardId);
       const tokenLeavesBattlefield = Boolean(movingCard?.isToken && movingCard.zone === ZONES.BATTLEFIELD && payload.targetZone !== ZONES.BATTLEFIELD);
@@ -5987,7 +6092,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
     if (optimisticPatch) {
       applyOptimisticGamePatch({ actionType, payload, patch: optimisticPatch, perfActionId });
-    } else if (['DRAW_CARD', 'PLAY_LAND', 'CAST_SPELL', 'MOVE_ZONE', 'SWITCH_CARD_FACE', 'TAP_TOGGLE', 'ADD_CARD_REMINDER', 'REMOVE_CARD_REMINDER'].includes(actionType)) {
+    } else if (['DRAW_CARD', 'BATCH_DRAW_LIBRARY', 'BATCH_MILL_LIBRARY', 'BATCH_EXILE_LIBRARY', 'BATCH_SCRY_LIBRARY', 'BATCH_SURVEIL_LIBRARY', 'PLAY_LAND', 'CAST_SPELL', 'MOVE_ZONE', 'SWITCH_CARD_FACE', 'TAP_TOGGLE', 'ADD_CARD_REMINDER', 'REMOVE_CARD_REMINDER'].includes(actionType)) {
       recordPerfOptimisticSkipped('No conservative local patch was produced.', perfActionId);
     }
 
@@ -6572,6 +6677,74 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     if (!reorderModal) return;
     await handleAction('REORDER_TOP_LIBRARY', { ownerId: reorderModal.ownerId, orderedTopIds: reorderModal.orderedIds });
     setReorderModal(null);
+  };
+
+
+  const getLibraryBatchAmount = () => clamp(Number.parseInt(libraryBatchCount, 10) || 1, 1, 99);
+
+  const runLibraryBatchAction = (actionType) => {
+    const n = getLibraryBatchAmount();
+    if (actionType === 'BATCH_SCRY_LIBRARY' || actionType === 'BATCH_SURVEIL_LIBRARY') {
+      const lib = (game?.cards || []).filter(c => c.ownerId === userId && c.zone === ZONES.LIBRARY);
+      const topCards = lib.slice(0, Math.min(n, lib.length));
+      if (topCards.length === 0) {
+        setNotification('No cards left in library.');
+        setTimeout(() => setNotification(null), 2000);
+        return;
+      }
+      setLibraryReviewModal({
+        mode: actionType === 'BATCH_SURVEIL_LIBRARY' ? 'surveil' : 'scry',
+        ownerId: userId,
+        n: topCards.length,
+        allIds: topCards.map(c => c.instanceId),
+        orderedIds: topCards.map(c => c.instanceId),
+        movedIds: []
+      });
+      setLibraryBatchOpen(false);
+      setLibraryMenuOpen(false);
+      return;
+    }
+    recordPerfActionClick({ actionType, buttonName: 'Library Batch', currentGame: game });
+    handleAction(actionType, { n });
+    setLibraryBatchOpen(false);
+    setLibraryMenuOpen(false);
+  };
+
+  const toggleLibraryReviewDestination = (cardId) => {
+    if (!libraryReviewModal) return;
+    const moved = new Set(libraryReviewModal.movedIds || []);
+    const currentlyMoved = moved.has(cardId);
+    if (currentlyMoved) moved.delete(cardId);
+    else moved.add(cardId);
+    const movedIds = (libraryReviewModal.allIds || []).filter(id => moved.has(id));
+    const currentOrdered = libraryReviewModal.orderedIds.filter(id => !moved.has(id));
+    const orderedIds = currentlyMoved && !currentOrdered.includes(cardId) ? [...currentOrdered, cardId] : currentOrdered;
+    setLibraryReviewModal({
+      ...libraryReviewModal,
+      movedIds,
+      orderedIds
+    });
+  };
+
+  const moveLibraryReviewItem = (index, direction) => {
+    if (!libraryReviewModal) return;
+    const newIds = [...libraryReviewModal.orderedIds];
+    const newIndex = index + direction;
+    if (newIndex < 0 || newIndex >= newIds.length) return;
+    [newIds[index], newIds[newIndex]] = [newIds[newIndex], newIds[index]];
+    setLibraryReviewModal({ ...libraryReviewModal, orderedIds: newIds });
+  };
+
+  const submitLibraryReview = async () => {
+    if (!libraryReviewModal) return;
+    const actionType = libraryReviewModal.mode === 'surveil' ? 'BATCH_SURVEIL_LIBRARY' : 'BATCH_SCRY_LIBRARY';
+    await handleAction(actionType, {
+      n: libraryReviewModal.n,
+      ownerId: libraryReviewModal.ownerId,
+      keptTopIds: libraryReviewModal.orderedIds,
+      movedIds: libraryReviewModal.movedIds || []
+    });
+    setLibraryReviewModal(null);
   };
 
   useEffect(() => {
@@ -7844,6 +8017,9 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             <button onClick={() => startReorderTop()} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-700 flex items-center gap-2 text-indigo-300">
               <Layers size={12} /> Reorder Top...
             </button>
+            <button onClick={() => { setLibraryBatchOpen(true); setLibraryMenuOpen(false); }} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-700 flex items-center gap-2 text-cyan-300">
+              <LayoutGrid size={12} /> Batch Actions
+            </button>
             <button onClick={() => handleAction('SHUFFLE_LIBRARY')} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-700 flex items-center gap-2 text-yellow-300">
               <Shuffle size={12} /> Shuffle
             </button>
@@ -8458,6 +8634,40 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         </div>
       )}
 
+      {/* Library Batch Actions Modal */}
+      {libraryBatchOpen && (
+        <div className="fixed inset-0 bg-black/70 z-[190] flex items-end sm:items-center justify-center p-3" onClick={() => setLibraryBatchOpen(false)}>
+          <div className="bg-slate-800 w-full max-w-sm rounded-t-2xl sm:rounded-2xl border border-slate-600 p-4 space-y-4 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-white font-extrabold text-lg">Library Batch</h3>
+                <p className="text-xs text-slate-400">Own-library shortcuts. Card names stay private unless revealed or moved to public zones.</p>
+              </div>
+              <button onClick={() => setLibraryBatchOpen(false)} className="rounded-full p-1 text-slate-400 hover:bg-slate-700 hover:text-white" aria-label="Close library batch actions"><X size={18} /></button>
+            </div>
+            <label className="block text-xs font-bold uppercase tracking-wider text-slate-400">
+              Number of cards
+              <input
+                type="number"
+                min="1"
+                max="99"
+                value={libraryBatchCount}
+                onChange={(event) => setLibraryBatchCount(event.target.value)}
+                className="mt-1 w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-base font-bold text-white outline-none focus:border-cyan-400"
+              />
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              <button onClick={() => runLibraryBatchAction('BATCH_DRAW_LIBRARY')} className="rounded-lg bg-blue-700 px-3 py-3 text-sm font-extrabold text-white hover:bg-blue-600 active:scale-95">Draw N</button>
+              <button onClick={() => runLibraryBatchAction('BATCH_MILL_LIBRARY')} className="rounded-lg bg-slate-700 px-3 py-3 text-sm font-extrabold text-white hover:bg-slate-600 active:scale-95">Mill N</button>
+              <button onClick={() => runLibraryBatchAction('BATCH_REVEAL_LIBRARY')} className="rounded-lg bg-purple-700 px-3 py-3 text-sm font-extrabold text-white hover:bg-purple-600 active:scale-95">Reveal top N</button>
+              <button onClick={() => runLibraryBatchAction('BATCH_EXILE_LIBRARY')} className="rounded-lg bg-amber-700 px-3 py-3 text-sm font-extrabold text-white hover:bg-amber-600 active:scale-95">Exile top N</button>
+              <button onClick={() => runLibraryBatchAction('BATCH_SCRY_LIBRARY')} className="rounded-lg bg-indigo-700 px-3 py-3 text-sm font-extrabold text-white hover:bg-indigo-600 active:scale-95">Scry N</button>
+              <button onClick={() => runLibraryBatchAction('BATCH_SURVEIL_LIBRARY')} className="rounded-lg bg-emerald-700 px-3 py-3 text-sm font-extrabold text-white hover:bg-emerald-600 active:scale-95">Surveil N</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Reorder Library Modal */}
       {reorderModal && (
         <div className="fixed inset-0 bg-black/90 z-[200] flex items-center justify-center p-4 pointer-events-auto">
@@ -8502,6 +8712,45 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               })}
             </div>
             <button onClick={submitReorder} className="w-full bg-green-600 py-3 rounded-lg font-bold text-white hover:bg-green-500">Done</button>
+          </div>
+        </div>
+      )}
+
+      {/* Scry / Surveil Batch Review Modal */}
+      {libraryReviewModal && (
+        <div className="fixed inset-0 bg-black/90 z-[205] flex items-center justify-center p-4 pointer-events-auto">
+          <div className="bg-slate-800 p-4 rounded-xl border border-slate-600 max-w-sm w-full space-y-4 max-h-[90vh] flex flex-col">
+            <div className="flex justify-between items-start gap-3">
+              <div>
+                <h3 className="text-white font-bold text-lg">{libraryReviewModal.mode === 'surveil' ? 'Surveil' : 'Scry'} {libraryReviewModal.n}</h3>
+                <p className="text-xs text-slate-400">Top kept card is first. This view is private until you submit.</p>
+              </div>
+              <button onClick={() => setLibraryReviewModal(null)}><X className="text-slate-400"/></button>
+            </div>
+            <div className="flex-1 overflow-y-auto space-y-2">
+              {[...libraryReviewModal.orderedIds, ...((libraryReviewModal.allIds || []).filter(id => (libraryReviewModal.movedIds || []).includes(id)))].map((id) => cardsMap.get(id)).filter(Boolean).map((c) => {
+                const moved = (libraryReviewModal.movedIds || []).includes(c.instanceId);
+                const keptIndex = libraryReviewModal.orderedIds.indexOf(c.instanceId);
+                return (
+                  <div key={c.instanceId} className={`flex items-center gap-2 rounded border p-2 ${moved ? 'border-emerald-700 bg-emerald-950/30' : 'border-slate-700 bg-slate-900'}`}>
+                    <img src={getCardImageUri(c)} alt={getCardDisplayName(c)} className="w-10 h-14 rounded object-cover" />
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-bold text-white">{getCardDisplayName(c)}</div>
+                      <button onClick={() => toggleLibraryReviewDestination(c.instanceId)} className={`mt-1 rounded px-2 py-1 text-[11px] font-bold ${moved ? 'bg-emerald-700 text-white' : 'bg-slate-700 text-slate-100 hover:bg-slate-600'}`}>
+                        {moved ? (libraryReviewModal.mode === 'surveil' ? 'To graveyard' : 'To bottom') : 'Keep on top'}
+                      </button>
+                    </div>
+                    {!moved && (
+                      <div className="flex flex-col gap-1">
+                        <button onClick={() => moveLibraryReviewItem(keptIndex, -1)} disabled={keptIndex === 0} className="p-1 bg-slate-700 rounded hover:bg-slate-600 disabled:opacity-30"><ArrowUp size={12} /></button>
+                        <button onClick={() => moveLibraryReviewItem(keptIndex, 1)} disabled={keptIndex === libraryReviewModal.orderedIds.length - 1} className="p-1 bg-slate-700 rounded hover:bg-slate-600 disabled:opacity-30"><ArrowDown size={12} /></button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            <button onClick={submitLibraryReview} className="w-full bg-green-600 py-3 rounded-lg font-bold text-white hover:bg-green-500">Done</button>
           </div>
         </div>
       )}

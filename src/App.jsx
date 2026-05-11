@@ -678,7 +678,7 @@ const getPerfActionMarker = ({ actionType, payload = {}, currentGame = null } = 
   if (actionType === 'REMOVE_CARD_REMINDER') marker.expected = { reminderId: payload?.reminderId || null };
   if (actionType === 'COPY_STACK_ITEM') marker.expected = { stackLength: before.stackLength + 1 };
   if (actionType === 'RESOLVE_STACK_TOP' || actionType === 'COUNTER_STACK_TOP') marker.expected = { stackLength: Math.max(0, before.stackLength - 1) };
-  if (actionType === 'UNDO_LAST_ACTION') marker.expected = { undoneActionId: payload?.undoEntryId || null };
+  if (actionType === 'UNDO_LAST_ACTION') marker.expected = { undoneActionId: payload?.undoEntryId || null, cardZone: payload?.restoredZone || null };
   return marker;
 };
 
@@ -690,6 +690,43 @@ const getPerfCard = (data = {}, cardId = null) => {
 };
 
 const getPerfCardZone = (data = {}, cardId = null) => getPerfCard(data, cardId)?.zone || null;
+
+const getPerfCardZoneDetails = (cards = [], cardId = null) => {
+  const card = cardId && Array.isArray(cards) ? cards.find((candidate) => candidate.instanceId === cardId) : null;
+  return {
+    found: Boolean(card),
+    zone: card?.zone || null,
+    inHand: card?.zone === ZONES.HAND,
+    inBattlefield: card?.zone === ZONES.BATTLEFIELD
+  };
+};
+
+const buildPerfUndoCardDebug = ({ cardId = null, currentGame = {}, previousState = {}, postActionCards = null, restoredCards = null } = {}) => {
+  if (!cardId) return null;
+  const before = getPerfCardZoneDetails(currentGame?.cards || [], cardId);
+  const previous = getPerfCardZoneDetails(previousState?.cards || [], cardId);
+  const debug = {
+    cardId,
+    zoneBeforeAction: before.zone,
+    undoPreviousStateZone: previous.zone,
+    previousStateContainsCard: previous.found,
+    previousStateCardInHand: previous.inHand,
+    previousStateCardInBattlefield: previous.inBattlefield
+  };
+  if (Array.isArray(postActionCards)) {
+    const after = getPerfCardZoneDetails(postActionCards, cardId);
+    debug.zoneAfterAction = after.zone;
+    debug.afterActionContainsCard = after.found;
+  }
+  if (Array.isArray(restoredCards)) {
+    const restored = getPerfCardZoneDetails(restoredCards, cardId);
+    debug.undoRestoredZone = restored.zone;
+    debug.restoredContainsCard = restored.found;
+    debug.restoredCardInHand = restored.inHand;
+    debug.restoredCardInBattlefield = restored.inBattlefield;
+  }
+  return debug;
+};
 
 const doesPerfSnapshotReflectAction = (action = {}, data = {}, lastLog = null) => {
   if (!action?.actionType || !data) return false;
@@ -740,7 +777,8 @@ const doesPerfSnapshotReflectAction = (action = {}, data = {}, lastLog = null) =
     return logMatches && counts.stackLength <= expected.stackLength;
   }
   if (action.actionType === 'UNDO_LAST_ACTION') {
-    return logMatches && (!expected.undoneActionId || lastLog?.undoneActionId === expected.undoneActionId);
+    const cardZoneMatches = !action.cardId || !expected.cardZone || getPerfCardZone(data, action.cardId) === expected.cardZone;
+    return logMatches && (!expected.undoneActionId || lastLog?.undoneActionId === expected.undoneActionId) && cardZoneMatches;
   }
   return logMatches;
 };
@@ -1566,19 +1604,21 @@ const normalizeUndoActionLabel = (message, actorName) => {
   return label || 'last game action';
 };
 
-const buildUndoEntry = ({ currentGame, actorId, actorName, actionLabel, fields, actionType }) => {
+const buildUndoEntry = ({ currentGame, actorId, actorName, actionLabel, fields, actionType, cardId = null, postActionCards = null }) => {
   const selectedFields = Array.isArray(fields) && fields.length > 0 ? [...new Set(fields)] : UNDO_STATE_FIELDS;
   const measureUndo = isDebugActionsEnabled() || isPerfActionsEnabled();
   const startedAt = measureUndo ? getActionPerfNow() : 0;
   const previousState = buildUndoPreviousState(currentGame, selectedFields);
   const elapsedMs = measureUndo ? getActionPerfNow() - startedAt : 0;
+  const cardDebug = buildPerfUndoCardDebug({ cardId, currentGame, previousState, postActionCards });
   const undoDetails = {
     phase: 'buildUndoEntry',
     includesCards: Object.prototype.hasOwnProperty.call(previousState, 'cards'),
     previousStateFields: Object.keys(previousState),
     cardCount: Array.isArray(previousState.cards) ? previousState.cards.length : 0,
     undoStackLength: Array.isArray(currentGame?.undoStack) ? currentGame.undoStack.length : 0,
-    elapsedMs: Math.round(elapsedMs * 10) / 10
+    elapsedMs: Math.round(elapsedMs * 10) / 10,
+    ...(cardDebug ? { cardDebug } : {})
   };
   if (measureUndo) {
     logActionPerf(actionType || 'UNDO_ENTRY', undoDetails);
@@ -1590,6 +1630,10 @@ const buildUndoEntry = ({ currentGame, actorId, actorName, actionLabel, fields, 
     actorId: actorId || null,
     actorName: actorName || 'Unknown',
     actionLabel: actionLabel || 'last game action',
+    actionType: actionType || null,
+    cardId: cardId || null,
+    cardZoneBefore: cardDebug?.zoneBeforeAction || null,
+    cardZoneAfter: cardDebug?.zoneAfterAction || null,
     previousState
   };
 };
@@ -3692,6 +3736,7 @@ const PerformanceDebugPanel = ({ game = null, onRepairGameSize = null, canRepair
   const firstServerReflectingSnapshot = lastAction?.firstServerReflectingSnapshot;
   const listenerEvents = perfState.listenerEvents || [];
   const visibleUpdate = perfState.lastVisibleUpdate || lastAction?.visibleUpdate || null;
+  const undoCardDebug = lastAction?.undo?.cardDebug || null;
   const sizeEstimate = game ? getGameDocumentSizeEstimate(game) : null;
   const formatBytes = (bytes) => (Number.isFinite(bytes) ? `${Math.round(bytes / 1024)} KB` : '—');
 
@@ -3775,6 +3820,15 @@ const PerformanceDebugPanel = ({ game = null, onRepairGameSize = null, canRepair
                 <div className="rounded bg-slate-900 p-2"><span className="text-slate-400">Undo optimistic applied:</span> <b className={lastAction.undo?.optimisticApplied ? 'text-emerald-300' : 'text-slate-300'}>{lastAction.undo?.optimisticApplied == null ? '—' : (lastAction.undo.optimisticApplied ? 'yes' : 'no')}</b></div>
                 <div className="rounded bg-slate-900 p-2"><span className="text-slate-400">Click → undo visible:</span> <b>{formatPerfMs(lastAction.undo?.clickToUndoVisibleMs)}</b></div>
                 <div className="col-span-2 rounded bg-slate-900 p-2"><span className="text-slate-400">Undo restored fields:</span> <span className="break-words font-mono">{lastAction.undo?.restoredFields?.length ? lastAction.undo.restoredFields.join(', ') : '—'}</span></div>
+                {undoCardDebug && (
+                  <>
+                    <div className="col-span-2 rounded bg-slate-900 p-2"><span className="text-slate-400">Undo card:</span> <span className="break-words font-mono">{undoCardDebug.cardId || '—'}</span></div>
+                    <div className="rounded bg-slate-900 p-2"><span className="text-slate-400">Card zone before/after:</span> <b>{undoCardDebug.zoneBeforeAction || '—'} → {undoCardDebug.zoneAfterAction || '—'}</b></div>
+                    <div className="rounded bg-slate-900 p-2"><span className="text-slate-400">Undo previous zone:</span> <b>{undoCardDebug.undoPreviousStateZone || '—'}</b></div>
+                    <div className="rounded bg-slate-900 p-2"><span className="text-slate-400">Undo restored zone:</span> <b>{undoCardDebug.undoRestoredZone || '—'}</b></div>
+                    <div className="rounded bg-slate-900 p-2"><span className="text-slate-400">Prev hand/battlefield:</span> <b>{undoCardDebug.previousStateCardInHand ? 'hand' : undoCardDebug.previousStateCardInBattlefield ? 'battlefield' : 'no'}</b></div>
+                  </>
+                )}
               </div>
               <div className="rounded-lg border border-slate-700 bg-slate-900 p-2 text-[11px]">
                 <div className="mb-1 font-black uppercase text-slate-300">Snapshot metadata</div>
@@ -4830,10 +4884,13 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     }
 
     const restoredFields = getUndoRestoredFields(expectedUndoEntry.previousState || {});
+    const undoCardId = expectedUndoEntry.cardId || null;
     const undoPayload = {
       undoEntryId: expectedUndoEntry.id,
       actionLabel: expectedUndoEntry.actionLabel || 'last action',
-      restoredFields
+      restoredFields,
+      cardId: undoCardId,
+      restoredZone: getPerfCardZoneDetails(expectedUndoEntry.previousState?.cards || [], undoCardId).zone
     };
     const perfActionId = startPerfAction({ actionType: 'UNDO_LAST_ACTION', payload: undoPayload, currentGame: undoBaseGame });
     recordPerfCheckpoint('undo handler start', { undoEntryId: expectedUndoEntry.id }, perfActionId);
@@ -4842,7 +4899,17 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       source: undoSource,
       pendingSync: false,
       restoredFields,
-      optimisticApplied: false
+      optimisticApplied: false,
+      cardDebug: undoCardId ? {
+        ...(buildPerfUndoCardDebug({
+          cardId: undoCardId,
+          currentGame: undoBaseGame,
+          previousState: expectedUndoEntry.previousState || {},
+          restoredCards: expectedUndoEntry.previousState?.cards
+        }) || {}),
+        zoneBeforeAction: expectedUndoEntry.cardZoneBefore || undefined,
+        zoneAfterAction: expectedUndoEntry.cardZoneAfter || undefined
+      } : null
     }, perfActionId);
 
     const optimisticUndoPatch = buildOptimisticUndoPatch(undoBaseGame, expectedUndoEntry);
@@ -4861,7 +4928,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         id: optimisticUndoActionId,
         actionType: 'UNDO_LAST_ACTION',
         payload: compactPerfPayload(undoPayload),
-        cardId: null,
+        cardId: undoCardId,
         marker,
         handlerStartWallNow: getActionPerfWallNow(),
         startedAt: getActionPerfNow()
@@ -4874,6 +4941,16 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       recordPerfUndo({
         optimisticApplied: true,
         restoredFields,
+        cardDebug: undoCardId ? {
+          ...(buildPerfUndoCardDebug({
+            cardId: undoCardId,
+            currentGame: undoBaseGame,
+            previousState: expectedUndoEntry.previousState || {},
+            restoredCards: optimisticUndoPatch.cards || expectedUndoEntry.previousState?.cards
+          }) || {}),
+          zoneBeforeAction: expectedUndoEntry.cardZoneBefore || undefined,
+          zoneAfterAction: expectedUndoEntry.cardZoneAfter || undefined
+        } : null,
         clickToUndoVisibleMs: (() => {
           const action = (getPerfActionsState().actions || []).find((candidate) => candidate.id === perfActionId);
           return action?.clickPerfNow ? roundPerfMs(getActionPerfNow() - action.clickPerfNow) : null;
@@ -6202,6 +6279,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
     } else if (actionType === 'PLAY_LAND') {
       const playedCard = game.cards.find(c => c.instanceId === payload.cardId);
+      if (!playedCard || playedCard.zone !== ZONES.HAND) return;
       const battlefieldCard = { ...playedCard, zone: ZONES.BATTLEFIELD };
       const spawnPosition = getBattlefieldGridPosition({
         card: battlefieldCard,
@@ -6639,7 +6717,9 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             actorName,
             actionLabel: optimisticActionLabel,
             fields: getUndoFieldsForAction(actionType, { updates }),
-            actionType
+            actionType,
+            cardId: getPerfActionCardId(payload),
+            postActionCards: updates.cards
           }),
           pendingSync: true
         };
@@ -6662,15 +6742,44 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         const currentPlayers = currentGame.players || [];
         if (!currentPlayers.some((player) => player.id === userId)) return;
         const transactionActorName = currentPlayers.find((player) => player.id === userId)?.name || actorName;
+        let transactionUpdates = updates;
+        if (actionType === 'PLAY_LAND') {
+          const currentPlayedCard = (currentGame.cards || []).find((card) => card.instanceId === payload.cardId);
+          if (!currentPlayedCard || currentPlayedCard.zone !== ZONES.HAND) return;
+          const transactionBattlefieldCard = { ...currentPlayedCard, zone: ZONES.BATTLEFIELD };
+          const transactionSpawnPosition = getBattlefieldGridPosition({
+            card: transactionBattlefieldCard,
+            existingBattlefieldCards: currentGame.cards || [],
+            controllerId: userId,
+            containerWidth: getCurrentBattlefieldWidthPx(),
+            isMobile: battlefieldViewport.width <= 900
+          });
+          const transactionCards = (currentGame.cards || []).map((card) => (
+            card.instanceId === payload.cardId
+              ? { ...card, zone: ZONES.BATTLEFIELD, ...getBattlefieldPositionCoordinates(transactionSpawnPosition) }
+              : card
+          ));
+          transactionUpdates = {
+            ...updates,
+            cards: transactionCards,
+            log: arrayUnion(makeActionLog('PLAY_LAND', `${transactionActorName} played ${getSafeCardName(currentPlayedCard, payload.cardName || 'a land')}.`, {
+              category: 'card',
+              cardId: currentPlayedCard.instanceId || payload.cardId,
+              cardName: getSafeCardName(currentPlayedCard, payload.cardName || 'a land')
+            }))
+          };
+        }
         transaction.update(gameRef, normalizeGameUpdatesForFirestore({
-          ...updates,
+          ...transactionUpdates,
           undoStack: appendUndoEntry(currentGame, buildUndoEntry({
             currentGame,
             actorId: userId,
             actorName: transactionActorName,
             actionLabel,
-            fields: getUndoFieldsForAction(actionType, { updates }),
-            actionType
+            fields: getUndoFieldsForAction(actionType, { updates: transactionUpdates }),
+            actionType,
+            cardId: getPerfActionCardId(payload),
+            postActionCards: transactionUpdates.cards
           })),
           updatedAt: serverTimestamp()
         }, actionType));

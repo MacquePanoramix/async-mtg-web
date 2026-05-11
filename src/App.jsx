@@ -561,6 +561,7 @@ const IMPORTANT_PERF_ACTIONS = new Set([
   'TOGGLE_FACE',
   'SWITCH_CARD_FACE',
   'TAP_TOGGLE',
+  'PHASE_TOGGLE',
   'ADD_CARD_REMINDER',
   'REMOVE_CARD_REMINDER',
   'ADD_PLAYER_EMBLEM',
@@ -666,6 +667,10 @@ const getPerfActionMarker = ({ actionType, payload = {}, currentGame = null } = 
     const card = (currentGame?.cards || []).find((candidate) => candidate.instanceId === marker.cardId);
     marker.expected = { tapped: !card?.tapped };
   }
+  if (actionType === 'PHASE_TOGGLE') {
+    const card = (currentGame?.cards || []).find((candidate) => candidate.instanceId === marker.cardId);
+    marker.expected = { phasedOut: !card?.phasedOut };
+  }
   if (actionType === 'SWITCH_CARD_FACE') marker.expected = { activeFaceIndex: payload?.faceIndex ?? null };
   if (actionType === 'ADD_CARD_REMINDER') marker.expected = { reminderText: sanitizeReminderText(payload?.text || '') };
   if (actionType === 'REMOVE_CARD_REMINDER') marker.expected = { reminderId: payload?.reminderId || null };
@@ -707,6 +712,9 @@ const doesPerfSnapshotReflectAction = (action = {}, data = {}, lastLog = null) =
   }
   if (action.actionType === 'TAP_TOGGLE') {
     return logMatches && getPerfCard(data, action.cardId)?.tapped === expected.tapped;
+  }
+  if (action.actionType === 'PHASE_TOGGLE') {
+    return logMatches && Boolean(getPerfCard(data, action.cardId)?.phasedOut) === expected.phasedOut;
   }
   if (action.actionType === 'SWITCH_CARD_FACE') {
     return logMatches && (expected.activeFaceIndex == null || getPerfCard(data, action.cardId)?.activeFaceIndex === expected.activeFaceIndex);
@@ -1089,7 +1097,8 @@ const GAMEPLAY_CARD_FIELDS = [
   'positionBasisHeightPx',
   'tempDamage',
   'controllerName',
-  'activeFaceIndex'
+  'activeFaceIndex',
+  'phasedOut'
 ];
 
 const copyDefinedFields = (source, fieldNames) => {
@@ -1362,6 +1371,7 @@ const UNDO_FIELDS_BY_ACTION_TYPE = {
   MOVE_ZONE: ({ updates } = {}) => appendUndoFieldIfUpdated(CARDS_ONLY_UNDO_STATE_FIELDS, updates, 'combat'),
   MOVE_TO_LIBRARY: ({ updates } = {}) => appendUndoFieldIfUpdated(CARDS_ONLY_UNDO_STATE_FIELDS, updates, 'combat'),
   TAP_TOGGLE: CARDS_ONLY_UNDO_STATE_FIELDS,
+  PHASE_TOGGLE: CARDS_ONLY_UNDO_STATE_FIELDS,
   SWITCH_CARD_FACE: CARDS_ONLY_UNDO_STATE_FIELDS,
   ADD_CARD_REMINDER: CARDS_ONLY_UNDO_STATE_FIELDS,
   REMOVE_CARD_REMINDER: CARDS_ONLY_UNDO_STATE_FIELDS,
@@ -1404,6 +1414,7 @@ const UNDOABLE_ACTION_TYPES = new Set([
   'MOVE_ZONE',
   'MOVE_TO_LIBRARY',
   'TAP_TOGGLE',
+  'PHASE_TOGGLE',
   'REVEAL_CARD',
   'REVEAL_ALL_HAND',
   'CLEAR_REVEALS',
@@ -3356,6 +3367,7 @@ const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isD
   const counters = card.counters || {};
   const tempDamage = Math.max(0, markedDamage ?? card.tempDamage ?? 0);
   const reminders = getEntityReminders(card);
+  const isPhasedOut = Boolean(card.phasedOut);
   const displayCardName = getCardDisplayName(card);
   const displayImageUri = getCardImageUri(card);
   const displayManaCost = getCardManaCost(card);
@@ -3405,6 +3417,8 @@ const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isD
     borderStyle = 'border-red-500 ring-2 ring-red-500 shadow-[0_0_10px_rgba(220,38,38,0.5)]';
   } else if (isTarget) {
     borderStyle = 'border-blue-500 ring-2 ring-blue-500 shadow-[0_0_10px_rgba(37,99,235,0.5)]';
+  } else if (isPhasedOut) {
+    borderStyle = 'border-cyan-200/90 ring-2 ring-cyan-300/60 shadow-[0_0_14px_rgba(103,232,249,0.45)]';
   }
 
   return (
@@ -3420,7 +3434,7 @@ const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isD
       onMouseDown={isDraggable ? onMouseDown : undefined}
       onTouchStart={isDraggable ? onMouseDown : undefined}
     >
-      <div className={`w-full h-full rounded-lg overflow-hidden border-2 shadow-md relative bg-slate-800 pointer-events-none ${borderStyle} ${zone === ZONES.BATTLEFIELD ? 'shadow-lg' : ''}`}>
+      <div className={`w-full h-full rounded-lg overflow-hidden border-2 shadow-md relative bg-slate-800 pointer-events-none ${borderStyle} ${zone === ZONES.BATTLEFIELD ? 'shadow-lg' : ''} ${isPhasedOut ? 'grayscale saturate-50' : ''}`}>
         
 
         {isFaceDown ? (
@@ -3440,6 +3454,16 @@ const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isD
             <span className="text-slate-400 text-[9px] mt-1">{displayManaCost}</span>
             {displayPower && <span className="absolute bottom-1 right-1 bg-black/50 px-1 rounded text-[9px]">{displayPower}/{displayToughness}</span>}
           </div>
+        )}
+
+
+        {zone === ZONES.BATTLEFIELD && isPhasedOut && (
+          <>
+            <div className="absolute inset-0 z-20 pointer-events-none bg-slate-950/35" />
+            <div className="absolute left-1/2 top-1/2 z-40 pointer-events-none -translate-x-1/2 -translate-y-1/2 rounded-md border border-cyan-100/90 bg-cyan-950/90 px-1.5 py-0.5 text-[9px] font-black uppercase leading-none tracking-wide text-cyan-50 shadow-[0_1px_8px_rgba(0,0,0,0.75)] whitespace-nowrap">
+              Phased out
+            </div>
+          </>
         )}
 
         {card.isCommander && !card.faceDown && (
@@ -6075,6 +6099,15 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       optimisticPatch = { cards: newCards };
       updates.log = arrayUnion(makeActionLog('TAP_TOGGLE', `${actorName} ${nextTapped ? 'tapped' : 'untapped'} ${getSafeCardName(card)}.`, { category: 'tap', cardId: card?.instanceId, cardName: getSafeCardName(card), tapped: nextTapped }));
 
+    } else if (actionType === 'PHASE_TOGGLE') {
+      const card = game.cards.find(c => c.instanceId === payload.cardId);
+      if (!card || card.zone !== ZONES.BATTLEFIELD) return;
+      const nextPhasedOut = !card.phasedOut;
+      const newCards = game.cards.map(c => c.instanceId === payload.cardId ? { ...c, phasedOut: nextPhasedOut } : c);
+      updates.cards = newCards;
+      optimisticPatch = { cards: newCards };
+      updates.log = arrayUnion(makeActionLog('PHASE_TOGGLE', `${actorName} phased ${nextPhasedOut ? 'out' : 'in'} ${getSafeCardName(card)}.`, { category: 'phase', cardId: card.instanceId, cardName: getSafeCardName(card), phasedOut: nextPhasedOut }));
+
     } else if (actionType === 'TEMP_DAMAGE') {
       const card = game.cards.find(c => c.instanceId === payload.cardId);
       if (!card) return;
@@ -6349,7 +6382,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
     if (optimisticPatch) {
       applyOptimisticGamePatch({ actionType, payload, patch: optimisticPatch, perfActionId });
-    } else if (['DRAW_CARD', 'BATCH_DRAW_LIBRARY', 'BATCH_MILL_LIBRARY', 'BATCH_EXILE_LIBRARY', 'BATCH_SCRY_LIBRARY', 'BATCH_SURVEIL_LIBRARY', 'PLAY_LAND', 'CAST_SPELL', 'MOVE_ZONE', 'SWITCH_CARD_FACE', 'TAP_TOGGLE', 'ADD_CARD_REMINDER', 'REMOVE_CARD_REMINDER'].includes(actionType)) {
+    } else if (['DRAW_CARD', 'BATCH_DRAW_LIBRARY', 'BATCH_MILL_LIBRARY', 'BATCH_EXILE_LIBRARY', 'BATCH_SCRY_LIBRARY', 'BATCH_SURVEIL_LIBRARY', 'PLAY_LAND', 'CAST_SPELL', 'MOVE_ZONE', 'SWITCH_CARD_FACE', 'TAP_TOGGLE', 'PHASE_TOGGLE', 'ADD_CARD_REMINDER', 'REMOVE_CARD_REMINDER'].includes(actionType)) {
       recordPerfOptimisticSkipped('No conservative local patch was produced.', perfActionId);
     }
 
@@ -9718,6 +9751,11 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               {canAct && selectedCard.controllerId === viewAsPlayerId && (
                 <section className="space-y-2 rounded-lg border border-slate-700/80 bg-slate-900/30 p-3">
                   <h3 className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Status</h3>
+                  {selectedCard.zone === ZONES.BATTLEFIELD && Boolean((cardsMap.get(selectedCard.instanceId) || selectedCard).phasedOut) && (
+                    <div className="inline-flex w-fit items-center rounded-full border border-cyan-300/50 bg-cyan-950/70 px-2 py-1 text-xs font-black uppercase tracking-wide text-cyan-100">
+                      Phased out
+                    </div>
+                  )}
                   <div className="grid grid-cols-2 gap-2">
                     <button onClick={() => { handleAction('REVEAL_CARD', { cardId: selectedCard.instanceId }); setSelectedCard(null); }} className="min-h-10 bg-slate-700 text-slate-300 p-2 rounded-lg text-sm flex items-center justify-center gap-2"><Eye size={14}/> Reveal</button>
                     {selectedCard.zone === ZONES.HAND && (
@@ -9726,6 +9764,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                     {selectedCard.zone === ZONES.BATTLEFIELD && (
                       <>
                         <button onClick={() => { handleAction('TAP_TOGGLE', { cardId: selectedCard.instanceId }); setSelectedCard(null); }} className="min-h-10 bg-slate-700 text-white p-2 rounded-lg text-sm font-medium">{selectedCard.tapped ? 'Untap' : 'Tap'}</button>
+                        <button onClick={() => { handleAction('PHASE_TOGGLE', { cardId: selectedCard.instanceId }); setSelectedCard(null); }} className="min-h-10 bg-cyan-900/70 text-cyan-50 p-2 rounded-lg text-sm font-bold border border-cyan-700/70">{(cardsMap.get(selectedCard.instanceId) || selectedCard).phasedOut ? 'Phase in' : 'Phase out'}</button>
                         <button onClick={() => { handleAction('TOGGLE_FACE', { cardId: selectedCard.instanceId }); setSelectedCard(null); }} className="min-h-10 bg-slate-700 text-white p-2 rounded-lg text-sm font-medium">{selectedCard.faceDown ? 'Turn Face Up' : 'Turn Face Down'}</button>
                       </>
                     )}
@@ -10127,7 +10166,10 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           >
             <div className="flex flex-col items-center gap-3">
               <div className="text-sm font-semibold text-slate-100">{getDisplayCardName(zoomedCard)}</div>
-              {zoomedCard.isCommander && <div className="inline-flex items-center gap-1 rounded-full border border-amber-300/60 bg-amber-500/20 px-2 py-1 text-xs font-black uppercase text-amber-100"><Crown size={12}/> Commander</div>}
+              <div className="flex flex-wrap justify-center gap-1.5">
+                {zoomedCard.isCommander && <div className="inline-flex items-center gap-1 rounded-full border border-amber-300/60 bg-amber-500/20 px-2 py-1 text-xs font-black uppercase text-amber-100"><Crown size={12}/> Commander</div>}
+                {Boolean(zoomedCard.phasedOut) && <div className="inline-flex items-center gap-1 rounded-full border border-cyan-300/60 bg-cyan-950/70 px-2 py-1 text-xs font-black uppercase text-cyan-100">Phased out</div>}
+              </div>
               {zoomedCard.isToken ? (
                 <TokenCardPreview token={zoomedCard} size="large" />
               ) : (
@@ -10136,8 +10178,14 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             </div>
             {(() => {
               const zoomAttachmentInfo = getAttachmentInfo(zoomedCard);
-              return (hasAnyCombatInfo(getCardCombatInfo(zoomedCard, game, allBattlefieldDisplayNames)) || getCardMarkedDamage(zoomedCard) > 0 || getTargetInfoRows(getTargetInfoFor(zoomedCard)).length > 0 || zoomAttachmentInfo.attachedToLabel || zoomAttachmentInfo.attachedCards.length > 0) && (
+              return (Boolean(zoomedCard.phasedOut) || hasAnyCombatInfo(getCardCombatInfo(zoomedCard, game, allBattlefieldDisplayNames)) || getCardMarkedDamage(zoomedCard) > 0 || getTargetInfoRows(getTargetInfoFor(zoomedCard)).length > 0 || zoomAttachmentInfo.attachedToLabel || zoomAttachmentInfo.attachedCards.length > 0) && (
               <div className="w-full max-w-xs lg:w-64 bg-slate-900/90 border border-slate-600 rounded-xl p-3 shadow-xl text-sm space-y-3">
+                {Boolean(zoomedCard.phasedOut) && (
+                  <div className="rounded-lg border border-cyan-400/50 bg-cyan-950/40 p-2 text-cyan-50">
+                    <div className="font-bold uppercase tracking-wide text-xs text-cyan-100">Phased out</div>
+                    <div className="mt-1 text-xs text-cyan-100/80">Manual status; card remains on the battlefield.</div>
+                  </div>
+                )}
                 {(zoomAttachmentInfo.attachedToLabel || zoomAttachmentInfo.attachedCards.length > 0) && (
                   <div className="rounded-lg border border-fuchsia-500/40 bg-fuchsia-950/30 p-2">
                     <div className="font-bold text-fuchsia-100 uppercase tracking-wide text-xs mb-2">Attachments</div>

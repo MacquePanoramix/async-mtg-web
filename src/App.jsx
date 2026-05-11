@@ -1174,16 +1174,85 @@ const normalizeGameCardForFirestore = (card = {}) => {
 
 const normalizeGameCardsForFirestore = (cards = []) => Array.isArray(cards) ? cards.map(normalizeGameCardForFirestore) : cards;
 
-const normalizeUndoEntryForFirestore = (entry = {}) => {
-  if (!entry || typeof entry !== 'object') return entry;
-  const previousState = entry.previousState && typeof entry.previousState === 'object'
-    ? { ...entry.previousState }
-    : entry.previousState;
-  if (previousState && Array.isArray(previousState.cards)) previousState.cards = normalizeGameCardsForFirestore(previousState.cards);
-  return previousState === entry.previousState ? entry : { ...entry, previousState };
+const estimateJsonByteSize = (value) => {
+  try {
+    return new TextEncoder().encode(JSON.stringify(value)).length;
+  } catch {
+    try {
+      return JSON.stringify(value).length;
+    } catch {
+      return null;
+    }
+  }
 };
 
-const normalizeUndoStackForFirestore = (undoStack = []) => Array.isArray(undoStack) ? undoStack.map(normalizeUndoEntryForFirestore) : undoStack;
+const FIRESTORE_DOCUMENT_SIZE_LIMIT_BYTES = 1048576;
+const FIRESTORE_DOCUMENT_WARNING_BYTES = 900000;
+const FIRESTORE_UNDO_STACK_BUDGET_BYTES = 256 * 1024;
+const MAX_UNDO_STACK_ENTRIES = 3;
+const MAX_UNDO_STACK_CARD_SNAPSHOT_ENTRIES = 2;
+const MAX_GAME_LOG_ENTRIES = 150;
+const EMERGENCY_REPAIR_LOG_ENTRIES = 100;
+const LOCAL_ONLY_UNDO_ENTRY_FIELDS = new Set([
+  'pendingSync',
+  '__optimisticActionId',
+  '__localOnly',
+  'optimistic',
+  'perf',
+  'debug'
+]);
+
+const normalizeUndoEntryForFirestore = (entry = {}) => {
+  if (!entry || typeof entry !== 'object') return entry;
+  const normalizedEntry = {};
+  Object.entries(entry).forEach(([key, value]) => {
+    if (!LOCAL_ONLY_UNDO_ENTRY_FIELDS.has(key) && !key.startsWith('__')) normalizedEntry[key] = value;
+  });
+  const previousState = normalizedEntry.previousState && typeof normalizedEntry.previousState === 'object'
+    ? { ...normalizedEntry.previousState }
+    : normalizedEntry.previousState;
+  if (previousState && Array.isArray(previousState.cards)) previousState.cards = normalizeGameCardsForFirestore(previousState.cards);
+  normalizedEntry.previousState = previousState;
+  return normalizedEntry;
+};
+
+const undoEntryIncludesCardSnapshot = (entry = {}) => Array.isArray(entry?.previousState?.cards);
+
+const pruneUndoStackForFirestore = (undoStack = [], { maxEntries = MAX_UNDO_STACK_ENTRIES, maxCardSnapshotEntries = MAX_UNDO_STACK_CARD_SNAPSHOT_ENTRIES, budgetBytes = FIRESTORE_UNDO_STACK_BUDGET_BYTES } = {}) => {
+  if (!Array.isArray(undoStack)) return undoStack;
+  let pruned = undoStack.map(normalizeUndoEntryForFirestore).slice(-maxEntries);
+  while (pruned.filter(undoEntryIncludesCardSnapshot).length > maxCardSnapshotEntries) {
+    const firstCardSnapshotIndex = pruned.findIndex(undoEntryIncludesCardSnapshot);
+    if (firstCardSnapshotIndex < 0) break;
+    pruned = [...pruned.slice(0, firstCardSnapshotIndex), ...pruned.slice(firstCardSnapshotIndex + 1)];
+  }
+  let estimatedBytes = estimateJsonByteSize(pruned);
+  while (pruned.length > 1 && estimatedBytes != null && estimatedBytes > budgetBytes) {
+    pruned = pruned.slice(1);
+    estimatedBytes = estimateJsonByteSize(pruned);
+  }
+  return pruned;
+};
+
+const normalizeUndoStackForFirestore = (undoStack = []) => pruneUndoStackForFirestore(undoStack);
+
+const pruneLogForFirestore = (log = [], maxEntries = MAX_GAME_LOG_ENTRIES) => (Array.isArray(log) ? log.slice(-maxEntries) : log);
+
+const getGameDocumentSizeEstimate = (gameData = {}) => {
+  if (!gameData || typeof gameData !== 'object') return null;
+  const undoStack = Array.isArray(gameData.undoStack) ? gameData.undoStack : [];
+  const log = Array.isArray(gameData.log) ? gameData.log : [];
+  return {
+    documentBytes: estimateJsonByteSize(gameData),
+    undoStackBytes: estimateJsonByteSize(undoStack),
+    logBytes: estimateJsonByteSize(log),
+    undoEntryCount: undoStack.length,
+    logEntryCount: log.length,
+    undoEntriesWithCards: undoStack.filter(undoEntryIncludesCardSnapshot).length,
+    firestoreLimitBytes: FIRESTORE_DOCUMENT_SIZE_LIMIT_BYTES,
+    isNearLimit: (estimateJsonByteSize(gameData) || 0) >= FIRESTORE_DOCUMENT_WARNING_BYTES
+  };
+};
 
 const normalizeGameUpdatesForFirestore = (updates = {}, debugContext = 'card write') => {
   if (!updates || typeof updates !== 'object') return updates;
@@ -1192,8 +1261,9 @@ const normalizeGameUpdatesForFirestore = (updates = {}, debugContext = 'card wri
   const startedAt = measurePerf ? getActionPerfNow() : 0;
   const normalized = { ...updates };
   const updatesIncludeCards = Array.isArray(normalized.cards);
+  const updatesIncludeLog = Array.isArray(normalized.log);
   const undoStackIncludesCards = Array.isArray(normalized.undoStack)
-    && normalized.undoStack.some((entry) => Array.isArray(entry?.previousState?.cards));
+    && normalized.undoStack.some(undoEntryIncludesCardSnapshot);
   let cardsNormalizeMs = null;
   let undoStackNormalizeMs = null;
   if (updatesIncludeCards) {
@@ -1203,9 +1273,10 @@ const normalizeGameUpdatesForFirestore = (updates = {}, debugContext = 'card wri
   }
   if (Array.isArray(normalized.undoStack)) {
     const undoStackNormalizeStartedAt = measurePerf ? getActionPerfNow() : 0;
-    normalized.undoStack = normalizeUndoStackForFirestore(normalized.undoStack);
+    normalized.undoStack = pruneUndoStackForFirestore(normalized.undoStack);
     undoStackNormalizeMs = measurePerf ? roundPerfMs(getActionPerfNow() - undoStackNormalizeStartedAt) : null;
   }
+  if (updatesIncludeLog) normalized.log = pruneLogForFirestore(normalized.log);
   if (updatesIncludeCards) logDebugCardWriteSize(debugContext, normalized.cards, normalized);
   if (measurePerf) {
     const elapsedMs = getActionPerfNow() - startedAt;
@@ -1221,24 +1292,16 @@ const normalizeGameUpdatesForFirestore = (updates = {}, debugContext = 'card wri
       cardsNormalizeMs,
       undoStackNormalizeMs,
       undoStackLength: Array.isArray(normalized.undoStack) ? normalized.undoStack.length : null,
+      undoStackBytes: Array.isArray(normalized.undoStack) ? estimateJsonByteSize(normalized.undoStack) : null,
+      logLength: Array.isArray(normalized.log) ? normalized.log.length : null,
+      logBytes: Array.isArray(normalized.log) ? estimateJsonByteSize(normalized.log) : null,
+      approxUpdateBytes: estimateJsonByteSize(normalized),
       elapsedMs: Math.round(elapsedMs * 10) / 10
     };
     logActionPerf(debugContext, details);
     recordPerfNormalization(details);
   }
   return normalized;
-};
-
-const estimateJsonByteSize = (value) => {
-  try {
-    return new TextEncoder().encode(JSON.stringify(value)).length;
-  } catch {
-    try {
-      return JSON.stringify(value).length;
-    } catch {
-      return null;
-    }
-  }
 };
 
 const logDebugCardWriteSize = (context, cards, updates = {}) => {
@@ -1326,7 +1389,6 @@ const getPlayerNameById = (currentGame, playerId, fallback = 'Player') => (
 );
 
 
-const MAX_UNDO_STACK_ENTRIES = 10;
 const UNDO_STATE_FIELDS = [
   'players',
   'cards',
@@ -1532,10 +1594,10 @@ const buildUndoEntry = ({ currentGame, actorId, actorName, actionLabel, fields, 
   };
 };
 
-const appendUndoEntry = (currentGame, undoEntry) => [
-  ...((currentGame?.undoStack || []).slice(-(MAX_UNDO_STACK_ENTRIES - 1))),
+const appendUndoEntry = (currentGame, undoEntry) => pruneUndoStackForFirestore([
+  ...((currentGame?.undoStack || [])),
   undoEntry
-];
+]);
 
 const getUndoRestoreUpdates = (previousState = {}) => {
   const updates = {};
@@ -3606,7 +3668,7 @@ const PerfDebugIndicator = () => {
   );
 };
 
-const PerformanceDebugPanel = () => {
+const PerformanceDebugPanel = ({ game = null, onRepairGameSize = null, canRepairGameSize = false, repairGameSizeBusy = false } = {}) => {
   const [perfState, setPerfState] = useState(() => getPerfActionsState());
   const [collapsed, setCollapsed] = useState(false);
   const [disabled, setDisabled] = useState(false);
@@ -3630,6 +3692,8 @@ const PerformanceDebugPanel = () => {
   const firstServerReflectingSnapshot = lastAction?.firstServerReflectingSnapshot;
   const listenerEvents = perfState.listenerEvents || [];
   const visibleUpdate = perfState.lastVisibleUpdate || lastAction?.visibleUpdate || null;
+  const sizeEstimate = game ? getGameDocumentSizeEstimate(game) : null;
+  const formatBytes = (bytes) => (Number.isFinite(bytes) ? `${Math.round(bytes / 1024)} KB` : '—');
 
   return (
     <div className="fixed bottom-2 left-2 right-2 z-[90] mx-auto max-w-md rounded-xl border border-cyan-400/50 bg-slate-950/95 text-xs text-slate-100 shadow-2xl backdrop-blur sm:left-auto sm:right-3 sm:w-96">
@@ -3650,6 +3714,30 @@ const PerformanceDebugPanel = () => {
           >
             Disable perf debug
           </button>
+          {sizeEstimate && (
+            <div className={`rounded-lg border p-2 text-[11px] ${sizeEstimate.isNearLimit ? 'border-amber-400/60 bg-amber-950/40 text-amber-100' : 'border-slate-700 bg-slate-900 text-slate-200'}`}>
+              <div className="mb-1 flex items-center justify-between gap-2">
+                <span className="font-black uppercase">Firestore document size</span>
+                <span className="font-mono font-bold">{formatBytes(sizeEstimate.documentBytes)}</span>
+              </div>
+              {sizeEstimate.isNearLimit && <div className="mb-1 font-bold text-amber-200">Game document is near Firestore size limit.</div>}
+              <div className="grid grid-cols-2 gap-1">
+                <div><span className="text-slate-400">Undo:</span> <b>{formatBytes(sizeEstimate.undoStackBytes)}</b> · {sizeEstimate.undoEntryCount} entries</div>
+                <div><span className="text-slate-400">Log:</span> <b>{formatBytes(sizeEstimate.logBytes)}</b> · {sizeEstimate.logEntryCount} entries</div>
+                <div className="col-span-2"><span className="text-slate-400">Undo entries with previousState.cards:</span> <b className={sizeEstimate.undoEntriesWithCards ? 'text-amber-300' : 'text-emerald-300'}>{sizeEstimate.undoEntriesWithCards}</b></div>
+              </div>
+              {canRepairGameSize && (
+                <button
+                  type="button"
+                  onClick={onRepairGameSize}
+                  disabled={repairGameSizeBusy}
+                  className="mt-2 w-full rounded border border-amber-400/50 bg-amber-900/50 px-2 py-1 font-black text-amber-50 transition hover:bg-amber-800/70 disabled:cursor-wait disabled:opacity-60"
+                >
+                  {repairGameSizeBusy ? 'Repairing…' : 'Repair game size'}
+                </button>
+              )}
+            </div>
+          )}
           {!lastAction ? (
             <div className="rounded-lg border border-slate-700 bg-slate-900 p-2 text-slate-300">Waiting for a tracked action. Try Cast Spell, Play Land, Move Zone, stack actions, Draw, or Pass.</div>
           ) : (
@@ -3827,6 +3915,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const [selectedStackItemId, setSelectedStackItemId] = useState(null);
   const [timeControlsOpen, setTimeControlsOpen] = useState(false);
   const [undoConfirmOpen, setUndoConfirmOpen] = useState(false);
+  const [repairGameSizeBusy, setRepairGameSizeBusy] = useState(false);
 
   // Chat State
   const [chatOpen, setChatOpen] = useState(false);
@@ -3837,6 +3926,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   // Use the viewAsId to determine which player is "Active" on this screen
   const userId = realUserId;
   const isPlayer = (game?.players || []).some(p => p.id === userId);
+  const isHost = Boolean(game?.hostId && game.hostId === userId);
   const isSpectator = !isPlayer && (game?.spectatorIds || []).includes(userId);
 
   useEffect(() => {
@@ -3857,8 +3947,55 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const viewAsPlayerId = isSpectator ? viewAsId : userId;
   const viewAsPlayer = (game?.players || []).find(p => p.id === viewAsPlayerId);
   const canAct = !isSpectator;
+  const showGameSizeDebug = isDebugActionsEnabled() || isPerfActionsEnabled();
+  const gameDocumentSizeEstimate = useMemo(() => (showGameSizeDebug && game ? getGameDocumentSizeEstimate(game) : null), [showGameSizeDebug, game]);
   const undoSource = optimisticGame ? 'optimistic' : 'firestore';
   const undoPendingSync = Boolean(optimisticGame && pendingOptimisticActionId);
+
+  const handleRepairGameSize = async () => {
+    if (!gameId || !userId || (!isHost && !isPlayer)) {
+      setNotification('Only the host or a current player can repair game size.');
+      setTimeout(() => setNotification(null), 2500);
+      return;
+    }
+
+    setRepairGameSizeBusy(true);
+    try {
+      const gameRef = doc(db, 'games_v3', gameId);
+      await runTransaction(db, async (transaction) => {
+        const snap = await transaction.get(gameRef);
+        if (!snap.exists()) return;
+        const currentGame = snap.data();
+        const currentPlayers = currentGame.players || [];
+        const currentIsPlayer = currentPlayers.some((player) => player.id === userId);
+        const currentIsHost = Boolean(currentGame.hostId && currentGame.hostId === userId);
+        if (!currentIsPlayer && !currentIsHost) throw new Error('Only the host or a current player can repair game size.');
+
+        const actorName = currentPlayers.find((player) => player.id === userId)?.name || displayName || 'Unknown';
+        const repairLogEntry = buildGameLogEntry({
+          currentGame,
+          playerId: userId,
+          playerName: actorName,
+          type: 'GAME_SIZE_REPAIR',
+          category: 'system',
+          message: `${actorName} compacted old undo/log history to repair game size.`
+        });
+        transaction.update(gameRef, normalizeGameUpdatesForFirestore({
+          undoStack: pruneUndoStackForFirestore(currentGame.undoStack || [], { maxEntries: 1, maxCardSnapshotEntries: 1, budgetBytes: 128 * 1024 }),
+          log: pruneLogForFirestore([...(currentGame.log || []), repairLogEntry], EMERGENCY_REPAIR_LOG_ENTRIES),
+          updatedAt: serverTimestamp()
+        }, 'GAME_SIZE_REPAIR'));
+      });
+      setNotification('Game size repaired. Old undo/log history was compacted.');
+      setTimeout(() => setNotification(null), 3500);
+    } catch (error) {
+      console.error('Game size repair failed', error);
+      setNotification(`Repair failed: ${error?.message || String(error)}`);
+      setTimeout(() => setNotification(null), 4000);
+    } finally {
+      setRepairGameSizeBusy(false);
+    }
+  };
 
   const applyOptimisticGamePatch = useCallback(({ actionType, payload = {}, patch = {}, perfActionId = null }) => {
     if (!game || !actionType || !patch || Object.keys(patch).length === 0) {
@@ -6785,14 +6922,14 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           if (!currentPlayers.some((player) => player.id === userId)) return;
           transaction.update(gameRef, normalizeGameUpdatesForFirestore({
             cards: [...(currentGame.cards || []), ...importedCards],
-            log: arrayUnion(buildGameLogEntry({
+            log: pruneLogForFirestore([...(currentGame.log || []), buildGameLogEntry({
               currentGame,
               playerId: userId,
               playerName: importActorName,
               type: 'IMPORT',
               category: 'setup',
               message: importMessage
-            })),
+            })]),
             undoStack: appendUndoEntry(currentGame, buildUndoEntry({
               currentGame,
               actorId: userId,
@@ -6850,14 +6987,14 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         transaction.update(gameRef, normalizeGameUpdatesForFirestore({
           cards: nextCards,
           reveals: nextReveals,
-          log: arrayUnion(buildGameLogEntry({
+          log: pruneLogForFirestore([...(currentGame.log || []), buildGameLogEntry({
             currentGame,
             playerId: userId,
             playerName: deckDeleteActorName,
             type: 'DECK_DELETE',
             category: 'setup',
             message: deckDeleteMessage
-          })),
+          })]),
           undoStack: appendUndoEntry(currentGame, buildUndoEntry({
             currentGame,
             actorId: userId,
@@ -7682,7 +7819,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       onTouchEnd={handleDragEnd}
     >
       <PerfDebugIndicator />
-      <PerformanceDebugPanel />
+      <PerformanceDebugPanel game={game} onRepairGameSize={handleRepairGameSize} canRepairGameSize={isPlayer || isHost} repairGameSizeBusy={repairGameSizeBusy} />
       {/* 1. Header */}
       <div className="bg-slate-800 border-b border-slate-700 p-2 shrink-0 shadow-md top-action-scroll-wrap">
         <div
@@ -7731,6 +7868,24 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           <span className="text-[9px] text-slate-500 uppercase tracking-widest hidden sm:block">Room Code</span>
           <span className="text-xs font-mono font-bold text-white tracking-widest">{gameId}</span>
         </div>
+
+        {gameDocumentSizeEstimate && (
+          <div className={`flex items-center gap-2 rounded border px-2 py-1 text-[10px] font-bold ${gameDocumentSizeEstimate.isNearLimit ? 'border-amber-400/60 bg-amber-950/60 text-amber-100' : 'border-slate-700 bg-slate-900 text-slate-300'}`}>
+            {gameDocumentSizeEstimate.isNearLimit && <AlertTriangle size={13} className="text-amber-300" />}
+            <span title="Approximate Firestore game document size">Doc {Math.round((gameDocumentSizeEstimate.documentBytes || 0) / 1024)} KB · Undo {gameDocumentSizeEstimate.undoEntryCount}</span>
+            {(isPlayer || isHost) && (
+              <button
+                type="button"
+                onClick={(event) => { event.stopPropagation(); handleRepairGameSize(); }}
+                disabled={repairGameSizeBusy}
+                className="rounded bg-amber-700/70 px-1.5 py-0.5 text-amber-50 hover:bg-amber-600 disabled:cursor-wait disabled:opacity-60"
+                title="Prune old undo/log history without changing board state"
+              >
+                {repairGameSizeBusy ? 'Repairing…' : 'Repair size'}
+              </button>
+            )}
+          </div>
+        )}
 
         {isSpectator && (
           <div className="flex items-center gap-2 bg-slate-900 border border-slate-700 rounded px-3 py-1">
@@ -10739,7 +10894,12 @@ export default function App() {
         if (existingPlayerIndex >= 0) {
           const newPlayers = [...players];
           newPlayers[existingPlayerIndex] = { ...newPlayers[existingPlayerIndex], name: safeName, lastSeenChatAt: Date.now() };
-          transaction.update(gameRef, { players: newPlayers, updatedAt: serverTimestamp(), log: arrayUnion(buildGameLogEntry({ currentGame: gameData, playerId: user.uid, playerName: safeName || 'Unknown', type: 'PLAYER_REJOIN', category: 'setup', message: `${safeName || 'Unknown'} rejoined the game.` })) });
+          transaction.update(gameRef, normalizeGameUpdatesForFirestore({
+            players: newPlayers,
+            undoStack: gameData.undoStack || [],
+            updatedAt: serverTimestamp(),
+            log: pruneLogForFirestore([...(gameData.log || []), buildGameLogEntry({ currentGame: gameData, playerId: user.uid, playerName: safeName || 'Unknown', type: 'PLAYER_REJOIN', category: 'setup', message: `${safeName || 'Unknown'} rejoined the game.` })])
+          }, 'PLAYER_REJOIN'));
         } else if (players.length < 2) {
           const newPlayer = {
             id: user.uid,
@@ -10752,7 +10912,12 @@ export default function App() {
             handRevealed: false,
             lastSeenChatAt: Date.now()
           };
-          transaction.update(gameRef, { players: [...players, newPlayer], updatedAt: serverTimestamp(), log: arrayUnion(buildGameLogEntry({ currentGame: gameData, playerId: user.uid, playerName: safeName || 'Unknown', type: 'PLAYER_JOIN', category: 'setup', message: `${safeName || 'Unknown'} joined the game.` })) });
+          transaction.update(gameRef, normalizeGameUpdatesForFirestore({
+            players: [...players, newPlayer],
+            undoStack: gameData.undoStack || [],
+            updatedAt: serverTimestamp(),
+            log: pruneLogForFirestore([...(gameData.log || []), buildGameLogEntry({ currentGame: gameData, playerId: user.uid, playerName: safeName || 'Unknown', type: 'PLAYER_JOIN', category: 'setup', message: `${safeName || 'Unknown'} joined the game.` })])
+          }, 'PLAYER_JOIN'));
         } else {
           throw new Error('Game is full.');
         }

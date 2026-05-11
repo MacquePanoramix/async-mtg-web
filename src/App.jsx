@@ -3585,6 +3585,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const [commanderDamageSummaryPlayerId, setCommanderDamageSummaryPlayerId] = useState(null);
   const [peekCard, setPeekCard] = useState(null);
   const [privateHandPeek, setPrivateHandPeek] = useState(null); // local-only: { playerId }
+  const [privatePeekInspectCard, setPrivatePeekInspectCard] = useState(null); // local-only card inspection inside private hand peek
   const [diceMenuOpen, setDiceMenuOpen] = useState(false);
   const [customDieSize, setCustomDieSize] = useState('12');
   const [libraryMenuOpen, setLibraryMenuOpen] = useState(false);
@@ -4265,8 +4266,14 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const opponent = game?.players.find(p => p.id !== viewAsPlayerId);
   const privateHandPeekPlayer = privateHandPeek?.playerId ? (game?.players || []).find(p => p.id === privateHandPeek.playerId) : null;
   const isOppTurn = !!opponent && game?.turnPlayerId === opponent.id;
+  const closePrivateHandPeek = () => {
+    setPrivatePeekInspectCard(null);
+    setPrivateHandPeek(null);
+  };
+
   const openPrivateHandPeek = (targetPlayerId = opponent?.id) => {
     if (!canAct || !targetPlayerId) return;
+    setPrivatePeekInspectCard(null);
     setPrivateHandPeek({ playerId: targetPlayerId });
     handleAction('PRIVATE_PEEK_HAND', { targetPlayerId });
   };
@@ -6616,6 +6623,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   useEffect(() => {
     if (!privateHandPeek) return;
     if (!canAct || !game?.players?.some(p => p.id === privateHandPeek.playerId && p.id !== userId)) {
+      setPrivatePeekInspectCard(null);
       setPrivateHandPeek(null);
     }
   }, [privateHandPeek, canAct, game?.players, userId]);
@@ -7916,7 +7924,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
       {/* PRIVATE HAND PEEK MODAL */}
       {privateHandPeek && privateHandPeekPlayer && canAct && (
-        <div className="fixed inset-0 z-[155] bg-black/80 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={() => setPrivateHandPeek(null)}>
+        <div className="fixed inset-0 z-[155] bg-black/80 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={closePrivateHandPeek}>
           <div className="w-full sm:max-w-3xl max-h-[92vh] bg-slate-900 border border-cyan-500/40 shadow-2xl rounded-t-2xl sm:rounded-2xl overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-start justify-between gap-3 border-b border-cyan-500/30 bg-cyan-950/30 p-4">
               <div>
@@ -7924,38 +7932,72 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                 <h2 className="text-xl font-black text-white">Private view of opponent hand</h2>
                 <p className="text-sm text-slate-300">Only you can see {privateHandPeekPlayer.name || 'this player'}'s hand here. This does not publicly reveal it.</p>
               </div>
-              <button onClick={() => setPrivateHandPeek(null)} className="min-h-11 min-w-11 rounded-full bg-slate-950 text-slate-300 hover:text-white hover:bg-slate-800 flex items-center justify-center" aria-label="Close private hand peek">
+              <button onClick={closePrivateHandPeek} className="min-h-11 min-w-11 rounded-full bg-slate-950 text-slate-300 hover:text-white hover:bg-slate-800 flex items-center justify-center" aria-label="Close private hand peek">
                 <X size={20} />
               </button>
             </div>
 
             <div className="overflow-y-auto p-4 space-y-3">
-              <div className="rounded-xl border border-cyan-500/30 bg-cyan-950/20 p-3 text-sm text-cyan-100">
-                Inspecting {privatePeekHandCards.length} card{privatePeekHandCards.length === 1 ? '' : 's'} from {privateHandPeekPlayer.name || 'opponent'}'s hand. Card names are not written to the public log.
-              </div>
-              {privatePeekHandCards.length > 0 ? (
-                <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 gap-3 pb-2">
-                  {privatePeekHandCards.map(card => (
-                    <button
-                      key={card.instanceId}
-                      type="button"
-                      onClick={() => setZoomedCard(card)}
-                      className="rounded-xl border border-slate-700 bg-slate-800/80 p-2 text-left shadow-lg hover:border-cyan-400 hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-cyan-400"
-                    >
-                      <div className="aspect-[63/88] overflow-hidden rounded-lg bg-slate-950">
-                        {getCardImageUri(card) ? (
-                          <img src={getCardImageUri(card)} alt={getCardDisplayName(card)} className="h-full w-full object-cover" />
-                        ) : (
-                          <div className="h-full w-full flex items-center justify-center p-2 text-center text-xs font-bold text-slate-200">{getCardDisplayName(card)}</div>
-                        )}
-                      </div>
-                      <div className="mt-2 truncate text-xs font-bold text-slate-100">{getCardDisplayName(card)}</div>
-                      <div className="text-[10px] text-cyan-200">Tap to inspect</div>
-                    </button>
-                  ))}
+              {privatePeekInspectCard ? (
+                <div className="space-y-4">
+                  <button
+                    type="button"
+                    onClick={() => setPrivatePeekInspectCard(null)}
+                    className="min-h-11 w-full rounded-xl border border-cyan-500/40 bg-cyan-950/40 px-4 py-2 text-sm font-black text-cyan-50 hover:bg-cyan-900/50 sm:w-auto"
+                  >
+                    Back to private hand
+                  </button>
+                  <div className="rounded-xl border border-cyan-500/30 bg-cyan-950/20 p-3 text-sm text-cyan-100">
+                    Private inspection only. This card is not publicly revealed and is not written to the public log.
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-[minmax(0,320px)_1fr]">
+                    <div className="flex justify-center">
+                      {getCardImageUri(privatePeekInspectCard) ? (
+                        <img src={getCardImageUri(privatePeekInspectCard)} alt={getCardDisplayName(privatePeekInspectCard)} className="max-h-[65vh] w-full max-w-sm rounded-xl object-contain shadow-2xl" />
+                      ) : (
+                        <div className="flex aspect-[63/88] w-full max-w-sm items-center justify-center rounded-xl bg-slate-950 p-4 text-center text-lg font-black text-slate-100 shadow-2xl">{getCardDisplayName(privatePeekInspectCard)}</div>
+                      )}
+                    </div>
+                    <div className="rounded-xl border border-slate-700 bg-slate-950/60 p-4 text-slate-100">
+                      <h3 className="text-2xl font-black">{getCardDisplayName(privatePeekInspectCard)}</h3>
+                      {getCardTypeLine(privatePeekInspectCard) && <div className="mt-2 text-sm font-bold text-cyan-100">{getCardTypeLine(privatePeekInspectCard)}</div>}
+                      {getCardOracleText(privatePeekInspectCard) && <div className="mt-4 whitespace-pre-line text-sm leading-relaxed text-slate-200">{getCardOracleText(privatePeekInspectCard)}</div>}
+                      {!getCardTypeLine(privatePeekInspectCard) && !getCardOracleText(privatePeekInspectCard) && (
+                        <div className="mt-4 text-sm text-slate-400">No additional card text is available.</div>
+                      )}
+                    </div>
+                  </div>
                 </div>
               ) : (
-                <div className="rounded-xl border border-dashed border-slate-700 p-8 text-center text-slate-400">That hand is currently empty.</div>
+                <>
+                  <div className="rounded-xl border border-cyan-500/30 bg-cyan-950/20 p-3 text-sm text-cyan-100">
+                    Inspecting {privatePeekHandCards.length} card{privatePeekHandCards.length === 1 ? '' : 's'} from {privateHandPeekPlayer.name || 'opponent'}'s hand. Card names are not written to the public log.
+                  </div>
+                  {privatePeekHandCards.length > 0 ? (
+                    <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 gap-3 pb-2">
+                      {privatePeekHandCards.map(card => (
+                        <button
+                          key={card.instanceId}
+                          type="button"
+                          onClick={() => setPrivatePeekInspectCard(card)}
+                          className="rounded-xl border border-slate-700 bg-slate-800/80 p-2 text-left shadow-lg hover:border-cyan-400 hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-cyan-400"
+                        >
+                          <div className="aspect-[63/88] overflow-hidden rounded-lg bg-slate-950">
+                            {getCardImageUri(card) ? (
+                              <img src={getCardImageUri(card)} alt={getCardDisplayName(card)} className="h-full w-full object-cover" />
+                            ) : (
+                              <div className="h-full w-full flex items-center justify-center p-2 text-center text-xs font-bold text-slate-200">{getCardDisplayName(card)}</div>
+                            )}
+                          </div>
+                          <div className="mt-2 truncate text-xs font-bold text-slate-100">{getCardDisplayName(card)}</div>
+                          <div className="text-[10px] text-cyan-200">Tap to inspect</div>
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="rounded-xl border border-dashed border-slate-700 p-8 text-center text-slate-400">That hand is currently empty.</div>
+                  )}
+                </>
               )}
             </div>
           </div>

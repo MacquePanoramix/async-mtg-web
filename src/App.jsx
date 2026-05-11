@@ -3606,6 +3606,7 @@ const PerformanceDebugPanel = () => {
   const firstReflectingSnapshot = lastAction?.firstReflectingSnapshot;
   const firstServerReflectingSnapshot = lastAction?.firstServerReflectingSnapshot;
   const listenerEvents = perfState.listenerEvents || [];
+  const visibleUpdate = perfState.lastVisibleUpdate || lastAction?.visibleUpdate || null;
 
   return (
     <div className="fixed bottom-2 left-2 right-2 z-[90] mx-auto max-w-md rounded-xl border border-cyan-400/50 bg-slate-950/95 text-xs text-slate-100 shadow-2xl backdrop-blur sm:left-auto sm:right-3 sm:w-96">
@@ -3658,6 +3659,8 @@ const PerformanceDebugPanel = () => {
                 <div className="rounded bg-slate-900 p-2"><span className="text-slate-400">Optimistic reconciled:</span> <b className={lastAction.optimisticReconciled ? 'text-emerald-300' : 'text-slate-300'}>{lastAction.optimisticReconciled == null ? '—' : (lastAction.optimisticReconciled ? 'yes' : 'no')}</b></div>
                 <div className="rounded bg-slate-900 p-2"><span className="text-slate-400">Optimistic reverted:</span> <b className={lastAction.optimisticReverted ? 'text-rose-300' : 'text-slate-300'}>{lastAction.optimisticReverted ? 'yes' : 'no'}</b></div>
                 <div className="rounded bg-slate-900 p-2"><span className="text-slate-400">Optimistic status:</span> <b>{lastAction.optimistic?.revertReason || lastAction.optimistic?.skippedReason || (lastAction.optimistic?.confirmed ? 'confirmed' : '—')}</b></div>
+                <div className="rounded bg-slate-900 p-2"><span className="text-slate-400">Undo source:</span> <b>{visibleUpdate?.undoSource || '—'}</b></div>
+                <div className="rounded bg-slate-900 p-2"><span className="text-slate-400">Undo pending sync:</span> <b className={visibleUpdate?.undoPendingSync ? 'text-amber-300' : 'text-emerald-300'}>{visibleUpdate?.undoPendingSync ? 'yes' : 'no'}</b></div>
               </div>
               <div className="rounded-lg border border-slate-700 bg-slate-900 p-2 text-[11px]">
                 <div className="mb-1 font-black uppercase text-slate-300">Snapshot metadata</div>
@@ -3828,6 +3831,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const viewAsPlayerId = isSpectator ? viewAsId : userId;
   const viewAsPlayer = (game?.players || []).find(p => p.id === viewAsPlayerId);
   const canAct = !isSpectator;
+  const undoSource = optimisticGame ? 'optimistic' : 'firestore';
+  const undoPendingSync = Boolean(optimisticGame && pendingOptimisticActionId);
 
   const applyOptimisticGamePatch = useCallback(({ actionType, payload = {}, patch = {}, perfActionId = null }) => {
     if (!game || !actionType || !patch || Object.keys(patch).length === 0) {
@@ -4103,13 +4108,15 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       handCount: (game.cards || []).filter((card) => card.zone === ZONES.HAND).length,
       battlefieldCount: (game.cards || []).filter((card) => card.zone === ZONES.BATTLEFIELD).length,
       selectedCardZone: selectedCard?.zone || null,
-      optimisticPending: Boolean(pendingOptimisticActionId && pendingOptimisticStartedAt)
+      optimisticPending: Boolean(pendingOptimisticActionId && pendingOptimisticStartedAt),
+      undoSource,
+      undoPendingSync
     };
     const signature = JSON.stringify(visibleDetails);
     if (perfActionsStore.lastVisibleSignature === signature) return;
     perfActionsStore.lastVisibleSignature = signature;
     recordPerfVisibleUpdate(visibleDetails);
-  }, [game, selectedCard?.zone, pendingOptimisticActionId, pendingOptimisticStartedAt]);
+  }, [game, selectedCard?.zone, pendingOptimisticActionId, pendingOptimisticStartedAt, undoSource, undoPendingSync]);
 
 
   // Chat Helpers
@@ -4602,7 +4609,9 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   };
 
   const getLatestUndoEntry = () => (game?.undoStack || [])[(game?.undoStack || []).length - 1] || null;
-  const canUndoLatestAction = canAct && Boolean(getLatestUndoEntry());
+  const latestDisplayedUndoEntry = getLatestUndoEntry();
+  const canOpenUndoModal = canAct && Boolean(latestDisplayedUndoEntry) && (!undoPendingSync || latestDisplayedUndoEntry.pendingSync);
+  const canUndoLatestAction = canOpenUndoModal && !undoPendingSync;
 
   const closeTransientGameModals = () => {
     setSelectedCard(null);
@@ -4633,6 +4642,12 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     if (isSpectator || !isPlayer) {
       setNotification("Spectators can't undo game actions.");
       setTimeout(() => setNotification(null), 2000);
+      return;
+    }
+
+    if (undoPendingSync) {
+      setNotification('Undo will be available after this action syncs.');
+      setTimeout(() => setNotification(null), 2500);
       return;
     }
 
@@ -6381,6 +6396,24 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     }
 
     if (optimisticPatch) {
+      if (UNDOABLE_ACTION_TYPES.has(actionType) && actionUpdatesRestorableState(updates)) {
+        const optimisticActionLabel = normalizeUndoActionLabel(actionMessages[0] || payload.desc || actionType, actorName);
+        const optimisticUndoEntry = {
+          ...buildUndoEntry({
+            currentGame: game,
+            actorId: userId,
+            actorName,
+            actionLabel: optimisticActionLabel,
+            fields: getUndoFieldsForAction(actionType, { updates }),
+            actionType
+          }),
+          pendingSync: true
+        };
+        optimisticPatch = {
+          ...optimisticPatch,
+          undoStack: appendUndoEntry(game, optimisticUndoEntry)
+        };
+      }
       applyOptimisticGamePatch({ actionType, payload, patch: optimisticPatch, perfActionId });
     } else if (['DRAW_CARD', 'BATCH_DRAW_LIBRARY', 'BATCH_MILL_LIBRARY', 'BATCH_EXILE_LIBRARY', 'BATCH_SCRY_LIBRARY', 'BATCH_SURVEIL_LIBRARY', 'PLAY_LAND', 'CAST_SPELL', 'MOVE_ZONE', 'SWITCH_CARD_FACE', 'TAP_TOGGLE', 'PHASE_TOGGLE', 'ADD_CARD_REMINDER', 'REMOVE_CARD_REMINDER'].includes(actionType)) {
       recordPerfOptimisticSkipped('No conservative local patch was produced.', perfActionId);
@@ -7318,8 +7351,10 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const myCommandCount = getZoneCount(viewAsPlayerId, ZONES.COMMAND);
   const myLibraryCount = isPlayer ? getZoneCount(userId, ZONES.LIBRARY) : 0;
   const canDrawFromLibrary = canAct && myLibraryCount > 0;
-  const latestUndoEntry = getLatestUndoEntry();
-  const undoButtonDisabled = !canUndoLatestAction;
+  const latestUndoEntry = latestDisplayedUndoEntry;
+  const undoButtonDisabled = !canOpenUndoModal;
+  const undoConfirmDisabled = !canUndoLatestAction;
+  const undoPendingLabel = 'Undo available after sync…';
   const handleDrawCard = () => { recordPerfActionClick({ actionType: 'DRAW_CARD', buttonName: 'Draw', currentGame: game }); handleAction('DRAW_CARD'); };
   const addCardReminder = (cardId, reminder) => handleAction('ADD_CARD_REMINDER', { cardId, ...reminder });
   const addPlayerReminder = (playerId, reminder) => handleAction('ADD_PLAYER_REMINDER', { targetPlayerId: playerId, ...reminder });
@@ -8185,10 +8220,10 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               }}
               disabled={undoButtonDisabled}
               className={`min-h-9 rounded-full border px-3 py-1.5 text-xs font-extrabold transition-all flex items-center gap-1.5 ${undoButtonDisabled ? 'border-slate-700 bg-slate-800/50 text-slate-500 cursor-not-allowed opacity-60' : 'border-amber-500/60 bg-amber-900/40 text-amber-100 hover:bg-amber-800/60 active:scale-95'}`}
-              title={latestUndoEntry ? `Undo ${latestUndoEntry.actionLabel || 'last action'}` : 'Nothing to undo'}
+              title={latestUndoEntry ? (undoPendingSync ? undoPendingLabel : `Undo ${latestUndoEntry.actionLabel || 'last action'}`) : 'Nothing to undo'}
               aria-label="Undo last game action"
             >
-              <Undo2 size={14} /> <span className="hidden xs:inline sm:inline">Undo</span>
+              <Undo2 size={14} /> <span className="hidden xs:inline sm:inline">{undoPendingSync ? 'Syncing undo…' : 'Undo'}</span>
             </button>
             </div>
           </div>
@@ -8208,6 +8243,11 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                 <p className="mt-1 text-sm text-slate-300">
                   Last action: {latestUndoEntry?.actorName || 'A player'} {latestUndoEntry?.actionLabel || 'last game action'}.
                 </p>
+                {undoPendingSync && (
+                  <p className="mt-2 rounded-lg border border-amber-500/40 bg-amber-950/40 px-3 py-2 text-xs font-bold text-amber-100">
+                    Undo is available after sync. This prevents undoing the wrong server entry while the action is still pending.
+                  </p>
+                )}
               </div>
               <div className="flex justify-end gap-2 p-4">
                 <button
@@ -8220,10 +8260,10 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                 <button
                   type="button"
                   onClick={handleUndoLatestAction}
-                  disabled={!canUndoLatestAction}
+                  disabled={undoConfirmDisabled}
                   className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-extrabold text-white hover:bg-amber-500 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  Undo
+                  {undoPendingSync ? 'Waiting for sync…' : 'Undo'}
                 </button>
               </div>
             </div>

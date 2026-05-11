@@ -416,6 +416,282 @@ const isDebugActionsEnabled = () => {
   }
 };
 
+const isPerfActionsEnabled = () => {
+  if (typeof window === 'undefined') return false;
+  try {
+    const params = new URLSearchParams(window.location.search || '');
+    return params.get('perfActions') === '1' || window.localStorage?.getItem('perfActions') === '1';
+  } catch {
+    return false;
+  }
+};
+
+const getActionPerfNow = () => (typeof performance !== 'undefined' && typeof performance.now === 'function' ? performance.now() : Date.now());
+const getActionPerfWallNow = () => Date.now();
+const roundPerfMs = (value) => (Number.isFinite(value) ? Math.round(value * 10) / 10 : null);
+const PERF_ACTION_LIMIT = 8;
+const PERF_SLOW_LIMITS = { clickToHandler: 250, normalization: 200, undo: 200, firestore: 2000, snapshot: 2000, render: 250 };
+const IMPORTANT_PERF_ACTIONS = new Set([
+  'CAST_SPELL',
+  'PLAY_LAND',
+  'MOVE_ZONE',
+  'RESOLVE_STACK_TOP',
+  'COUNTER_STACK_TOP',
+  'COPY_STACK_ITEM',
+  'TOGGLE_FACE',
+  'SWITCH_CARD_FACE',
+  'DRAW_CARD',
+  'PASS',
+  'PASS_PRIORITY'
+]);
+
+const createEmptyPerfState = () => ({
+  enabled: false,
+  actions: [],
+  activeActionId: null,
+  pendingClicks: [],
+  lastSnapshot: null,
+  lastVisibleUpdate: null
+});
+
+const perfActionsStore = {
+  state: createEmptyPerfState(),
+  listeners: new Set(),
+  activeActionId: null,
+  lastWriteDoneActionId: null,
+  lastWriteDonePerfNow: null,
+  lastSnapshotPerfNow: null,
+  lastVisibleSignature: null
+};
+
+const getPerfActionsState = () => perfActionsStore.state;
+
+const emitPerfActionsState = () => {
+  perfActionsStore.listeners.forEach((listener) => listener(perfActionsStore.state));
+};
+
+const updatePerfActionsState = (updater) => {
+  if (!isPerfActionsEnabled()) return;
+  perfActionsStore.state = updater(perfActionsStore.state);
+  emitPerfActionsState();
+};
+
+const subscribePerfActions = (listener) => {
+  perfActionsStore.listeners.add(listener);
+  return () => perfActionsStore.listeners.delete(listener);
+};
+
+const getPerfActionCardId = (payload = {}) => payload?.cardId || payload?.sourceId || payload?.targetId || payload?.stackItemId || null;
+
+const getPerfActionCardName = (payload = {}, currentGame = null) => {
+  if (payload?.cardName) return payload.cardName;
+  const cardId = getPerfActionCardId(payload);
+  if (!cardId) return null;
+  const card = (currentGame?.cards || []).find((candidate) => candidate.instanceId === cardId);
+  if (card) return getCardDisplayName(card, card.name || 'Card');
+  const stackItem = (currentGame?.stack || []).find((item) => item.id === cardId || item.sourceId === cardId);
+  return stackItem?.name || null;
+};
+
+const compactPerfPayload = (payload = {}) => {
+  if (!payload || typeof payload !== 'object') return {};
+  return Object.fromEntries(Object.entries(payload).filter(([key]) => ['cardId', 'sourceId', 'targetId', 'targetZone', 'stackItemId', 'faceIndex'].includes(key)));
+};
+
+const getPerfWarningsForAction = (action = {}) => {
+  const warnings = [];
+  if ((action.clickToHandlerMs || 0) > PERF_SLOW_LIMITS.clickToHandler) warnings.push('Click handler delayed');
+  if ((action.handlerToFirestoreDoneMs || 0) > PERF_SLOW_LIMITS.firestore || (action.firestore?.totalMs || 0) > PERF_SLOW_LIMITS.firestore) warnings.push('Slow Firestore write');
+  if ((action.firestoreDoneToSnapshotMs || 0) > PERF_SLOW_LIMITS.snapshot) warnings.push('Snapshot delayed');
+  if ((action.snapshotToVisibleUpdateMs || 0) > PERF_SLOW_LIMITS.render) warnings.push('UI render delayed');
+  if ((action.normalization || []).some((item) => (item.elapsedMs || 0) > PERF_SLOW_LIMITS.normalization)) warnings.push('Slow normalization');
+  if (action.undo?.includesCards) warnings.push('Undo snapshot includes cards');
+  if ((action.undo?.elapsedMs || 0) > PERF_SLOW_LIMITS.undo) warnings.push('Slow undo build');
+  return warnings;
+};
+
+const patchPerfAction = (actionId, patch) => {
+  if (!isPerfActionsEnabled() || !actionId) return;
+  updatePerfActionsState((state) => ({
+    ...state,
+    actions: state.actions.map((action) => {
+      if (action.id !== actionId) return action;
+      const nextAction = typeof patch === 'function' ? patch(action) : { ...action, ...patch };
+      return { ...nextAction, warnings: getPerfWarningsForAction(nextAction) };
+    })
+  }));
+};
+
+const recordPerfActionClick = ({ actionType, payload = {}, buttonName = null, cardName = null, currentGame = null } = {}) => {
+  if (!isPerfActionsEnabled() || !IMPORTANT_PERF_ACTIONS.has(actionType)) return null;
+  const now = getActionPerfNow();
+  const click = {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    actionType,
+    payload: compactPerfPayload(payload),
+    cardId: getPerfActionCardId(payload),
+    cardName: cardName || getPerfActionCardName(payload, currentGame),
+    buttonName: buttonName || actionType,
+    perfNow: now,
+    wallNow: getActionPerfWallNow()
+  };
+  updatePerfActionsState((state) => ({
+    ...state,
+    enabled: true,
+    pendingClicks: [...state.pendingClicks.slice(-10), click]
+  }));
+  return click;
+};
+
+const startPerfAction = ({ actionType, payload = {}, currentGame = null } = {}) => {
+  if (!isPerfActionsEnabled() || !IMPORTANT_PERF_ACTIONS.has(actionType)) return null;
+  const handlerStartPerfNow = getActionPerfNow();
+  let matchedClick = null;
+  const cardId = getPerfActionCardId(payload);
+  const state = getPerfActionsState();
+  for (let i = state.pendingClicks.length - 1; i >= 0; i -= 1) {
+    const click = state.pendingClicks[i];
+    if (click.actionType === actionType && (!cardId || !click.cardId || click.cardId === cardId) && handlerStartPerfNow - click.perfNow < 10000) {
+      matchedClick = click;
+      break;
+    }
+  }
+  const action = {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    actionType,
+    cardId,
+    cardName: matchedClick?.cardName || getPerfActionCardName(payload, currentGame),
+    payload: compactPerfPayload(payload),
+    clickPerfNow: matchedClick?.perfNow || null,
+    clickWallNow: matchedClick?.wallNow || null,
+    handlerStartPerfNow,
+    handlerStartWallNow: getActionPerfWallNow(),
+    clickToHandlerMs: matchedClick ? roundPerfMs(handlerStartPerfNow - matchedClick.perfNow) : null,
+    gameBefore: {
+      stackLength: currentGame?.stack?.length || 0,
+      cardsLength: currentGame?.cards?.length || 0,
+      handCount: (currentGame?.cards || []).filter((card) => card.zone === ZONES.HAND).length,
+      battlefieldCount: (currentGame?.cards || []).filter((card) => card.zone === ZONES.BATTLEFIELD).length
+    },
+    normalization: [],
+    firestore: {},
+    warnings: []
+  };
+  perfActionsStore.activeActionId = action.id;
+  updatePerfActionsState((current) => ({
+    ...current,
+    enabled: true,
+    activeActionId: action.id,
+    pendingClicks: matchedClick ? current.pendingClicks.filter((click) => click.id !== matchedClick.id) : current.pendingClicks,
+    actions: [action, ...current.actions].slice(0, PERF_ACTION_LIMIT)
+  }));
+  return action.id;
+};
+
+const finishPerfAction = (actionId) => {
+  if (!isPerfActionsEnabled() || !actionId) return;
+  const finishedAt = getActionPerfNow();
+  patchPerfAction(actionId, (action) => ({
+    ...action,
+    handlerDonePerfNow: finishedAt,
+    handleActionTotalMs: roundPerfMs(finishedAt - action.handlerStartPerfNow)
+  }));
+  if (perfActionsStore.activeActionId === actionId) perfActionsStore.activeActionId = null;
+};
+
+const failPerfAction = (actionId, error) => {
+  if (!isPerfActionsEnabled() || !actionId) return;
+  patchPerfAction(actionId, { error: error?.message || String(error) });
+  finishPerfAction(actionId);
+};
+
+const recordPerfCheckpoint = (phase, details = {}, actionId = perfActionsStore.activeActionId) => {
+  if (!isPerfActionsEnabled() || !actionId) return;
+  const at = getActionPerfNow();
+  patchPerfAction(actionId, (action) => ({
+    ...action,
+    checkpoints: [...(action.checkpoints || []), { phase, at, sinceHandlerStartMs: roundPerfMs(at - action.handlerStartPerfNow), ...details }]
+  }));
+};
+
+const recordPerfUndo = (details = {}, actionId = perfActionsStore.activeActionId) => {
+  if (!isPerfActionsEnabled() || !actionId) return;
+  patchPerfAction(actionId, (action) => ({
+    ...action,
+    undo: { ...(action.undo || {}), ...details }
+  }));
+};
+
+const recordPerfNormalization = (details = {}, actionId = perfActionsStore.activeActionId) => {
+  if (!isPerfActionsEnabled() || !actionId) return;
+  patchPerfAction(actionId, (action) => ({
+    ...action,
+    normalization: [...(action.normalization || []), details].slice(-8)
+  }));
+};
+
+const recordPerfFirestore = (details = {}, actionId = perfActionsStore.activeActionId) => {
+  if (!isPerfActionsEnabled() || !actionId) return;
+  patchPerfAction(actionId, (action) => {
+    const nextFirestore = { ...(action.firestore || {}), ...details };
+    const firestoreDonePerfNow = details.firestoreDonePerfNow || action.firestoreDonePerfNow;
+    return {
+      ...action,
+      firestore: nextFirestore,
+      firestoreDonePerfNow,
+      handlerToFirestoreDoneMs: firestoreDonePerfNow ? roundPerfMs(firestoreDonePerfNow - action.handlerStartPerfNow) : action.handlerToFirestoreDoneMs
+    };
+  });
+};
+
+const markPerfFirestoreDone = (actionId = perfActionsStore.activeActionId, details = {}) => {
+  if (!isPerfActionsEnabled() || !actionId) return;
+  const doneAt = getActionPerfNow();
+  perfActionsStore.lastWriteDoneActionId = actionId;
+  perfActionsStore.lastWriteDonePerfNow = doneAt;
+  recordPerfFirestore({ ...details, firestoreDonePerfNow: doneAt }, actionId);
+};
+
+const recordPerfSnapshot = (snapshotDetails = {}) => {
+  if (!isPerfActionsEnabled()) return;
+  const snapshotPerfNow = getActionPerfNow();
+  perfActionsStore.lastSnapshotPerfNow = snapshotPerfNow;
+  const recentWriteActionId = perfActionsStore.lastWriteDonePerfNow && snapshotPerfNow - perfActionsStore.lastWriteDonePerfNow < 30000 ? perfActionsStore.lastWriteDoneActionId : null;
+  const actionId = recentWriteActionId || getPerfActionsState().activeActionId;
+  const snapshotRecord = { ...snapshotDetails, snapshotPerfNow, wallNow: getActionPerfWallNow(), actionId };
+  updatePerfActionsState((state) => ({ ...state, enabled: true, lastSnapshot: snapshotRecord }));
+  if (actionId) {
+    patchPerfAction(actionId, (action) => ({
+      ...action,
+      snapshot: snapshotRecord,
+      firestoreDoneToSnapshotMs: action.firestoreDonePerfNow ? roundPerfMs(snapshotPerfNow - action.firestoreDonePerfNow) : null,
+      snapshotReflectsLastAction: snapshotDetails.reflectsLastAction
+    }));
+  }
+};
+
+const recordPerfVisibleUpdate = (visibleDetails = {}) => {
+  if (!isPerfActionsEnabled()) return;
+  const visiblePerfNow = getActionPerfNow();
+  const recentWriteActionId = perfActionsStore.lastWriteDonePerfNow && visiblePerfNow - perfActionsStore.lastWriteDonePerfNow < 30000 ? perfActionsStore.lastWriteDoneActionId : null;
+  const actionId = visibleDetails.actionId || recentWriteActionId || getPerfActionsState().lastSnapshot?.actionId;
+  const record = { ...visibleDetails, visiblePerfNow, wallNow: getActionPerfWallNow(), actionId };
+  updatePerfActionsState((state) => ({ ...state, enabled: true, lastVisibleUpdate: record }));
+  if (actionId) {
+    patchPerfAction(actionId, (action) => ({
+      ...action,
+      visibleUpdate: record,
+      snapshotToVisibleUpdateMs: action.snapshot?.snapshotPerfNow ? roundPerfMs(visiblePerfNow - action.snapshot.snapshotPerfNow) : null,
+      gameAfter: {
+        stackLength: visibleDetails.stackLength,
+        cardsLength: visibleDetails.cardsLength,
+        handCount: visibleDetails.handCount,
+        battlefieldCount: visibleDetails.battlefieldCount
+      }
+    }));
+  }
+};
+
 const debugActionsLog = (message, details = {}) => {
   if (!isDebugActionsEnabled()) return;
   console.log(`[Debug card actions] ${message}`, details);
@@ -425,8 +701,6 @@ const debugActionsError = (message, details = {}) => {
   if (!isDebugActionsEnabled()) return;
   console.error(`[Debug card actions] ${message}`, details);
 };
-
-const getActionPerfNow = () => (typeof performance !== 'undefined' && typeof performance.now === 'function' ? performance.now() : Date.now());
 
 const logActionPerf = (actionType, details = {}) => {
   if (!isDebugActionsEnabled()) return;
@@ -585,17 +859,28 @@ const normalizeUndoStackForFirestore = (undoStack = []) => Array.isArray(undoSta
 const normalizeGameUpdatesForFirestore = (updates = {}, debugContext = 'card write') => {
   if (!updates || typeof updates !== 'object') return updates;
   const debugEnabled = isDebugActionsEnabled();
-  const startedAt = debugEnabled ? getActionPerfNow() : 0;
+  const measurePerf = debugEnabled || isPerfActionsEnabled();
+  const startedAt = measurePerf ? getActionPerfNow() : 0;
   const normalized = { ...updates };
   const updatesIncludeCards = Array.isArray(normalized.cards);
   const undoStackIncludesCards = Array.isArray(normalized.undoStack)
     && normalized.undoStack.some((entry) => Array.isArray(entry?.previousState?.cards));
-  if (updatesIncludeCards) normalized.cards = normalizeGameCardsForFirestore(normalized.cards);
-  if (Array.isArray(normalized.undoStack)) normalized.undoStack = normalizeUndoStackForFirestore(normalized.undoStack);
+  let cardsNormalizeMs = null;
+  let undoStackNormalizeMs = null;
+  if (updatesIncludeCards) {
+    const cardsNormalizeStartedAt = measurePerf ? getActionPerfNow() : 0;
+    normalized.cards = normalizeGameCardsForFirestore(normalized.cards);
+    cardsNormalizeMs = measurePerf ? roundPerfMs(getActionPerfNow() - cardsNormalizeStartedAt) : null;
+  }
+  if (Array.isArray(normalized.undoStack)) {
+    const undoStackNormalizeStartedAt = measurePerf ? getActionPerfNow() : 0;
+    normalized.undoStack = normalizeUndoStackForFirestore(normalized.undoStack);
+    undoStackNormalizeMs = measurePerf ? roundPerfMs(getActionPerfNow() - undoStackNormalizeStartedAt) : null;
+  }
   if (updatesIncludeCards) logDebugCardWriteSize(debugContext, normalized.cards, normalized);
-  if (debugEnabled) {
+  if (measurePerf) {
     const elapsedMs = getActionPerfNow() - startedAt;
-    logActionPerf(debugContext, {
+    const details = {
       phase: 'normalizeGameUpdatesForFirestore',
       updateFields: Object.keys(updates),
       updatesIncludeCards,
@@ -604,8 +889,13 @@ const normalizeGameUpdatesForFirestore = (updates = {}, debugContext = 'card wri
         ? Object.keys(normalized.undoStack[normalized.undoStack.length - 1]?.previousState || {})
         : [],
       cardCount: updatesIncludeCards ? normalized.cards.length : 0,
+      cardsNormalizeMs,
+      undoStackNormalizeMs,
+      undoStackLength: Array.isArray(normalized.undoStack) ? normalized.undoStack.length : null,
       elapsedMs: Math.round(elapsedMs * 10) / 10
-    });
+    };
+    logActionPerf(debugContext, details);
+    recordPerfNormalization(details);
   }
   return normalized;
 };
@@ -819,16 +1109,22 @@ const normalizeUndoActionLabel = (message, actorName) => {
 
 const buildUndoEntry = ({ currentGame, actorId, actorName, actionLabel, fields, actionType }) => {
   const selectedFields = Array.isArray(fields) && fields.length > 0 ? [...new Set(fields)] : UNDO_STATE_FIELDS;
-  const startedAt = getActionPerfNow();
+  const measureUndo = isDebugActionsEnabled() || isPerfActionsEnabled();
+  const startedAt = measureUndo ? getActionPerfNow() : 0;
   const previousState = buildUndoPreviousState(currentGame, selectedFields);
-  const elapsedMs = getActionPerfNow() - startedAt;
-  logActionPerf(actionType || 'UNDO_ENTRY', {
+  const elapsedMs = measureUndo ? getActionPerfNow() - startedAt : 0;
+  const undoDetails = {
     phase: 'buildUndoEntry',
     includesCards: Object.prototype.hasOwnProperty.call(previousState, 'cards'),
     previousStateFields: Object.keys(previousState),
     cardCount: Array.isArray(previousState.cards) ? previousState.cards.length : 0,
+    undoStackLength: Array.isArray(currentGame?.undoStack) ? currentGame.undoStack.length : 0,
     elapsedMs: Math.round(elapsedMs * 10) / 10
-  });
+  };
+  if (measureUndo) {
+    logActionPerf(actionType || 'UNDO_ENTRY', undoDetails);
+    recordPerfUndo(undoDetails);
+  }
   return {
     id: `${Date.now()}-${generateCardId()}`,
     timestamp: Date.now(),
@@ -2868,6 +3164,93 @@ const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isD
     </div>
   );
 };
+
+const formatPerfMs = (value) => (Number.isFinite(value) ? `${Math.round(value)}ms` : '—');
+const formatPerfTime = (value) => (value ? new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—');
+
+const PerformanceDebugPanel = () => {
+  const [perfState, setPerfState] = useState(() => getPerfActionsState());
+  const [collapsed, setCollapsed] = useState(false);
+
+  useEffect(() => subscribePerfActions((nextState) => setPerfState({ ...nextState })), []);
+
+  if (!isPerfActionsEnabled()) return null;
+
+  const lastAction = perfState.actions[0];
+  const stackBefore = lastAction?.gameBefore?.stackLength;
+  const stackAfter = lastAction?.gameAfter?.stackLength ?? lastAction?.snapshot?.stackLength;
+  const latestNormalization = lastAction?.normalization?.[lastAction.normalization.length - 1];
+  const undoFields = lastAction?.undo?.previousStateFields || latestNormalization?.previousStateFields || [];
+
+  return (
+    <div className="fixed bottom-2 left-2 right-2 z-[90] mx-auto max-w-md rounded-xl border border-cyan-400/50 bg-slate-950/95 text-xs text-slate-100 shadow-2xl backdrop-blur sm:left-auto sm:right-3 sm:w-96">
+      <button
+        type="button"
+        onClick={() => setCollapsed((value) => !value)}
+        className="flex min-h-10 w-full items-center justify-between gap-2 rounded-t-xl bg-cyan-950/80 px-3 py-2 text-left font-black uppercase tracking-wide text-cyan-100"
+      >
+        <span className="flex items-center gap-2"><Bug size={14} /> Performance Debug</span>
+        <span className="text-[10px] text-cyan-200">{collapsed ? 'Show' : 'Hide'}</span>
+      </button>
+      {!collapsed && (
+        <div className="max-h-[45vh] space-y-2 overflow-y-auto p-3">
+          {!lastAction ? (
+            <div className="rounded-lg border border-slate-700 bg-slate-900 p-2 text-slate-300">Waiting for a tracked action. Try Cast Spell, Play Land, Move Zone, stack actions, Draw, or Pass.</div>
+          ) : (
+            <>
+              <div className="rounded-lg border border-slate-700 bg-slate-900 p-2">
+                <div className="font-bold text-white">Last action: {lastAction.actionType}{lastAction.cardName ? ` — ${lastAction.cardName}` : ''}</div>
+                <div className="text-[10px] text-slate-400">Click: {formatPerfTime(lastAction.clickWallNow)} · Handler: {formatPerfTime(lastAction.handlerStartWallNow)}</div>
+              </div>
+              <div className="grid grid-cols-2 gap-1.5">
+                <div className="rounded bg-slate-900 p-2"><div className="text-slate-400">Click → handler</div><div className="font-bold">{formatPerfMs(lastAction.clickToHandlerMs)}</div></div>
+                <div className="rounded bg-slate-900 p-2"><div className="text-slate-400">Handler → Firestore done</div><div className="font-bold">{formatPerfMs(lastAction.handlerToFirestoreDoneMs)}</div></div>
+                <div className="rounded bg-slate-900 p-2"><div className="text-slate-400">Firestore → snapshot</div><div className="font-bold">{formatPerfMs(lastAction.firestoreDoneToSnapshotMs)}</div></div>
+                <div className="rounded bg-slate-900 p-2"><div className="text-slate-400">Snapshot → visible</div><div className="font-bold">{formatPerfMs(lastAction.snapshotToVisibleUpdateMs)}</div></div>
+              </div>
+              <div className="grid grid-cols-2 gap-1.5 text-[11px]">
+                <div className="rounded bg-slate-900 p-2"><span className="text-slate-400">Total handler:</span> <b>{formatPerfMs(lastAction.handleActionTotalMs)}</b></div>
+                <div className="rounded bg-slate-900 p-2"><span className="text-slate-400">Firestore:</span> <b>{lastAction.firestore?.type || '—'} {formatPerfMs(lastAction.firestore?.totalMs || lastAction.firestore?.updateDocMs)}</b></div>
+                <div className="rounded bg-slate-900 p-2"><span className="text-slate-400">Undo includes cards:</span> <b className={lastAction.undo?.includesCards ? 'text-amber-300' : 'text-emerald-300'}>{lastAction.undo?.includesCards ? 'yes' : 'no'}</b></div>
+                <div className="rounded bg-slate-900 p-2"><span className="text-slate-400">Cards normalized:</span> <b>{latestNormalization?.cardCount ?? 0}</b></div>
+                <div className="col-span-2 rounded bg-slate-900 p-2"><span className="text-slate-400">Undo fields:</span> <span className="break-words font-mono">{undoFields.length ? undoFields.join(', ') : '—'}</span></div>
+                <div className="rounded bg-slate-900 p-2"><span className="text-slate-400">updates.cards:</span> <b>{latestNormalization?.updatesIncludeCards ? 'yes' : 'no'}</b></div>
+                <div className="rounded bg-slate-900 p-2"><span className="text-slate-400">Undo previousState.cards:</span> <b>{latestNormalization?.undoStackIncludesCards ? 'yes' : 'no'}</b></div>
+                <div className="rounded bg-slate-900 p-2"><span className="text-slate-400">Stack before/after:</span> <b>{stackBefore ?? '—'} → {stackAfter ?? '—'}</b></div>
+                <div className="rounded bg-slate-900 p-2"><span className="text-slate-400">Snapshot reflects action:</span> <b>{lastAction.snapshotReflectsLastAction == null ? '—' : (lastAction.snapshotReflectsLastAction ? 'yes' : 'no')}</b></div>
+              </div>
+              {lastAction.warnings?.length > 0 && (
+                <div className="rounded-lg border border-amber-400/40 bg-amber-950/40 p-2 text-amber-100">
+                  <div className="mb-1 font-black uppercase">Warnings</div>
+                  <ul className="list-disc space-y-0.5 pl-4">{lastAction.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>
+                </div>
+              )}
+              <details className="rounded-lg border border-slate-700 bg-slate-900 p-2">
+                <summary className="cursor-pointer font-bold text-slate-200">Recent checkpoints</summary>
+                <div className="mt-2 space-y-1 font-mono text-[10px] text-slate-300">
+                  {(lastAction.checkpoints || []).slice(-8).map((checkpoint, index) => (
+                    <div key={`${checkpoint.phase}-${index}`} className="border-t border-slate-800 pt-1">+{formatPerfMs(checkpoint.sinceHandlerStartMs)} {checkpoint.phase}{checkpoint.readDurationMs ? ` (${checkpoint.readDurationMs}ms read)` : ''}</div>
+                  ))}
+                </div>
+              </details>
+            </>
+          )}
+          {perfState.actions.length > 1 && (
+            <div className="space-y-1">
+              <div className="font-bold uppercase text-slate-400">Previous actions</div>
+              {perfState.actions.slice(1, 4).map((action) => (
+                <div key={action.id} className="rounded bg-slate-900 px-2 py-1 text-[11px] text-slate-300">
+                  {action.actionType}{action.cardName ? ` ${action.cardName}` : ''} · handler {formatPerfMs(action.handleActionTotalMs)} · fs {formatPerfMs(action.handlerToFirestoreDoneMs)}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
 const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const [game, setGame] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -3135,10 +3518,22 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       (doc) => {
         if (doc.exists()) {
           const data = doc.data();
+          const lastLog = data.log && data.log.length > 0 ? data.log[data.log.length - 1] : null;
+          if (isPerfActionsEnabled()) {
+            const lastAction = getPerfActionsState().actions[0];
+            const updatedAtValue = data.updatedAt?.toMillis?.() ?? (data.updatedAt?.seconds ? data.updatedAt.seconds * 1000 : null);
+            recordPerfSnapshot({
+              gameUpdatedAt: updatedAtValue,
+              stackLength: data.stack?.length || 0,
+              cardsLength: data.cards?.length || 0,
+              lastLogType: lastLog?.type || null,
+              lastLogMessage: lastLog?.message || lastLog?.desc || null,
+              reflectsLastAction: Boolean(lastAction && (lastLog?.type === lastAction.actionType || lastLog?.cardId === lastAction.cardId || (lastAction.actionType === 'CAST_SPELL' && (data.stack || []).some((item) => item.sourceId === lastAction.cardId))))
+            });
+          }
           setGame({ ...data, combat: data.combat || getEmptyCombatState() });
 
-          if (data.log && data.log.length > 0) {
-            const lastLog = data.log[data.log.length - 1];
+          if (lastLog) {
             if ((lastLog.type === 'ROLL_DICE' || lastLog.type === 'FLIP_COIN' || lastLog.type === 'DISCARD_RANDOM') && Date.now() - lastLog.timestamp < 5000) {
               setNotification(lastLog.resultLabel || lastLog.desc);
               setTimeout(() => setNotification(null), 3000);
@@ -3151,6 +3546,22 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     );
     return () => unsub();
   }, [gameId]);
+
+
+  useEffect(() => {
+    if (!isPerfActionsEnabled() || !game) return;
+    const visibleDetails = {
+      stackLength: game.stack?.length || 0,
+      cardsLength: game.cards?.length || 0,
+      handCount: (game.cards || []).filter((card) => card.zone === ZONES.HAND).length,
+      battlefieldCount: (game.cards || []).filter((card) => card.zone === ZONES.BATTLEFIELD).length,
+      selectedCardZone: selectedCard?.zone || null
+    };
+    const signature = JSON.stringify(visibleDetails);
+    if (perfActionsStore.lastVisibleSignature === signature) return;
+    perfActionsStore.lastVisibleSignature = signature;
+    recordPerfVisibleUpdate(visibleDetails);
+  }, [game, selectedCard?.zone]);
 
 
   // Chat Helpers
@@ -3255,6 +3666,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         className={className}
         onClick={(event) => {
           debugCardActionClick(buttonName, actionType, payload, event, card);
+          recordPerfActionClick({ actionType, payload, buttonName, cardName: getCardDisplayName(card, card?.name || null), currentGame: game });
           if (disabled) return;
           onClick?.(event);
         }}
@@ -3631,7 +4043,6 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     let undone = false;
     let stale = false;
     const gameRef = doc(db, 'games_v3', gameId);
-
     try {
       await runTransaction(db, async (transaction) => {
         const snap = await transaction.get(gameRef);
@@ -3693,6 +4104,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   };
 
   const handleAction = async (actionType, payload = {}) => {
+    const perfActionId = startPerfAction({ actionType, payload, currentGame: game });
+    recordPerfCheckpoint('handleAction start', { actionType }, perfActionId);
     const debugActions = isDebugActionsEnabled();
     if (debugActions) {
       const payloadCardId = payload?.cardId || payload?.sourceId || payload?.targetId || null;
@@ -3733,6 +4146,52 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     }
     // UPDATED: Path
     const gameRef = doc(db, 'games_v3', gameId);
+    const perfRunTransaction = async (label, callback) => {
+      if (!isPerfActionsEnabled() || !perfActionId) return runTransaction(db, callback);
+      const transactionStartedAt = getActionPerfNow();
+      recordPerfCheckpoint('before runTransaction', { label }, perfActionId);
+      try {
+        const result = await runTransaction(db, async (transaction) => {
+          recordPerfCheckpoint('inside transaction start', { label }, perfActionId);
+          const perfTransaction = Object.create(transaction);
+          perfTransaction.get = async (...args) => {
+            const readStartedAt = getActionPerfNow();
+            const snap = await transaction.get(...args);
+            const readDurationMs = roundPerfMs(getActionPerfNow() - readStartedAt);
+            recordPerfCheckpoint('after transaction.get', { label, readDurationMs }, perfActionId);
+            recordPerfFirestore({ transactionReadMs: readDurationMs }, perfActionId);
+            return snap;
+          };
+          perfTransaction.update = (...args) => {
+            recordPerfCheckpoint('before transaction.update', { label }, perfActionId);
+            return transaction.update(...args);
+          };
+          return callback(perfTransaction);
+        });
+        const totalMs = roundPerfMs(getActionPerfNow() - transactionStartedAt);
+        recordPerfCheckpoint('after runTransaction resolves', { label, totalMs }, perfActionId);
+        markPerfFirestoreDone(perfActionId, { type: 'transaction', label, totalMs });
+        return result;
+      } catch (error) {
+        recordPerfFirestore({ type: 'transaction', label, error: error?.message || String(error) }, perfActionId);
+        throw error;
+      }
+    };
+    const perfUpdateDoc = async (ref, updatePayload, label = 'updateDoc') => {
+      if (!isPerfActionsEnabled() || !perfActionId) return updateDoc(ref, updatePayload);
+      const updateStartedAt = getActionPerfNow();
+      recordPerfCheckpoint('before updateDoc', { label }, perfActionId);
+      try {
+        const result = await updateDoc(ref, updatePayload);
+        const totalMs = roundPerfMs(getActionPerfNow() - updateStartedAt);
+        recordPerfCheckpoint('after updateDoc resolves', { label, totalMs }, perfActionId);
+        markPerfFirestoreDone(perfActionId, { type: 'updateDoc', label, updateDocMs: totalMs, totalMs });
+        return result;
+      } catch (error) {
+        recordPerfFirestore({ type: 'updateDoc', label, error: error?.message || String(error) }, perfActionId);
+        throw error;
+      }
+    };
 
     // FIX: Safety check for name
     const actorName = isSpectator ? (displayName || 'Viewer') : (myPlayer?.name || 'Unknown');
@@ -3786,7 +4245,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
     if (actionType === 'PASS' || actionType === 'PASS_PRIORITY') {
       const turnStartEvents = [];
-      await runTransaction(db, async (transaction) => {
+      await perfRunTransaction('runTransaction', async (transaction) => {
         const snap = await transaction.get(gameRef);
         if (!snap.exists()) return;
         const currentGame = snap.data();
@@ -3840,7 +4299,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     }
 
     if (['MANUAL_SET_STEP', 'START_EXTRA_COMBAT', 'GO_EXTRA_MAIN', 'START_EXTRA_TURN', 'SET_ACTIVE_PLAYER'].includes(actionType)) {
-      await runTransaction(db, async (transaction) => {
+      await perfRunTransaction('runTransaction', async (transaction) => {
         const snap = await transaction.get(gameRef);
         if (!snap.exists()) return;
         const currentGame = snap.data();
@@ -3964,7 +4423,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     if (actionType === 'COPY_STACK_ITEM') {
       let copiedStackItemId = null;
       const transactionStartedAt = getActionPerfNow();
-      await runTransaction(db, async (transaction) => {
+      await perfRunTransaction('runTransaction', async (transaction) => {
         const snap = await transaction.get(gameRef);
         if (!snap.exists()) return;
         const currentGame = snap.data();
@@ -4023,7 +4482,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     if (actionType === 'RESOLVE_STACK_TOP' || actionType === 'COUNTER_STACK_TOP') {
       const transactionStartedAt = getActionPerfNow();
       let transactionUpdatesIncludeCards = false;
-      await runTransaction(db, async (transaction) => {
+      await perfRunTransaction('runTransaction', async (transaction) => {
         const snap = await transaction.get(gameRef);
         if (!snap.exists()) return;
         const currentGame = snap.data();
@@ -4117,7 +4576,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
     if (actionType === 'DISCARD_RANDOM') {
       let emptyHand = false;
-      await runTransaction(db, async (transaction) => {
+      await perfRunTransaction('runTransaction', async (transaction) => {
         const snap = await transaction.get(gameRef);
         if (!snap.exists()) return;
         const currentGame = snap.data();
@@ -5062,7 +5521,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
     if (UNDOABLE_ACTION_TYPES.has(actionType) && actionUpdatesRestorableState(updates)) {
       const actionLabel = normalizeUndoActionLabel(actionMessages[0] || payload.desc || actionType, actorName);
-      await runTransaction(db, async (transaction) => {
+      await perfRunTransaction('runTransaction', async (transaction) => {
         const snap = await transaction.get(gameRef);
         if (!snap.exists()) return;
         const currentGame = snap.data();
@@ -5076,12 +5535,13 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         }, actionType));
       });
     } else {
-      await updateDoc(gameRef, normalizeGameUpdatesForFirestore(updates, actionType));
+      await perfUpdateDoc(gameRef, normalizeGameUpdatesForFirestore(updates, actionType));
     }
     if (pendingRecapEvents.length > 0) {
       await Promise.all(pendingRecapEvents.map((event) => appendEvent(gameId, event)));
     }
     } catch (error) {
+      failPerfAction(perfActionId, error);
       debugActionsError(`handleAction threw: ${actionType}`, {
         actionType,
         payload,
@@ -5091,6 +5551,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         relevantCard: payload?.cardId ? (game?.cards || []).find((card) => card.instanceId === payload.cardId) || null : null
       });
       throw error;
+    } finally {
+      finishPerfAction(perfActionId);
     }
   };
 
@@ -5902,7 +6364,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const canDrawFromLibrary = canAct && myLibraryCount > 0;
   const latestUndoEntry = getLatestUndoEntry();
   const undoButtonDisabled = !canUndoLatestAction;
-  const handleDrawCard = () => handleAction('DRAW_CARD');
+  const handleDrawCard = () => { recordPerfActionClick({ actionType: 'DRAW_CARD', buttonName: 'Draw', currentGame: game }); handleAction('DRAW_CARD'); };
   const addCardReminder = (cardId, reminder) => handleAction('ADD_CARD_REMINDER', { cardId, ...reminder });
   const addPlayerReminder = (playerId, reminder) => handleAction('ADD_PLAYER_REMINDER', { targetPlayerId: playerId, ...reminder });
   const clearCleanupReminders = () => handleAction('CLEAR_CLEANUP_REMINDERS');
@@ -6131,6 +6593,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       onMouseUp={handleDragEnd}
       onTouchEnd={handleDragEnd}
     >
+      <PerformanceDebugPanel />
       {/* 1. Header */}
       <div className="bg-slate-800 border-b border-slate-700 p-2 shrink-0 shadow-md top-action-scroll-wrap">
         <div
@@ -6256,7 +6719,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             <div className="flex items-center gap-2">
               {hasPriority ? (
                 <button
-                  onClick={() => handleAction('PASS_PRIORITY')}
+                  onClick={() => { recordPerfActionClick({ actionType: 'PASS_PRIORITY', buttonName: 'Pass', currentGame: game }); handleAction('PASS_PRIORITY'); }}
                   className="relative z-20 pointer-events-auto bg-green-600 hover:bg-green-500 text-white px-4 py-1.5 rounded-full text-sm font-bold shadow-lg transform active:scale-95 transition-all flex items-center gap-2"
                 >
                   <ArrowRight size={14} /> Pass
@@ -6859,7 +7322,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             className="fixed z-[100] w-40 bg-slate-800 rounded shadow-xl border border-slate-600 overflow-hidden"
             style={{ top: libraryMenuPos.top - 8, left: libraryMenuPos.right, transform: 'translate(-100%, -100%)' }}
           >
-            <button onClick={() => { handleAction('DRAW_CARD'); setLibraryMenuOpen(false); }} disabled={!canDrawFromLibrary} className={`w-full text-left px-3 py-2 text-sm flex items-center gap-2 ${canDrawFromLibrary ? 'hover:bg-slate-700 text-blue-300' : 'text-slate-500 cursor-not-allowed'}`}>
+            <button onClick={() => { recordPerfActionClick({ actionType: 'DRAW_CARD', buttonName: 'Draw', currentGame: game }); handleAction('DRAW_CARD'); setLibraryMenuOpen(false); }} disabled={!canDrawFromLibrary} className={`w-full text-left px-3 py-2 text-sm flex items-center gap-2 ${canDrawFromLibrary ? 'hover:bg-slate-700 text-blue-300' : 'text-slate-500 cursor-not-allowed'}`}>
               <Plus size={12} /> Draw
             </button>
             <button onClick={() => { handleAction('MULLIGAN'); setLibraryMenuOpen(false); }} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-700 flex items-center gap-2 text-amber-300" >
@@ -7214,7 +7677,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                         <>
                           <button
                             type="button"
-                            onClick={() => handleAction('RESOLVE_STACK_TOP', { stackItemId: item.id })}
+                            onClick={() => { recordPerfActionClick({ actionType: 'RESOLVE_STACK_TOP', payload: { stackItemId: item.id }, buttonName: 'Resolve Stack Top', cardName: item.name, currentGame: game }); handleAction('RESOLVE_STACK_TOP', { stackItemId: item.id }); }}
                             className="rounded-lg bg-emerald-600 hover:bg-emerald-500 px-3 py-2 text-sm font-bold text-white shadow"
                           >
                             Resolve top item
@@ -7223,6 +7686,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                             type="button"
                             onClick={() => {
                               if (window.confirm(`Counter/fizzle ${name}?`)) {
+                                recordPerfActionClick({ actionType: 'COUNTER_STACK_TOP', payload: { stackItemId: item.id }, buttonName: 'Counter Stack Top', cardName: item.name, currentGame: game });
                                 handleAction('COUNTER_STACK_TOP', { stackItemId: item.id });
                               }
                             }}
@@ -7234,7 +7698,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                       )}
                       <button
                         type="button"
-                        onClick={() => handleAction('COPY_STACK_ITEM', { stackItemId: item.id || item.sourceId })}
+                        onClick={() => { recordPerfActionClick({ actionType: 'COPY_STACK_ITEM', payload: { stackItemId: item.id || item.sourceId }, buttonName: 'Copy Stack Item', cardName: item.name, currentGame: game }); handleAction('COPY_STACK_ITEM', { stackItemId: item.id || item.sourceId }); }}
                         className="rounded-lg border border-cyan-500/50 bg-cyan-950/60 hover:bg-cyan-900/70 px-3 py-2 text-sm font-bold text-cyan-100 shadow"
                       >
                         Copy stack item

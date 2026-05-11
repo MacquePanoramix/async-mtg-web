@@ -3584,6 +3584,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const [playerStatsOpen, setPlayerStatsOpen] = useState(false);
   const [commanderDamageSummaryPlayerId, setCommanderDamageSummaryPlayerId] = useState(null);
   const [peekCard, setPeekCard] = useState(null);
+  const [privateHandPeek, setPrivateHandPeek] = useState(null); // local-only: { playerId }
   const [diceMenuOpen, setDiceMenuOpen] = useState(false);
   const [customDieSize, setCustomDieSize] = useState('12');
   const [libraryMenuOpen, setLibraryMenuOpen] = useState(false);
@@ -4262,7 +4263,13 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const hasPriority = game?.priorityPlayerId === viewAsPlayerId;
 
   const opponent = game?.players.find(p => p.id !== viewAsPlayerId);
+  const privateHandPeekPlayer = privateHandPeek?.playerId ? (game?.players || []).find(p => p.id === privateHandPeek.playerId) : null;
   const isOppTurn = !!opponent && game?.turnPlayerId === opponent.id;
+  const openPrivateHandPeek = (targetPlayerId = opponent?.id) => {
+    if (!canAct || !targetPlayerId) return;
+    setPrivateHandPeek({ playerId: targetPlayerId });
+    handleAction('PRIVATE_PEEK_HAND', { targetPlayerId });
+  };
   const handRevealed = myPlayer?.handRevealed || false;
 
   const isAttackersStep = game?.phase === 'combat_attackers';
@@ -5960,6 +5967,11 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       updates.reveals = [];
       updates.log = arrayUnion(makeActionLog('CLEAR_REVEALS', `${actorName} cleared revealed cards.`, { category: 'reveal' }));
 
+    } else if (actionType === 'PRIVATE_PEEK_HAND') {
+      const targetPlayer = (game.players || []).find(p => p.id === payload.targetPlayerId && p.id !== userId);
+      if (!targetPlayer) return;
+      updates.log = arrayUnion(makeActionLog('PRIVATE_PEEK_HAND', `${actorName} privately looked at ${targetPlayer.name || 'opponent'}'s hand.`, { category: 'reveal', targetPlayerId: targetPlayer.id }));
+
     } else if (actionType === 'TOGGLE_HAND_REVEAL') {
       const newPlayers = game.players.map(p => p.id === userId ? { ...p, handRevealed: !p.handRevealed } : p);
       updates.players = newPlayers;
@@ -6597,6 +6609,16 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const myBattlefield = gameCards.filter(c => c.controllerId === viewAsPlayerId && c.zone === ZONES.BATTLEFIELD);
   const oppBattlefield = gameCards.filter(c => c.controllerId !== viewAsPlayerId && c.zone === ZONES.BATTLEFIELD);
   const oppHand = gameCards.filter(c => c.controllerId !== viewAsPlayerId && c.zone === ZONES.HAND);
+  const privatePeekHandCards = privateHandPeek?.playerId
+    ? gameCards.filter(c => c.controllerId === privateHandPeek.playerId && c.zone === ZONES.HAND)
+    : [];
+
+  useEffect(() => {
+    if (!privateHandPeek) return;
+    if (!canAct || !game?.players?.some(p => p.id === privateHandPeek.playerId && p.id !== userId)) {
+      setPrivateHandPeek(null);
+    }
+  }, [privateHandPeek, canAct, game?.players, userId]);
 
 
   useLayoutEffect(() => {
@@ -7335,12 +7357,25 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               )}
             </div>
 
+            {opponent && canAct && (
+              <div className="mb-2 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => openPrivateHandPeek(opponent.id)}
+                  className="min-h-9 rounded-lg border border-cyan-500/40 bg-cyan-950/40 px-3 py-1.5 text-xs font-bold text-cyan-100 hover:bg-cyan-900/60 flex items-center gap-1.5"
+                  title="Open a private local view of the opponent's hand"
+                >
+                  <Eye size={14} /> Private hand peek
+                </button>
+              </div>
+            )}
+
             {opponentIsRevealing && (
               <div className="mb-2 p-2 bg-purple-900/20 rounded border border-purple-500/30 flex gap-2 overflow-x-auto">
                 <span className="text-[10px] text-purple-300 uppercase vertical-text">Revealed</span>
                 {oppHand.map(c => (
                   <div key={c.instanceId} className="w-12 h-16 shrink-0 relative">
-                    <img src={getCardImageUri(c)} className="w-full h-full rounded object-cover opacity-80" />
+                    <img src={getCardImageUri(c)} className="w-full h-full rounded object-cover opacity-80" alt={getCardDisplayName(c)} />
                   </div>
                 ))}
               </div>
@@ -7875,6 +7910,54 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         <div className="fixed top-20 left-1/2 transform -translate-x-1/2 z-[100] animate-in fade-in slide-in-from-top-4 pointer-events-none">
           <div className="bg-purple-600 text-white px-6 py-4 rounded-xl shadow-2xl border-2 border-purple-400 flex flex-col items-center">
             <div className="font-bold text-lg text-center">{notification}</div>
+          </div>
+        </div>
+      )}
+
+      {/* PRIVATE HAND PEEK MODAL */}
+      {privateHandPeek && privateHandPeekPlayer && canAct && (
+        <div className="fixed inset-0 z-[155] bg-black/80 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={() => setPrivateHandPeek(null)}>
+          <div className="w-full sm:max-w-3xl max-h-[92vh] bg-slate-900 border border-cyan-500/40 shadow-2xl rounded-t-2xl sm:rounded-2xl overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between gap-3 border-b border-cyan-500/30 bg-cyan-950/30 p-4">
+              <div>
+                <div className="text-[10px] uppercase tracking-[0.2em] text-cyan-200 font-black flex items-center gap-1.5"><Lock size={12} /> Private view</div>
+                <h2 className="text-xl font-black text-white">Private view of opponent hand</h2>
+                <p className="text-sm text-slate-300">Only you can see {privateHandPeekPlayer.name || 'this player'}'s hand here. This does not publicly reveal it.</p>
+              </div>
+              <button onClick={() => setPrivateHandPeek(null)} className="min-h-11 min-w-11 rounded-full bg-slate-950 text-slate-300 hover:text-white hover:bg-slate-800 flex items-center justify-center" aria-label="Close private hand peek">
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="overflow-y-auto p-4 space-y-3">
+              <div className="rounded-xl border border-cyan-500/30 bg-cyan-950/20 p-3 text-sm text-cyan-100">
+                Inspecting {privatePeekHandCards.length} card{privatePeekHandCards.length === 1 ? '' : 's'} from {privateHandPeekPlayer.name || 'opponent'}'s hand. Card names are not written to the public log.
+              </div>
+              {privatePeekHandCards.length > 0 ? (
+                <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 gap-3 pb-2">
+                  {privatePeekHandCards.map(card => (
+                    <button
+                      key={card.instanceId}
+                      type="button"
+                      onClick={() => setZoomedCard(card)}
+                      className="rounded-xl border border-slate-700 bg-slate-800/80 p-2 text-left shadow-lg hover:border-cyan-400 hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-cyan-400"
+                    >
+                      <div className="aspect-[63/88] overflow-hidden rounded-lg bg-slate-950">
+                        {getCardImageUri(card) ? (
+                          <img src={getCardImageUri(card)} alt={getCardDisplayName(card)} className="h-full w-full object-cover" />
+                        ) : (
+                          <div className="h-full w-full flex items-center justify-center p-2 text-center text-xs font-bold text-slate-200">{getCardDisplayName(card)}</div>
+                        )}
+                      </div>
+                      <div className="mt-2 truncate text-xs font-bold text-slate-100">{getCardDisplayName(card)}</div>
+                      <div className="text-[10px] text-cyan-200">Tap to inspect</div>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="rounded-xl border border-dashed border-slate-700 p-8 text-center text-slate-400">That hand is currently empty.</div>
+              )}
+            </div>
           </div>
         </div>
       )}

@@ -72,10 +72,51 @@ const PLAYER_STATUS_BADGE_STYLES = {
 const DAY_NIGHT_LABELS = { day: 'Day', night: 'Night' };
 const MAX_CUSTOM_PLAYER_STATUS_LENGTH = 48;
 const MAX_CUSTOM_PLAYER_STATUSES = 8;
+const MAX_PLAYER_EMBLEM_NAME_LENGTH = 64;
+const MAX_PLAYER_EMBLEM_SOURCE_LENGTH = 80;
+const MAX_PLAYER_EMBLEM_TEXT_LENGTH = 600;
+const MAX_PLAYER_EMBLEMS = 20;
+const PLAYER_EMBLEM_PRESETS = [
+  { label: 'Chandra', name: 'Chandra Emblem', sourceName: 'Chandra, Torch of Defiance', text: 'Whenever you cast a spell, this emblem deals 5 damage to any target.' },
+  { label: 'Teferi', name: 'Teferi Emblem', sourceName: 'Teferi, Temporal Archmage', text: 'You may activate loyalty abilities of planeswalkers you control on any player’s turn any time you could cast an instant.' },
+  { label: 'Narset', name: 'Narset Emblem', sourceName: 'Narset Transcendent', text: 'Your opponents can’t cast noncreature spells.' }
+];
 
 const clampRingTemptationLevel = (value) => clamp(Number.parseInt(value, 10) || 0, 0, 4);
 
 const sanitizeCustomPlayerStatusText = (text) => String(text || '').replace(/\s+/g, ' ').trim().slice(0, MAX_CUSTOM_PLAYER_STATUS_LENGTH);
+const sanitizeEmblemName = (name) => String(name || '').replace(/\s+/g, ' ').trim().slice(0, MAX_PLAYER_EMBLEM_NAME_LENGTH);
+const sanitizeEmblemSourceName = (sourceName) => String(sourceName || '').replace(/\s+/g, ' ').trim().slice(0, MAX_PLAYER_EMBLEM_SOURCE_LENGTH);
+const sanitizeEmblemText = (text) => String(text || '').replace(/\s+/g, ' ').trim().slice(0, MAX_PLAYER_EMBLEM_TEXT_LENGTH);
+
+const getPlayerEmblems = (player = {}) => (Array.isArray(player?.emblems) ? player.emblems : [])
+  .filter((emblem) => emblem && typeof emblem === 'object')
+  .map((emblem) => ({
+    id: String(emblem.id || ''),
+    name: sanitizeEmblemName(emblem.name) || 'Emblem',
+    text: sanitizeEmblemText(emblem.text),
+    sourceName: sanitizeEmblemSourceName(emblem.sourceName),
+    createdAt: Number(emblem.createdAt) || 0,
+    createdBy: emblem.createdBy || null
+  }))
+  .filter((emblem) => emblem.id && (emblem.name || emblem.text || emblem.sourceName))
+  .slice(0, MAX_PLAYER_EMBLEMS);
+
+const buildPlayerEmblem = ({ name, text, sourceName, createdBy }) => ({
+  id: `${Date.now()}-${generateCardId()}`,
+  name: sanitizeEmblemName(name) || 'Custom Emblem',
+  text: sanitizeEmblemText(text),
+  ...(sanitizeEmblemSourceName(sourceName) ? { sourceName: sanitizeEmblemSourceName(sourceName) } : {}),
+  createdAt: Date.now(),
+  createdBy: createdBy || null
+});
+
+const getPlayerEmblemBadgeLabel = (player = {}) => {
+  const emblems = getPlayerEmblems(player);
+  if (emblems.length === 0) return null;
+  if (emblems.length === 1) return `Emblem: ${emblems[0].name.replace(/\s+Emblem$/i, '')}`;
+  return `Emblems ${emblems.length}`;
+};
 
 const getPlayerStatuses = (player = {}) => {
   const statuses = player?.statuses && typeof player.statuses === 'object' ? player.statuses : {};
@@ -522,6 +563,8 @@ const IMPORTANT_PERF_ACTIONS = new Set([
   'TAP_TOGGLE',
   'ADD_CARD_REMINDER',
   'REMOVE_CARD_REMINDER',
+  'ADD_PLAYER_EMBLEM',
+  'REMOVE_PLAYER_EMBLEM',
   'DRAW_CARD',
   'BATCH_DRAW_LIBRARY',
   'BATCH_MILL_LIBRARY',
@@ -1324,6 +1367,8 @@ const UNDO_FIELDS_BY_ACTION_TYPE = {
   REMOVE_CARD_REMINDER: CARDS_ONLY_UNDO_STATE_FIELDS,
   ADD_PLAYER_REMINDER: PLAYERS_ONLY_UNDO_STATE_FIELDS,
   REMOVE_PLAYER_REMINDER: PLAYERS_ONLY_UNDO_STATE_FIELDS,
+  ADD_PLAYER_EMBLEM: PLAYERS_ONLY_UNDO_STATE_FIELDS,
+  REMOVE_PLAYER_EMBLEM: PLAYERS_ONLY_UNDO_STATE_FIELDS,
   PLAYER_STATUS_TOGGLE: PLAYERS_ONLY_UNDO_STATE_FIELDS,
   RING_TEMPTATION: PLAYERS_ONLY_UNDO_STATE_FIELDS,
   PLAYER_STATUS_ADD_CUSTOM: PLAYERS_ONLY_UNDO_STATE_FIELDS,
@@ -1398,6 +1443,8 @@ const UNDOABLE_ACTION_TYPES = new Set([
   'REMOVE_CARD_REMINDER',
   'ADD_PLAYER_REMINDER',
   'REMOVE_PLAYER_REMINDER',
+  'ADD_PLAYER_EMBLEM',
+  'REMOVE_PLAYER_EMBLEM',
   'PLAYER_STATUS_TOGGLE',
   'RING_TEMPTATION',
   'PLAYER_STATUS_ADD_CUSTOM',
@@ -3660,6 +3707,9 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const [searchLibraryOwner, setSearchLibraryOwner] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [playerStatsOpen, setPlayerStatsOpen] = useState(false);
+  const [emblemFormPlayerId, setEmblemFormPlayerId] = useState(null);
+  const [emblemForm, setEmblemForm] = useState({ name: '', sourceName: '', text: '' });
+  const [expandedEmblemId, setExpandedEmblemId] = useState(null);
   const [commanderDamageSummaryPlayerId, setCommanderDamageSummaryPlayerId] = useState(null);
   const [peekCard, setPeekCard] = useState(null);
   const [privateHandPeek, setPrivateHandPeek] = useState(null); // local-only: { playerId }
@@ -4179,6 +4229,20 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     .filter(([key, value]) => (commanderModeEnabled || key !== 'commanderTax') && Number(value) > 0)
     .map(([key, value]) => ({ key, label: PLAYER_COUNTER_BADGE_LABELS[key] || PLAYER_COUNTER_LABELS[key] || key, value }));
   const getPlayerReminders = (playerId) => getEntityReminders((game?.players || []).find((player) => player.id === playerId));
+  const renderPlayerEmblemBadges = (player, size = 'compact') => {
+    const label = getPlayerEmblemBadgeLabel(player);
+    if (!label) return null;
+    return (
+      <button
+        type="button"
+        onClick={(event) => { event.stopPropagation(); setPlayerStatsOpen(true); }}
+        className={`${size === 'tiny' ? 'max-w-[9rem] px-1.5 py-0.5 text-[10px]' : 'max-w-[11rem] px-2 py-0.5 text-xs'} truncate rounded border border-pink-500/50 bg-pink-950/60 font-bold text-pink-100`}
+        title="Open player emblems"
+      >
+        {label}
+      </button>
+    );
+  };
   const renderPlayerStatusBadges = (player, size = 'compact') => getPlayerStatusBadges(player).map((badge) => (
     <span
       key={badge.key}
@@ -4190,6 +4254,25 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   ));
   const removePlayerReminder = (playerId, reminderId) => handleAction('REMOVE_PLAYER_REMINDER', { targetPlayerId: playerId, reminderId });
   const removeCardReminder = (cardId, reminderId) => handleAction('REMOVE_CARD_REMINDER', { cardId, reminderId });
+  const resetEmblemForm = () => setEmblemForm({ name: '', sourceName: '', text: '' });
+  const openEmblemFormForPlayer = (playerId, preset = null) => {
+    setEmblemFormPlayerId(playerId);
+    setEmblemForm(preset || { name: '', sourceName: '', text: '' });
+  };
+  const submitEmblemForm = (targetPlayerId) => {
+    const name = sanitizeEmblemName(emblemForm.name);
+    const text = sanitizeEmblemText(emblemForm.text);
+    const sourceName = sanitizeEmblemSourceName(emblemForm.sourceName);
+    if (!name || !text) return;
+    handleAction('ADD_PLAYER_EMBLEM', { targetPlayerId, name, text, sourceName });
+    resetEmblemForm();
+    setEmblemFormPlayerId(null);
+  };
+  const removePlayerEmblem = (playerId, emblem) => {
+    if (!emblem?.id) return;
+    const confirmed = typeof window === 'undefined' || window.confirm(`Remove emblem "${emblem.name}" from this player?`);
+    if (confirmed) handleAction('REMOVE_PLAYER_EMBLEM', { targetPlayerId: playerId, emblemId: emblem.id });
+  };
   const lastSeen = isSpectator ? spectatorLastSeenChatAt : (myPlayer?.lastSeenChatAt || 0);
   const unreadCount = chatMessages.filter(m => m.timestamp > lastSeen && m.playerId !== userId).length;
   useEffect(() => {
@@ -5404,6 +5487,33 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       optimisticPatch = { players: nextPlayers };
       const targetName = targetPlayer.name || 'Player';
       updates.log = arrayUnion(makeActionLog('PLAYER_STATUS_REMOVE_CUSTOM', `${targetName} removed status: ${removedText}.`, { category: 'status', targetPlayerId, targetPlayerName: targetName, statusText: removedText }));
+
+    } else if (actionType === 'ADD_PLAYER_EMBLEM') {
+      const targetPlayerId = payload.targetPlayerId || userId;
+      const targetPlayer = game.players.find(p => p.id === targetPlayerId);
+      if (!targetPlayer) return;
+      const emblem = buildPlayerEmblem({ name: payload.name, text: payload.text, sourceName: payload.sourceName, createdBy: userId });
+      if (!emblem.name || !emblem.text) return;
+      const emblems = getPlayerEmblems(targetPlayer);
+      if (emblems.length >= MAX_PLAYER_EMBLEMS) return;
+      const nextPlayers = game.players.map((player) => player.id === targetPlayerId ? { ...player, emblems: [...getPlayerEmblems(player), emblem] } : player);
+      updates.players = nextPlayers;
+      optimisticPatch = { players: nextPlayers };
+      const targetName = targetPlayer.name || 'Player';
+      updates.log = arrayUnion(makeActionLog('ADD_PLAYER_EMBLEM', `${actorName} created an emblem: ${emblem.name}.`, { category: 'emblem', targetPlayerId, targetPlayerName: targetName, emblemId: emblem.id, emblemName: emblem.name }));
+
+    } else if (actionType === 'REMOVE_PLAYER_EMBLEM') {
+      const targetPlayerId = payload.targetPlayerId || userId;
+      const targetPlayer = game.players.find(p => p.id === targetPlayerId);
+      if (!targetPlayer) return;
+      const emblems = getPlayerEmblems(targetPlayer);
+      const removedEmblem = emblems.find((emblem) => emblem.id === payload.emblemId);
+      if (!removedEmblem) return;
+      const nextPlayers = game.players.map((player) => player.id === targetPlayerId ? { ...player, emblems: getPlayerEmblems(player).filter((emblem) => emblem.id !== payload.emblemId) } : player);
+      updates.players = nextPlayers;
+      optimisticPatch = { players: nextPlayers };
+      const targetName = targetPlayer.name || 'Player';
+      updates.log = arrayUnion(makeActionLog('REMOVE_PLAYER_EMBLEM', `${actorName} removed an emblem: ${removedEmblem.name}.`, { category: 'emblem', targetPlayerId, targetPlayerName: targetName, emblemId: removedEmblem.id, emblemName: removedEmblem.name }));
 
     } else if (actionType === 'SET_DAY_NIGHT') {
       const nextDayNight = payload.value === 'day' || payload.value === 'night' ? payload.value : null;
@@ -7670,6 +7780,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                     <span key={counter.key} className="rounded bg-slate-700 px-2 py-0.5 text-slate-100" title={counter.label}>{counter.label}: {counter.value}</span>
                   ))}
                   {renderPlayerStatusBadges(opponent)}
+                  {renderPlayerEmblemBadges(opponent)}
                   {commanderModeEnabled && getTotalCommanderDamageToPlayer(opponent.id) > 0 && (
                     <button onClick={() => setCommanderDamageSummaryPlayerId(opponent.id)} className="rounded border border-amber-500/50 bg-amber-900/50 px-2 py-0.5 font-bold text-amber-100">Cmd: {getTotalCommanderDamageToPlayer(opponent.id)}</button>
                   )}
@@ -7957,6 +8068,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                   <span key={counter.key} className="rounded bg-slate-700 px-1.5 py-0.5 text-[10px] text-slate-100" title={counter.label}>{counter.label}: {counter.value}</span>
                 ))}
                 {renderPlayerStatusBadges(myPlayer, 'tiny')}
+                {renderPlayerEmblemBadges(myPlayer, 'tiny')}
                 {commanderModeEnabled && getTotalCommanderDamageToPlayer(viewAsPlayerId) > 0 && (
                   <button onClick={(e) => { e.stopPropagation(); setCommanderDamageSummaryPlayerId(viewAsPlayerId); }} className="rounded border border-amber-500/50 bg-amber-900/50 px-1.5 py-0.5 text-[10px] font-bold text-amber-100">Cmd: {getTotalCommanderDamageToPlayer(viewAsPlayerId)}</button>
                 )}
@@ -9192,7 +9304,10 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                         <div className="mb-2 flex items-center justify-between gap-2">
                           <div className="min-w-0">
                             <div className="truncate text-sm font-bold text-white">{player.name || 'Player'}</div>
-                            <div className="mt-1 flex flex-wrap gap-1">{renderPlayerStatusBadges(player, 'tiny')}</div>
+                            <div className="mt-1 flex flex-wrap gap-1">
+                              {renderPlayerStatusBadges(player, 'tiny')}
+                              {renderPlayerEmblemBadges(player, 'tiny')}
+                            </div>
                           </div>
                           <div className="flex items-center gap-1 rounded border border-orange-500/30 bg-orange-950/30 px-2 py-1 text-xs font-black text-orange-100">
                             Ring {statuses.ringBearerLevel}
@@ -9228,6 +9343,119 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                         >
                           Add Custom Status
                         </button>
+
+                        <div className="mt-3 rounded-lg border border-pink-500/30 bg-pink-950/10 p-2">
+                          <div className="mb-2 flex items-center justify-between gap-2">
+                            <div>
+                              <div className="text-[10px] font-black uppercase tracking-widest text-pink-200">Emblems</div>
+                              <div className="text-[11px] text-slate-400">Manual player-level effects.</div>
+                            </div>
+                            <span className="rounded-full border border-pink-500/30 px-2 py-0.5 text-[10px] font-bold text-pink-100">{getPlayerEmblems(player).length}</span>
+                          </div>
+                          {getPlayerEmblems(player).length > 0 ? (
+                            <div className="space-y-2">
+                              {getPlayerEmblems(player).map((emblem) => {
+                                const expanded = expandedEmblemId === emblem.id;
+                                return (
+                                  <div key={emblem.id} className="rounded border border-slate-700 bg-slate-950/70 p-2">
+                                    <div className="flex items-start justify-between gap-2">
+                                      <button
+                                        type="button"
+                                        onClick={() => setExpandedEmblemId(expanded ? null : emblem.id)}
+                                        className="min-w-0 flex-1 text-left"
+                                      >
+                                        <div className="truncate text-xs font-black text-pink-100">{emblem.name}</div>
+                                        {emblem.sourceName && <div className="truncate text-[10px] text-slate-400">Source: {emblem.sourceName}</div>}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        disabled={!canAct}
+                                        onClick={() => removePlayerEmblem(player.id, emblem)}
+                                        className="rounded bg-red-950/70 px-2 py-1 text-[10px] font-bold text-red-100 disabled:opacity-50"
+                                      >
+                                        Remove
+                                      </button>
+                                    </div>
+                                    {expanded && (
+                                      <div className="mt-2 whitespace-pre-wrap rounded bg-slate-900 p-2 text-xs leading-relaxed text-slate-200">
+                                        {emblem.text || 'No emblem text.'}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <div className="rounded bg-slate-950/60 p-2 text-xs text-slate-400">No emblems.</div>
+                          )}
+
+                          {emblemFormPlayerId === player.id ? (
+                            <div className="mt-2 space-y-2 rounded border border-pink-500/30 bg-slate-950/80 p-2">
+                              <input
+                                type="text"
+                                value={emblemForm.name}
+                                onChange={(event) => setEmblemForm((prev) => ({ ...prev, name: event.target.value }))}
+                                placeholder="Emblem name"
+                                className="w-full rounded border border-slate-700 bg-slate-900 px-2 py-2 text-sm text-white outline-none focus:border-pink-400"
+                              />
+                              <input
+                                type="text"
+                                value={emblemForm.sourceName}
+                                onChange={(event) => setEmblemForm((prev) => ({ ...prev, sourceName: event.target.value }))}
+                                placeholder="Source name (optional)"
+                                className="w-full rounded border border-slate-700 bg-slate-900 px-2 py-2 text-sm text-white outline-none focus:border-pink-400"
+                              />
+                              <textarea
+                                value={emblemForm.text}
+                                onChange={(event) => setEmblemForm((prev) => ({ ...prev, text: event.target.value }))}
+                                placeholder="Emblem text / rules"
+                                rows={3}
+                                className="w-full resize-none rounded border border-slate-700 bg-slate-900 px-2 py-2 text-sm text-white outline-none focus:border-pink-400"
+                              />
+                              <div className="grid grid-cols-2 gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => { resetEmblemForm(); setEmblemFormPlayerId(null); }}
+                                  className="rounded bg-slate-700 px-2 py-2 text-xs font-bold text-slate-100"
+                                >
+                                  Cancel
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={!canAct || !sanitizeEmblemName(emblemForm.name) || !sanitizeEmblemText(emblemForm.text)}
+                                  onClick={() => submitEmblemForm(player.id)}
+                                  className="rounded bg-pink-700 px-2 py-2 text-xs font-black text-white disabled:opacity-50"
+                                >
+                                  Create Emblem
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="mt-2 space-y-2">
+                              <div className="grid grid-cols-2 gap-1.5">
+                                {PLAYER_EMBLEM_PRESETS.map((preset) => (
+                                  <button
+                                    key={preset.label}
+                                    type="button"
+                                    disabled={!canAct || getPlayerEmblems(player).length >= MAX_PLAYER_EMBLEMS}
+                                    onClick={() => openEmblemFormForPlayer(player.id, preset)}
+                                    className="rounded border border-pink-500/30 bg-pink-950/30 px-2 py-1.5 text-[11px] font-bold text-pink-100 disabled:opacity-50"
+                                  >
+                                    {preset.label}
+                                  </button>
+                                ))}
+                                <button
+                                  type="button"
+                                  disabled={!canAct || getPlayerEmblems(player).length >= MAX_PLAYER_EMBLEMS}
+                                  onClick={() => openEmblemFormForPlayer(player.id)}
+                                  className="rounded border border-dashed border-pink-500/50 bg-pink-950/20 px-2 py-1.5 text-[11px] font-bold text-pink-100 disabled:opacity-50"
+                                >
+                                  Custom…
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     );
                   })}
@@ -10254,6 +10482,7 @@ export default function App() {
           turnOrder: 0,
           counters: { poison: 0, energy: 0, experience: 0 },
           statuses: { monarch: false, initiative: false, citysBlessing: false, ringBearerLevel: 0, custom: [] },
+          emblems: [],
           handRevealed: false,
           lastSeenChatAt: Date.now()
         }],
@@ -10326,6 +10555,7 @@ export default function App() {
             turnOrder: players.length,
             counters: { poison: 0, energy: 0, experience: 0 },
             statuses: { monarch: false, initiative: false, citysBlessing: false, ringBearerLevel: 0, custom: [] },
+            emblems: [],
             handRevealed: false,
             lastSeenChatAt: Date.now()
           };

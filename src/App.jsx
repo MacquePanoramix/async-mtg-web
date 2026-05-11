@@ -483,7 +483,8 @@ const createEmptyPerfState = () => ({
   activeActionId: null,
   pendingClicks: [],
   lastSnapshot: null,
-  lastVisibleUpdate: null
+  lastVisibleUpdate: null,
+  listenerEvents: []
 });
 
 const perfActionsStore = {
@@ -493,7 +494,8 @@ const perfActionsStore = {
   lastWriteDoneActionId: null,
   lastWriteDonePerfNow: null,
   lastSnapshotPerfNow: null,
-  lastVisibleSignature: null
+  lastVisibleSignature: null,
+  listenerInstanceSeq: 0
 };
 
 const getPerfActionsState = () => perfActionsStore.state;
@@ -528,6 +530,89 @@ const getPerfActionCardName = (payload = {}, currentGame = null) => {
 const compactPerfPayload = (payload = {}) => {
   if (!payload || typeof payload !== 'object') return {};
   return Object.fromEntries(Object.entries(payload).filter(([key]) => ['cardId', 'sourceId', 'targetId', 'targetZone', 'stackItemId', 'faceIndex'].includes(key)));
+};
+
+const getPerfGameCounts = (currentGame = {}) => {
+  const cards = currentGame?.cards || [];
+  const stack = currentGame?.stack || [];
+  return {
+    stackLength: stack.length,
+    cardsLength: cards.length,
+    handCount: cards.filter((card) => card.zone === ZONES.HAND).length,
+    libraryCount: cards.filter((card) => card.zone === ZONES.LIBRARY).length,
+    battlefieldCount: cards.filter((card) => card.zone === ZONES.BATTLEFIELD).length,
+    graveyardCount: cards.filter((card) => card.zone === ZONES.GRAVEYARD).length
+  };
+};
+
+const getPerfExpectedLogType = (actionType) => {
+  if (actionType === 'RESOLVE_STACK_TOP') return 'RESOLVE_SPELL';
+  if (actionType === 'COUNTER_STACK_TOP') return 'COUNTER_STACK_ITEM';
+  return actionType;
+};
+
+const getPerfActionMarker = ({ actionType, payload = {}, currentGame = null } = {}) => {
+  const before = getPerfGameCounts(currentGame);
+  const marker = {
+    expectedLogType: getPerfExpectedLogType(actionType),
+    cardId: getPerfActionCardId(payload),
+    stackItemId: payload?.stackItemId || null,
+    before
+  };
+  if (actionType === 'DRAW_CARD') marker.expected = { handCount: before.handCount + 1, libraryCount: Math.max(0, before.libraryCount - 1) };
+  if (actionType === 'CAST_SPELL') marker.expected = { stackLength: before.stackLength + 1, cardZone: 'stack_zone' };
+  if (actionType === 'PLAY_LAND') marker.expected = { cardZone: ZONES.BATTLEFIELD };
+  if (actionType === 'COPY_STACK_ITEM') marker.expected = { stackLength: before.stackLength + 1 };
+  if (actionType === 'RESOLVE_STACK_TOP' || actionType === 'COUNTER_STACK_TOP') marker.expected = { stackLength: Math.max(0, before.stackLength - 1) };
+  return marker;
+};
+
+const getPerfSnapshotCounts = (data = {}) => getPerfGameCounts(data);
+
+const getPerfCardZone = (data = {}, cardId = null) => {
+  if (!cardId) return null;
+  return (data.cards || []).find((card) => card.instanceId === cardId)?.zone || null;
+};
+
+const doesPerfSnapshotReflectAction = (action = {}, data = {}, lastLog = null) => {
+  if (!action?.actionType || !data) return false;
+  const marker = action.marker || getPerfActionMarker({ actionType: action.actionType, payload: action.payload, currentGame: null });
+  const counts = getPerfSnapshotCounts(data);
+  const expected = marker.expected || {};
+  const logTimestamp = Number(lastLog?.timestamp || 0);
+  const logIsNewEnough = !action.handlerStartWallNow || !logTimestamp || logTimestamp >= action.handlerStartWallNow - 2000;
+  const logTypeMatches = lastLog?.type === marker.expectedLogType;
+  const logCardMatches = !action.cardId || !lastLog?.cardId || lastLog.cardId === action.cardId;
+  const stackItemMatches = !marker.stackItemId || !lastLog?.copiedFromStackItemId || lastLog.copiedFromStackItemId === marker.stackItemId;
+  const logMatches = logTypeMatches && logCardMatches && stackItemMatches && logIsNewEnough;
+
+  if (action.actionType === 'DRAW_CARD') {
+    return logMatches && counts.handCount >= expected.handCount && counts.libraryCount <= expected.libraryCount;
+  }
+  if (action.actionType === 'PLAY_LAND') {
+    return logMatches && getPerfCardZone(data, action.cardId) === expected.cardZone;
+  }
+  if (action.actionType === 'CAST_SPELL') {
+    return logMatches && counts.stackLength >= expected.stackLength && (!action.cardId || getPerfCardZone(data, action.cardId) === expected.cardZone || (data.stack || []).some((item) => item.sourceId === action.cardId));
+  }
+  if (action.actionType === 'COPY_STACK_ITEM') {
+    return logMatches && counts.stackLength >= expected.stackLength;
+  }
+  if (action.actionType === 'RESOLVE_STACK_TOP' || action.actionType === 'COUNTER_STACK_TOP') {
+    return logMatches && counts.stackLength <= expected.stackLength;
+  }
+  return logMatches;
+};
+
+const recordPerfListenerEvent = (event = {}) => {
+  if (!isPerfActionsEnabled()) return;
+  const listenerEvent = { ...event, perfNow: getActionPerfNow(), wallNow: getActionPerfWallNow() };
+  console.debug('[Perf actions] Firestore listener', listenerEvent);
+  updatePerfActionsState((state) => ({
+    ...state,
+    enabled: true,
+    listenerEvents: [listenerEvent, ...(state.listenerEvents || [])].slice(0, 12)
+  }));
 };
 
 const getPerfWarningsForAction = (action = {}) => {
@@ -599,12 +684,8 @@ const startPerfAction = ({ actionType, payload = {}, currentGame = null } = {}) 
     handlerStartPerfNow,
     handlerStartWallNow: getActionPerfWallNow(),
     clickToHandlerMs: matchedClick ? roundPerfMs(handlerStartPerfNow - matchedClick.perfNow) : null,
-    gameBefore: {
-      stackLength: currentGame?.stack?.length || 0,
-      cardsLength: currentGame?.cards?.length || 0,
-      handCount: (currentGame?.cards || []).filter((card) => card.zone === ZONES.HAND).length,
-      battlefieldCount: (currentGame?.cards || []).filter((card) => card.zone === ZONES.BATTLEFIELD).length
-    },
+    gameBefore: getPerfGameCounts(currentGame),
+    marker: getPerfActionMarker({ actionType, payload, currentGame }),
     normalization: [],
     firestore: {},
     warnings: []
@@ -688,17 +769,45 @@ const recordPerfSnapshot = (snapshotDetails = {}) => {
   if (!isPerfActionsEnabled()) return;
   const snapshotPerfNow = getActionPerfNow();
   perfActionsStore.lastSnapshotPerfNow = snapshotPerfNow;
-  const recentWriteActionId = perfActionsStore.lastWriteDonePerfNow && snapshotPerfNow - perfActionsStore.lastWriteDonePerfNow < 30000 ? perfActionsStore.lastWriteDoneActionId : null;
-  const actionId = recentWriteActionId || getPerfActionsState().activeActionId;
-  const snapshotRecord = { ...snapshotDetails, snapshotPerfNow, wallNow: getActionPerfWallNow(), actionId };
-  updatePerfActionsState((state) => ({ ...state, enabled: true, lastSnapshot: snapshotRecord }));
+  const state = getPerfActionsState();
+  const actions = state.actions || [];
+  const matchingAction = actions.find((action) => (
+    action.firestoreDonePerfNow &&
+    snapshotPerfNow >= action.firestoreDonePerfNow &&
+    snapshotPerfNow - action.firestoreDonePerfNow < 60000 &&
+    (snapshotDetails.reflectsByActionId?.[action.id] || !action.firstSnapshotAfterWrite)
+  )) || actions.find((action) => (
+    action.handlerStartPerfNow &&
+    snapshotPerfNow >= action.handlerStartPerfNow &&
+    snapshotPerfNow - action.handlerStartPerfNow < 60000
+  ));
+  const actionId = matchingAction?.id || null;
+  const reflectsAction = actionId ? Boolean(snapshotDetails.reflectsByActionId?.[actionId] ?? snapshotDetails.reflectsLastAction) : false;
+  const snapshotRecord = { ...snapshotDetails, reflectsAction, snapshotPerfNow, wallNow: getActionPerfWallNow(), actionId };
+  updatePerfActionsState((current) => ({ ...current, enabled: true, lastSnapshot: snapshotRecord }));
   if (actionId) {
-    patchPerfAction(actionId, (action) => ({
-      ...action,
-      snapshot: snapshotRecord,
-      firestoreDoneToSnapshotMs: action.firestoreDonePerfNow ? roundPerfMs(snapshotPerfNow - action.firestoreDonePerfNow) : null,
-      snapshotReflectsLastAction: snapshotDetails.reflectsLastAction
-    }));
+    patchPerfAction(actionId, (action) => {
+      const firestoreDoneToThisSnapshotMs = action.firestoreDonePerfNow ? roundPerfMs(snapshotPerfNow - action.firestoreDonePerfNow) : null;
+      const firstSnapshotAfterWrite = action.firstSnapshotAfterWrite || (action.firestoreDonePerfNow && snapshotPerfNow >= action.firestoreDonePerfNow ? snapshotRecord : null);
+      const firstSnapshotAfterAction = action.firstSnapshotAfterAction || snapshotRecord;
+      const firstReflectingSnapshot = action.firstReflectingSnapshot || (reflectsAction ? snapshotRecord : null);
+      const firstLocalReflectingSnapshot = action.firstLocalReflectingSnapshot || (reflectsAction && snapshotDetails.hasPendingWrites ? snapshotRecord : null);
+      const firstServerReflectingSnapshot = action.firstServerReflectingSnapshot || (reflectsAction && !snapshotDetails.hasPendingWrites && !snapshotDetails.fromCache ? snapshotRecord : null);
+      return {
+        ...action,
+        snapshot: snapshotRecord,
+        firstSnapshotAfterAction,
+        firstSnapshotAfterWrite,
+        firstReflectingSnapshot,
+        firstLocalReflectingSnapshot,
+        firstServerReflectingSnapshot,
+        firestoreDoneToFirstSnapshotMs: firstSnapshotAfterWrite?.snapshotPerfNow && action.firestoreDonePerfNow ? roundPerfMs(firstSnapshotAfterWrite.snapshotPerfNow - action.firestoreDonePerfNow) : action.firestoreDoneToFirstSnapshotMs,
+        firestoreDoneToSnapshotMs: firstReflectingSnapshot?.snapshotPerfNow && action.firestoreDonePerfNow ? roundPerfMs(firstReflectingSnapshot.snapshotPerfNow - action.firestoreDonePerfNow) : firestoreDoneToThisSnapshotMs,
+        firestoreDoneToServerReflectingSnapshotMs: firstServerReflectingSnapshot?.snapshotPerfNow && action.firestoreDonePerfNow ? roundPerfMs(firstServerReflectingSnapshot.snapshotPerfNow - action.firestoreDonePerfNow) : action.firestoreDoneToServerReflectingSnapshotMs,
+        snapshotReflectsLastAction: reflectsAction,
+        localSnapshotIgnored: Boolean(firstSnapshotAfterWrite?.hasPendingWrites && !firstSnapshotAfterWrite?.reflectsAction && firstReflectingSnapshot && firstReflectingSnapshot.snapshotPerfNow > firstSnapshotAfterWrite.snapshotPerfNow)
+      };
+    });
   }
 };
 
@@ -3267,6 +3376,10 @@ const PerformanceDebugPanel = () => {
   const stackAfter = lastAction?.gameAfter?.stackLength ?? lastAction?.snapshot?.stackLength;
   const latestNormalization = lastAction?.normalization?.[lastAction.normalization.length - 1];
   const undoFields = lastAction?.undo?.previousStateFields || latestNormalization?.previousStateFields || [];
+  const firstSnapshot = lastAction?.firstSnapshotAfterWrite || lastAction?.firstSnapshotAfterAction;
+  const firstReflectingSnapshot = lastAction?.firstReflectingSnapshot;
+  const firstServerReflectingSnapshot = lastAction?.firstServerReflectingSnapshot;
+  const listenerEvents = perfState.listenerEvents || [];
 
   return (
     <div className="fixed bottom-2 left-2 right-2 z-[90] mx-auto max-w-md rounded-xl border border-cyan-400/50 bg-slate-950/95 text-xs text-slate-100 shadow-2xl backdrop-blur sm:left-auto sm:right-3 sm:w-96">
@@ -3298,7 +3411,8 @@ const PerformanceDebugPanel = () => {
               <div className="grid grid-cols-2 gap-1.5">
                 <div className="rounded bg-slate-900 p-2"><div className="text-slate-400">Click → handler</div><div className="font-bold">{formatPerfMs(lastAction.clickToHandlerMs)}</div></div>
                 <div className="rounded bg-slate-900 p-2"><div className="text-slate-400">Handler → Firestore done</div><div className="font-bold">{formatPerfMs(lastAction.handlerToFirestoreDoneMs)}</div></div>
-                <div className="rounded bg-slate-900 p-2"><div className="text-slate-400">Firestore → snapshot</div><div className="font-bold">{formatPerfMs(lastAction.firestoreDoneToSnapshotMs)}</div></div>
+                <div className="rounded bg-slate-900 p-2"><div className="text-slate-400">Firestore → first snapshot</div><div className="font-bold">{formatPerfMs(lastAction.firestoreDoneToFirstSnapshotMs)}</div></div>
+                <div className="rounded bg-slate-900 p-2"><div className="text-slate-400">Firestore → reflects</div><div className="font-bold">{formatPerfMs(lastAction.firestoreDoneToSnapshotMs)}</div></div>
                 <div className="rounded bg-slate-900 p-2"><div className="text-slate-400">Snapshot → visible</div><div className="font-bold">{formatPerfMs(lastAction.snapshotToVisibleUpdateMs)}</div></div>
               </div>
               <div className="grid grid-cols-2 gap-1.5 text-[11px]">
@@ -3311,6 +3425,18 @@ const PerformanceDebugPanel = () => {
                 <div className="rounded bg-slate-900 p-2"><span className="text-slate-400">Undo previousState.cards:</span> <b>{latestNormalization?.undoStackIncludesCards ? 'yes' : 'no'}</b></div>
                 <div className="rounded bg-slate-900 p-2"><span className="text-slate-400">Stack before/after:</span> <b>{stackBefore ?? '—'} → {stackAfter ?? '—'}</b></div>
                 <div className="rounded bg-slate-900 p-2"><span className="text-slate-400">Snapshot reflects action:</span> <b>{lastAction.snapshotReflectsLastAction == null ? '—' : (lastAction.snapshotReflectsLastAction ? 'yes' : 'no')}</b></div>
+                <div className="rounded bg-slate-900 p-2"><span className="text-slate-400">Local snapshot ignored:</span> <b>{lastAction.localSnapshotIgnored ? 'yes' : 'no'}</b></div>
+              </div>
+              <div className="rounded-lg border border-slate-700 bg-slate-900 p-2 text-[11px]">
+                <div className="mb-1 font-black uppercase text-slate-300">Snapshot metadata</div>
+                <div className="grid grid-cols-2 gap-1">
+                  <div><span className="text-slate-400">First after write:</span> <b>{firstSnapshot ? `${firstSnapshot.fromCache ? 'cache' : 'server'} / ${firstSnapshot.hasPendingWrites ? 'pending' : 'settled'}` : '—'}</b></div>
+                  <div><span className="text-slate-400">First reflects:</span> <b>{firstReflectingSnapshot ? `${firstReflectingSnapshot.fromCache ? 'cache' : 'server'} / ${firstReflectingSnapshot.hasPendingWrites ? 'pending' : 'settled'}` : '—'}</b></div>
+                  <div className="col-span-2"><span className="text-slate-400">Server-confirmed reflects:</span> <b>{firstServerReflectingSnapshot ? `${formatPerfMs(lastAction.firestoreDoneToServerReflectingSnapshotMs)} · ${formatPerfTime(firstServerReflectingSnapshot.wallNow)}` : '—'}</b></div>
+                  <div><span className="text-slate-400">Last stack/cards:</span> <b>{lastAction.snapshot?.stackLength ?? '—'} / {lastAction.snapshot?.cardsLength ?? '—'}</b></div>
+                  <div><span className="text-slate-400">Last log:</span> <b>{lastAction.snapshot?.lastLogType || '—'}</b></div>
+                </div>
+                {lastAction.snapshot?.lastLogMessage && <div className="mt-1 truncate text-slate-400">{lastAction.snapshot.lastLogMessage}</div>}
               </div>
               {lastAction.warnings?.length > 0 && (
                 <div className="rounded-lg border border-amber-400/40 bg-amber-950/40 p-2 text-amber-100">
@@ -3318,6 +3444,14 @@ const PerformanceDebugPanel = () => {
                   <ul className="list-disc space-y-0.5 pl-4">{lastAction.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>
                 </div>
               )}
+              <details className="rounded-lg border border-slate-700 bg-slate-900 p-2">
+                <summary className="cursor-pointer font-bold text-slate-200">Game listener lifecycle</summary>
+                <div className="mt-2 space-y-1 font-mono text-[10px] text-slate-300">
+                  {listenerEvents.length === 0 ? <div>No listener events recorded.</div> : listenerEvents.slice(0, 6).map((event, index) => (
+                    <div key={`${event.listenerInstanceId}-${event.type}-${event.wallNow}-${index}`} className="border-t border-slate-800 pt-1">{formatPerfTime(event.wallNow)} {event.type} {event.listenerInstanceId} · {event.reason}</div>
+                  ))}
+                </div>
+              </details>
               <details className="rounded-lg border border-slate-700 bg-slate-900 p-2">
                 <summary className="cursor-pointer font-bold text-slate-200">Recent checkpoints</summary>
                 <div className="mt-2 space-y-1 font-mono text-[10px] text-slate-300">
@@ -3347,6 +3481,7 @@ const PerformanceDebugPanel = () => {
 const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const [game, setGame] = useState(null);
   const [loading, setLoading] = useState(true);
+  const gameListenerIdRef = useRef(null);
   const [deckInput, setDeckInput] = useState('');
   const [importing, setImporting] = useState(false);
   const [deletingDeck, setDeletingDeck] = useState(false);
@@ -3604,24 +3739,36 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   }, [libraryMenuOpen]);
 
   useEffect(() => {
-    if (!gameId) return;
+    if (!gameId) return undefined;
     // UPDATED: Path
+    const listenerInstanceId = `${gameId}-${++perfActionsStore.listenerInstanceSeq}`;
+    gameListenerIdRef.current = listenerInstanceId;
+    recordPerfListenerEvent({ type: 'created', gameId, listenerInstanceId, reason: 'GameBoard gameId effect mounted' });
     const unsub = onSnapshot(
       doc(db, 'games_v3', gameId),
-      (doc) => {
-        if (doc.exists()) {
-          const data = doc.data();
+      { includeMetadataChanges: true },
+      (snapshotDoc) => {
+        if (snapshotDoc.exists()) {
+          const data = snapshotDoc.data();
           const lastLog = data.log && data.log.length > 0 ? data.log[data.log.length - 1] : null;
           if (isPerfActionsEnabled()) {
-            const lastAction = getPerfActionsState().actions[0];
+            const state = getPerfActionsState();
+            const reflectsByActionId = Object.fromEntries((state.actions || []).map((action) => [action.id, doesPerfSnapshotReflectAction(action, data, lastLog)]));
+            const lastAction = state.actions[0];
             const updatedAtValue = data.updatedAt?.toMillis?.() ?? (data.updatedAt?.seconds ? data.updatedAt.seconds * 1000 : null);
             recordPerfSnapshot({
+              gameId,
+              listenerInstanceId,
+              fromCache: snapshotDoc.metadata.fromCache,
+              hasPendingWrites: snapshotDoc.metadata.hasPendingWrites,
               gameUpdatedAt: updatedAtValue,
               stackLength: data.stack?.length || 0,
               cardsLength: data.cards?.length || 0,
               lastLogType: lastLog?.type || null,
               lastLogMessage: lastLog?.message || lastLog?.desc || null,
-              reflectsLastAction: Boolean(lastAction && (lastLog?.type === lastAction.actionType || lastLog?.cardId === lastAction.cardId || (lastAction.actionType === 'CAST_SPELL' && (data.stack || []).some((item) => item.sourceId === lastAction.cardId))))
+              lastLogTimestamp: lastLog?.timestamp || null,
+              reflectsByActionId,
+              reflectsLastAction: Boolean(lastAction && reflectsByActionId[lastAction.id])
             });
           }
           setGame({ ...data, combat: data.combat || getEmptyCombatState() });
@@ -3635,9 +3782,16 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         }
         setLoading(false);
       },
-      (err) => console.error(err)
+      (err) => {
+        recordPerfListenerEvent({ type: 'error', gameId, listenerInstanceId, reason: err?.message || String(err) });
+        console.error(err);
+      }
     );
-    return () => unsub();
+    return () => {
+      recordPerfListenerEvent({ type: 'unsubscribed', gameId, listenerInstanceId, reason: 'GameBoard gameId effect cleanup' });
+      if (gameListenerIdRef.current === listenerInstanceId) gameListenerIdRef.current = null;
+      unsub();
+    };
   }, [gameId]);
 
 

@@ -472,6 +472,9 @@ const IMPORTANT_PERF_ACTIONS = new Set([
   'COPY_STACK_ITEM',
   'TOGGLE_FACE',
   'SWITCH_CARD_FACE',
+  'TAP_TOGGLE',
+  'ADD_CARD_REMINDER',
+  'REMOVE_CARD_REMINDER',
   'DRAW_CARD',
   'PASS',
   'PASS_PRIORITY'
@@ -562,6 +565,14 @@ const getPerfActionMarker = ({ actionType, payload = {}, currentGame = null } = 
   if (actionType === 'DRAW_CARD') marker.expected = { handCount: before.handCount + 1, libraryCount: Math.max(0, before.libraryCount - 1) };
   if (actionType === 'CAST_SPELL') marker.expected = { stackLength: before.stackLength + 1, cardZone: 'stack_zone' };
   if (actionType === 'PLAY_LAND') marker.expected = { cardZone: ZONES.BATTLEFIELD };
+  if (actionType === 'MOVE_ZONE') marker.expected = { cardZone: payload?.targetZone || null };
+  if (actionType === 'TAP_TOGGLE') {
+    const card = (currentGame?.cards || []).find((candidate) => candidate.instanceId === marker.cardId);
+    marker.expected = { tapped: !card?.tapped };
+  }
+  if (actionType === 'SWITCH_CARD_FACE') marker.expected = { activeFaceIndex: payload?.faceIndex ?? null };
+  if (actionType === 'ADD_CARD_REMINDER') marker.expected = { reminderText: sanitizeReminderText(payload?.text || '') };
+  if (actionType === 'REMOVE_CARD_REMINDER') marker.expected = { reminderId: payload?.reminderId || null };
   if (actionType === 'COPY_STACK_ITEM') marker.expected = { stackLength: before.stackLength + 1 };
   if (actionType === 'RESOLVE_STACK_TOP' || actionType === 'COUNTER_STACK_TOP') marker.expected = { stackLength: Math.max(0, before.stackLength - 1) };
   return marker;
@@ -569,10 +580,12 @@ const getPerfActionMarker = ({ actionType, payload = {}, currentGame = null } = 
 
 const getPerfSnapshotCounts = (data = {}) => getPerfGameCounts(data);
 
-const getPerfCardZone = (data = {}, cardId = null) => {
+const getPerfCard = (data = {}, cardId = null) => {
   if (!cardId) return null;
-  return (data.cards || []).find((card) => card.instanceId === cardId)?.zone || null;
+  return (data.cards || []).find((card) => card.instanceId === cardId) || null;
 };
+
+const getPerfCardZone = (data = {}, cardId = null) => getPerfCard(data, cardId)?.zone || null;
 
 const doesPerfSnapshotReflectAction = (action = {}, data = {}, lastLog = null) => {
   if (!action?.actionType || !data) return false;
@@ -582,7 +595,8 @@ const doesPerfSnapshotReflectAction = (action = {}, data = {}, lastLog = null) =
   const logTimestamp = Number(lastLog?.timestamp || 0);
   const logIsNewEnough = !action.handlerStartWallNow || !logTimestamp || logTimestamp >= action.handlerStartWallNow - 2000;
   const logTypeMatches = lastLog?.type === marker.expectedLogType;
-  const logCardMatches = !action.cardId || !lastLog?.cardId || lastLog.cardId === action.cardId;
+  const cardMatchNotRequired = ['COPY_STACK_ITEM', 'RESOLVE_STACK_TOP', 'COUNTER_STACK_TOP'].includes(action.actionType);
+  const logCardMatches = cardMatchNotRequired || !action.cardId || !lastLog?.cardId || lastLog.cardId === action.cardId;
   const stackItemMatches = !marker.stackItemId || !lastLog?.copiedFromStackItemId || lastLog.copiedFromStackItemId === marker.stackItemId;
   const logMatches = logTypeMatches && logCardMatches && stackItemMatches && logIsNewEnough;
 
@@ -591,6 +605,23 @@ const doesPerfSnapshotReflectAction = (action = {}, data = {}, lastLog = null) =
   }
   if (action.actionType === 'PLAY_LAND') {
     return logMatches && getPerfCardZone(data, action.cardId) === expected.cardZone;
+  }
+  if (action.actionType === 'MOVE_ZONE') {
+    return logMatches && (!expected.cardZone || getPerfCardZone(data, action.cardId) === expected.cardZone || !getPerfCard(data, action.cardId));
+  }
+  if (action.actionType === 'TAP_TOGGLE') {
+    return logMatches && getPerfCard(data, action.cardId)?.tapped === expected.tapped;
+  }
+  if (action.actionType === 'SWITCH_CARD_FACE') {
+    return logMatches && (expected.activeFaceIndex == null || getPerfCard(data, action.cardId)?.activeFaceIndex === expected.activeFaceIndex);
+  }
+  if (action.actionType === 'ADD_CARD_REMINDER') {
+    const reminders = getEntityReminders(getPerfCard(data, action.cardId));
+    return logMatches && reminders.some((reminder) => reminder.text === expected.reminderText);
+  }
+  if (action.actionType === 'REMOVE_CARD_REMINDER') {
+    const reminders = getEntityReminders(getPerfCard(data, action.cardId));
+    return logMatches && expected.reminderId && !reminders.some((reminder) => reminder.id === expected.reminderId);
   }
   if (action.actionType === 'CAST_SPELL') {
     return logMatches && counts.stackLength >= expected.stackLength && (!action.cardId || getPerfCardZone(data, action.cardId) === expected.cardZone || (data.stack || []).some((item) => item.sourceId === action.cardId));
@@ -619,6 +650,7 @@ const getPerfWarningsForAction = (action = {}) => {
   const warnings = [];
   if ((action.clickToHandlerMs || 0) > PERF_SLOW_LIMITS.clickToHandler) warnings.push('Click handler delayed');
   if ((action.handlerToFirestoreDoneMs || 0) > PERF_SLOW_LIMITS.firestore || (action.firestore?.totalMs || 0) > PERF_SLOW_LIMITS.firestore) warnings.push('Slow Firestore write');
+  if ((action.optimisticVisibleToFirestoreConfirmedMs || 0) > PERF_SLOW_LIMITS.firestore) warnings.push('Optimistic waiting on Firestore');
   if ((action.firestoreDoneToSnapshotMs || 0) > PERF_SLOW_LIMITS.snapshot) warnings.push('Snapshot delayed');
   if ((action.snapshotToVisibleUpdateMs || 0) > PERF_SLOW_LIMITS.render) warnings.push('UI render delayed');
   if ((action.normalization || []).some((item) => (item.elapsedMs || 0) > PERF_SLOW_LIMITS.normalization)) warnings.push('Slow normalization');
@@ -743,6 +775,50 @@ const recordPerfNormalization = (details = {}, actionId = perfActionsStore.activ
   }));
 };
 
+const recordPerfOptimisticApplied = (details = {}, actionId = perfActionsStore.activeActionId) => {
+  if (!isPerfActionsEnabled() || !actionId) return;
+  const optimisticVisiblePerfNow = getActionPerfNow();
+  patchPerfAction(actionId, (action) => ({
+    ...action,
+    optimistic: { ...(action.optimistic || {}), applied: true, visiblePerfNow: optimisticVisiblePerfNow, ...details },
+    optimisticApplied: true,
+    optimisticVisiblePerfNow,
+    clickToOptimisticVisibleMs: action.clickPerfNow ? roundPerfMs(optimisticVisiblePerfNow - action.clickPerfNow) : null,
+    handlerToOptimisticVisibleMs: roundPerfMs(optimisticVisiblePerfNow - action.handlerStartPerfNow)
+  }));
+};
+
+const recordPerfOptimisticSkipped = (reason, actionId = perfActionsStore.activeActionId) => {
+  if (!isPerfActionsEnabled() || !actionId) return;
+  patchPerfAction(actionId, (action) => ({
+    ...action,
+    optimistic: { ...(action.optimistic || {}), applied: false, skippedReason: reason },
+    optimisticApplied: false
+  }));
+};
+
+const recordPerfOptimisticConfirmed = (details = {}, actionId = perfActionsStore.activeActionId) => {
+  if (!isPerfActionsEnabled() || !actionId) return;
+  const confirmedPerfNow = getActionPerfNow();
+  patchPerfAction(actionId, (action) => ({
+    ...action,
+    optimistic: { ...(action.optimistic || {}), confirmed: true, reverted: false, confirmedPerfNow, ...details },
+    optimisticReconciled: true,
+    optimisticReverted: false,
+    optimisticVisibleToFirestoreConfirmedMs: action.optimisticVisiblePerfNow ? roundPerfMs(confirmedPerfNow - action.optimisticVisiblePerfNow) : null
+  }));
+};
+
+const recordPerfOptimisticReverted = (reason, actionId = perfActionsStore.activeActionId) => {
+  if (!isPerfActionsEnabled() || !actionId) return;
+  patchPerfAction(actionId, (action) => ({
+    ...action,
+    optimistic: { ...(action.optimistic || {}), reverted: true, revertReason: reason },
+    optimisticReverted: true,
+    optimisticReconciled: false
+  }));
+};
+
 const recordPerfFirestore = (details = {}, actionId = perfActionsStore.activeActionId) => {
   if (!isPerfActionsEnabled() || !actionId) return;
   patchPerfAction(actionId, (action) => {
@@ -752,7 +828,8 @@ const recordPerfFirestore = (details = {}, actionId = perfActionsStore.activeAct
       ...action,
       firestore: nextFirestore,
       firestoreDonePerfNow,
-      handlerToFirestoreDoneMs: firestoreDonePerfNow ? roundPerfMs(firestoreDonePerfNow - action.handlerStartPerfNow) : action.handlerToFirestoreDoneMs
+      handlerToFirestoreDoneMs: firestoreDonePerfNow ? roundPerfMs(firestoreDonePerfNow - action.handlerStartPerfNow) : action.handlerToFirestoreDoneMs,
+    optimisticVisibleToFirestoreConfirmedMs: firestoreDonePerfNow && action.optimisticVisiblePerfNow ? roundPerfMs(firestoreDonePerfNow - action.optimisticVisiblePerfNow) : action.optimisticVisibleToFirestoreConfirmedMs
     };
   });
 };
@@ -3410,7 +3487,9 @@ const PerformanceDebugPanel = () => {
               </div>
               <div className="grid grid-cols-2 gap-1.5">
                 <div className="rounded bg-slate-900 p-2"><div className="text-slate-400">Click → handler</div><div className="font-bold">{formatPerfMs(lastAction.clickToHandlerMs)}</div></div>
+                <div className="rounded bg-slate-900 p-2"><div className="text-slate-400">Click → optimistic visible</div><div className="font-bold">{formatPerfMs(lastAction.clickToOptimisticVisibleMs)}</div></div>
                 <div className="rounded bg-slate-900 p-2"><div className="text-slate-400">Handler → Firestore done</div><div className="font-bold">{formatPerfMs(lastAction.handlerToFirestoreDoneMs)}</div></div>
+                <div className="rounded bg-slate-900 p-2"><div className="text-slate-400">Optimistic → confirmed</div><div className="font-bold">{formatPerfMs(lastAction.optimisticVisibleToFirestoreConfirmedMs)}</div></div>
                 <div className="rounded bg-slate-900 p-2"><div className="text-slate-400">Firestore → first snapshot</div><div className="font-bold">{formatPerfMs(lastAction.firestoreDoneToFirstSnapshotMs)}</div></div>
                 <div className="rounded bg-slate-900 p-2"><div className="text-slate-400">Firestore → reflects</div><div className="font-bold">{formatPerfMs(lastAction.firestoreDoneToSnapshotMs)}</div></div>
                 <div className="rounded bg-slate-900 p-2"><div className="text-slate-400">Snapshot → visible</div><div className="font-bold">{formatPerfMs(lastAction.snapshotToVisibleUpdateMs)}</div></div>
@@ -3426,6 +3505,10 @@ const PerformanceDebugPanel = () => {
                 <div className="rounded bg-slate-900 p-2"><span className="text-slate-400">Stack before/after:</span> <b>{stackBefore ?? '—'} → {stackAfter ?? '—'}</b></div>
                 <div className="rounded bg-slate-900 p-2"><span className="text-slate-400">Snapshot reflects action:</span> <b>{lastAction.snapshotReflectsLastAction == null ? '—' : (lastAction.snapshotReflectsLastAction ? 'yes' : 'no')}</b></div>
                 <div className="rounded bg-slate-900 p-2"><span className="text-slate-400">Local snapshot ignored:</span> <b>{lastAction.localSnapshotIgnored ? 'yes' : 'no'}</b></div>
+                <div className="rounded bg-slate-900 p-2"><span className="text-slate-400">Optimistic applied:</span> <b className={lastAction.optimisticApplied ? 'text-emerald-300' : 'text-slate-300'}>{lastAction.optimisticApplied == null ? '—' : (lastAction.optimisticApplied ? 'yes' : 'no')}</b></div>
+                <div className="rounded bg-slate-900 p-2"><span className="text-slate-400">Optimistic reconciled:</span> <b className={lastAction.optimisticReconciled ? 'text-emerald-300' : 'text-slate-300'}>{lastAction.optimisticReconciled == null ? '—' : (lastAction.optimisticReconciled ? 'yes' : 'no')}</b></div>
+                <div className="rounded bg-slate-900 p-2"><span className="text-slate-400">Optimistic reverted:</span> <b className={lastAction.optimisticReverted ? 'text-rose-300' : 'text-slate-300'}>{lastAction.optimisticReverted ? 'yes' : 'no'}</b></div>
+                <div className="rounded bg-slate-900 p-2"><span className="text-slate-400">Optimistic status:</span> <b>{lastAction.optimistic?.revertReason || lastAction.optimistic?.skippedReason || (lastAction.optimistic?.confirmed ? 'confirmed' : '—')}</b></div>
               </div>
               <div className="rounded-lg border border-slate-700 bg-slate-900 p-2 text-[11px]">
                 <div className="mb-1 font-black uppercase text-slate-300">Snapshot metadata</div>
@@ -3479,7 +3562,12 @@ const PerformanceDebugPanel = () => {
 };
 
 const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
-  const [game, setGame] = useState(null);
+  const [firestoreGame, setFirestoreGame] = useState(null);
+  const [optimisticGame, setOptimisticGame] = useState(null);
+  const [pendingOptimisticActionId, setPendingOptimisticActionId] = useState(null);
+  const [pendingOptimisticStartedAt, setPendingOptimisticStartedAt] = useState(null);
+  const pendingOptimisticActionRef = useRef(null);
+  const game = optimisticGame || firestoreGame;
   const [loading, setLoading] = useState(true);
   const gameListenerIdRef = useRef(null);
   const [deckInput, setDeckInput] = useState('');
@@ -3583,6 +3671,49 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const viewAsPlayerId = isSpectator ? viewAsId : userId;
   const viewAsPlayer = (game?.players || []).find(p => p.id === viewAsPlayerId);
   const canAct = !isSpectator;
+
+  const applyOptimisticGamePatch = useCallback(({ actionType, payload = {}, patch = {}, perfActionId = null }) => {
+    if (!game || !actionType || !patch || Object.keys(patch).length === 0) {
+      recordPerfOptimisticSkipped('No safe local patch available.', perfActionId);
+      return false;
+    }
+
+    const nextOptimisticGame = {
+      ...game,
+      ...patch,
+      combat: patch.combat || game.combat || getEmptyCombatState(),
+      __optimisticActionId: perfActionId || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    };
+    const actionId = nextOptimisticGame.__optimisticActionId;
+    const startedAt = getActionPerfNow();
+    const marker = getPerfActionMarker({ actionType, payload, currentGame: game });
+
+    pendingOptimisticActionRef.current = {
+      id: actionId,
+      actionType,
+      payload: compactPerfPayload(payload),
+      cardId: getPerfActionCardId(payload),
+      marker,
+      handlerStartWallNow: getActionPerfWallNow(),
+      startedAt
+    };
+    setOptimisticGame(nextOptimisticGame);
+    setPendingOptimisticActionId(actionId);
+    setPendingOptimisticStartedAt(startedAt);
+    recordPerfOptimisticApplied({ actionType }, perfActionId || actionId);
+    return true;
+  }, [game]);
+
+  const clearOptimisticGame = useCallback((reason = 'cleared', perfActionId = null) => {
+    const pendingId = perfActionId || pendingOptimisticActionRef.current?.id || pendingOptimisticActionId;
+    if (pendingOptimisticActionRef.current || optimisticGame) {
+      recordPerfOptimisticReverted(reason, pendingId);
+    }
+    pendingOptimisticActionRef.current = null;
+    setOptimisticGame(null);
+    setPendingOptimisticActionId(null);
+    setPendingOptimisticStartedAt(null);
+  }, [optimisticGame, pendingOptimisticActionId]);
 
   const getPlayerTargetId = (pid) => `player:${pid}`;
   const getNormalizedFromLegacyPosition = (x, y) => {
@@ -3771,7 +3902,19 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               reflectsLastAction: Boolean(lastAction && reflectsByActionId[lastAction.id])
             });
           }
-          setGame({ ...data, combat: data.combat || getEmptyCombatState() });
+          const nextFirestoreGame = { ...data, combat: data.combat || getEmptyCombatState() };
+          setFirestoreGame(nextFirestoreGame);
+          const pendingOptimistic = pendingOptimisticActionRef.current;
+          if (pendingOptimistic) {
+            const reflectsPending = doesPerfSnapshotReflectAction(pendingOptimistic, nextFirestoreGame, lastLog);
+            if (reflectsPending) {
+              recordPerfOptimisticConfirmed({ snapshotFromCache: snapshotDoc.metadata.fromCache, hasPendingWrites: snapshotDoc.metadata.hasPendingWrites }, pendingOptimistic.id);
+              pendingOptimisticActionRef.current = null;
+              setOptimisticGame(null);
+              setPendingOptimisticActionId(null);
+              setPendingOptimisticStartedAt(null);
+            }
+          }
 
           if (lastLog) {
             if ((lastLog.type === 'ROLL_DICE' || lastLog.type === 'FLIP_COIN' || lastLog.type === 'DISCARD_RANDOM') && Date.now() - lastLog.timestamp < 5000) {
@@ -3802,13 +3945,14 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       cardsLength: game.cards?.length || 0,
       handCount: (game.cards || []).filter((card) => card.zone === ZONES.HAND).length,
       battlefieldCount: (game.cards || []).filter((card) => card.zone === ZONES.BATTLEFIELD).length,
-      selectedCardZone: selectedCard?.zone || null
+      selectedCardZone: selectedCard?.zone || null,
+      optimisticPending: Boolean(pendingOptimisticActionId && pendingOptimisticStartedAt)
     };
     const signature = JSON.stringify(visibleDetails);
     if (perfActionsStore.lastVisibleSignature === signature) return;
     perfActionsStore.lastVisibleSignature = signature;
     recordPerfVisibleUpdate(visibleDetails);
-  }, [game, selectedCard?.zone]);
+  }, [game, selectedCard?.zone, pendingOptimisticActionId, pendingOptimisticStartedAt]);
 
 
   // Chat Helpers
@@ -4488,6 +4632,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     actionMessages.length = 0;
 
     let updates = { log: arrayUnion(logEntry) };
+    let optimisticPatch = null;
     const pendingRecapEvents = [];
 
     if (actionType === 'PASS' || actionType === 'PASS_PRIORITY') {
@@ -4669,6 +4814,21 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
     if (actionType === 'COPY_STACK_ITEM') {
       let copiedStackItemId = null;
+      const optimisticSourceStackItem = (game.stack || []).find((item) => item?.id === payload.stackItemId || item?.sourceId === payload.stackItemId);
+      if (optimisticSourceStackItem) {
+        const optimisticCopiedStackItem = buildCopiedStackItem(optimisticSourceStackItem);
+        copiedStackItemId = optimisticCopiedStackItem.id;
+        applyOptimisticGamePatch({
+          actionType,
+          payload,
+          perfActionId,
+          patch: { stack: [...(game.stack || []), optimisticCopiedStackItem], consecutivePasses: 0 }
+        });
+        setSelectedStackItemId(optimisticCopiedStackItem.id);
+        setStackDetailOpen(true);
+      } else {
+        recordPerfOptimisticSkipped('Stack item not found locally.', perfActionId);
+      }
       const transactionStartedAt = getActionPerfNow();
       await perfRunTransaction('runTransaction', async (transaction) => {
         const snap = await transaction.get(gameRef);
@@ -4727,6 +4887,32 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     }
 
     if (actionType === 'RESOLVE_STACK_TOP' || actionType === 'COUNTER_STACK_TOP') {
+      const optimisticStack = [...(game.stack || [])];
+      const optimisticTopItem = optimisticStack[optimisticStack.length - 1];
+      if (optimisticTopItem && (!payload.stackItemId || optimisticTopItem.id === payload.stackItemId)) {
+        optimisticStack.pop();
+        let optimisticCards = game.cards || [];
+        if (!optimisticTopItem.isCopy) {
+          const optimisticCardIndex = optimisticCards.findIndex((card) => card.instanceId === optimisticTopItem.sourceId);
+          if (optimisticCardIndex >= 0) {
+            optimisticCards = [...optimisticCards];
+            const optimisticCard = { ...optimisticCards[optimisticCardIndex] };
+            const optimisticIsStackSpell = optimisticCard.zone === 'stack_zone' || (optimisticTopItem.itemType || optimisticTopItem.type || '').toString().toUpperCase().includes('SPELL');
+            if (actionType === 'RESOLVE_STACK_TOP' && optimisticIsStackSpell) {
+              const optimisticTypeLine = getCardTypeLine(optimisticCard).toLowerCase();
+              optimisticCard.zone = (!optimisticTypeLine.includes('instant') && !optimisticTypeLine.includes('sorcery')) ? ZONES.BATTLEFIELD : ZONES.GRAVEYARD;
+              optimisticCard.tapped = false;
+            } else if (actionType === 'COUNTER_STACK_TOP' && optimisticCard.zone === 'stack_zone') {
+              optimisticCard.zone = ZONES.GRAVEYARD;
+              optimisticCard.tapped = false;
+            }
+            optimisticCards[optimisticCardIndex] = optimisticCard;
+          }
+        }
+        applyOptimisticGamePatch({ actionType, payload, perfActionId, patch: { stack: optimisticStack, cards: optimisticCards } });
+      } else {
+        recordPerfOptimisticSkipped('Top stack item did not match locally.', perfActionId);
+      }
       const transactionStartedAt = getActionPerfNow();
       let transactionUpdatesIncludeCards = false;
       await perfRunTransaction('runTransaction', async (transaction) => {
@@ -5048,6 +5234,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       const reminder = buildReminder({ text: payload.text, expires: payload.expires, createdBy: userId });
       if (!card || !reminder.text) return;
       updates.cards = game.cards.map(c => c.instanceId === payload.cardId ? { ...c, reminders: [...getEntityReminders(c), reminder] } : c);
+      optimisticPatch = { cards: updates.cards };
       updates.log = arrayUnion(makeActionLog('ADD_CARD_REMINDER', `${actorName} added reminder to ${getSafeCardName(card)}: ${reminder.text}.`, { category: 'reminder', cardId: card.instanceId, cardName: getSafeCardName(card), reminderId: reminder.id, reminderText: reminder.text, expires: reminder.expires }));
 
     } else if (actionType === 'REMOVE_CARD_REMINDER') {
@@ -5055,6 +5242,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       const reminder = getEntityReminders(card).find(item => item.id === payload.reminderId);
       if (!card || !reminder) return;
       updates.cards = game.cards.map(c => c.instanceId === payload.cardId ? { ...c, reminders: getEntityReminders(c).filter(item => item.id !== payload.reminderId) } : c);
+      optimisticPatch = { cards: updates.cards };
       updates.log = arrayUnion(makeActionLog('REMOVE_CARD_REMINDER', `${actorName} removed reminder from ${getSafeCardName(card)}: ${reminder.text}.`, { category: 'reminder', cardId: card.instanceId, cardName: getSafeCardName(card), reminderId: reminder.id, reminderText: reminder.text }));
 
     } else if (actionType === 'ADD_PLAYER_REMINDER') {
@@ -5244,6 +5432,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       const fromName = faces[fromIndex]?.name || card.name || 'one face';
       const toName = faces[toIndex]?.name || card.name || 'another face';
       updates.cards = game.cards.map(c => c.instanceId === payload.cardId ? { ...c, activeFaceIndex: toIndex } : c);
+      optimisticPatch = { cards: updates.cards };
       updates.log = arrayUnion(makeActionLog('SWITCH_CARD_FACE', `${actorName} transformed ${fromName} into ${toName}.`, { category: 'card', cardId: card.instanceId, cardName: toName, fromFaceIndex: fromIndex, toFaceIndex: toIndex, fromFaceName: fromName, toFaceName: toName }));
 
     } else if (actionType === 'CHANGE_CONTROL') {
@@ -5456,6 +5645,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       const newCards = game.cards.map(c => c.instanceId === payload.cardId ? { ...c, zone: ZONES.BATTLEFIELD, ...getBattlefieldPositionCoordinates(spawnPosition) } : c);
       logBattlefieldEntry(battlefieldCard, 'PLAY_LAND', spawnPosition);
       updates.cards = newCards;
+      optimisticPatch = { cards: newCards };
       updates.log = arrayUnion(makeActionLog('PLAY_LAND', `${actorName} played ${getSafeCardName(playedCard, payload.cardName || 'a land')}.`, { category: 'card', cardId: playedCard?.instanceId || payload.cardId, cardName: getSafeCardName(playedCard, payload.cardName || 'a land') }));
       pendingRecapEvents.push({
         type: 'PLAY_LAND',
@@ -5511,6 +5701,13 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         priorityPlayerId: userId,
         priorityIndex: userIndex !== -1 ? userIndex : game.priorityIndex,
         log: arrayUnion(makeActionLog('CAST_SPELL', `${actorName} cast ${getSafeCardName(card, payload.cardName || 'a spell')}${formatActionTargetSuffix(payload.targetIds, payload.targetPlayerIds)}.`, { category: 'stack', cardId: card?.instanceId || payload.cardId, cardName: getSafeCardName(card, payload.cardName || 'a spell'), targetNames: getActionTargetDisplayNames(payload.targetIds, payload.targetPlayerIds) }))
+      };
+      optimisticPatch = {
+        cards: newCards,
+        stack: [...(game.stack || []), stackItem],
+        consecutivePasses: 0,
+        priorityPlayerId: userId,
+        priorityIndex: userIndex !== -1 ? userIndex : game.priorityIndex
       };
 
     } else if (actionType === 'ACTIVATE_ABILITY') {
@@ -5580,6 +5777,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       const nextTapped = !card?.tapped;
       const newCards = game.cards.map(c => c.instanceId === payload.cardId ? { ...c, tapped: nextTapped } : c);
       updates.cards = newCards;
+      optimisticPatch = { cards: newCards };
       updates.log = arrayUnion(makeActionLog('TAP_TOGGLE', `${actorName} ${nextTapped ? 'tapped' : 'untapped'} ${getSafeCardName(card)}.`, { category: 'tap', cardId: card?.instanceId, cardName: getSafeCardName(card), tapped: nextTapped }));
 
     } else if (actionType === 'TEMP_DAMAGE') {
@@ -5600,6 +5798,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       const cardToDraw = libCards[0];
       const newCards = game.cards.map(c => c.instanceId === cardToDraw.instanceId ? { ...c, zone: ZONES.HAND } : c);
       updates.cards = newCards;
+      optimisticPatch = { cards: newCards };
       updates.log = arrayUnion(makeActionLog('DRAW_CARD', `${actorName} drew a card.`, { category: 'draw' }));
 
     } else if (actionType === 'MOVE_ZONE') {
@@ -5639,6 +5838,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       const moveMessage = payload.targetZone === ZONES.COMMAND && movingCard?.isCommander
         ? `${actorName} moved ${movedCardName} to the command zone.`
         : `${actorName} moved ${movedCardName} to ${getZoneLabel(payload.targetZone)}.`;
+      optimisticPatch = { cards: newCards, combat: updates.combat };
       updates.log = arrayUnion(
         makeActionLog('MOVE_ZONE', moveMessage, { category: payload.targetZone === ZONES.COMMAND ? 'commander' : 'zone', cardId: payload.cardId, cardName: movedCardName, fromZone: movingCard?.zone, toZone: payload.targetZone, tokenRemoved: tokenLeavesBattlefield }),
         ...makeAttachmentLogs(attachmentCleanupMessages)
@@ -5766,6 +5966,12 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       updates.log = arrayUnion(makeActionLog('TOGGLE_HAND_REVEAL', !handRevealed ? `${actorName} revealed their hand.` : `${actorName} hid their hand.`, { category: 'reveal' }));
     }
 
+    if (optimisticPatch) {
+      applyOptimisticGamePatch({ actionType, payload, patch: optimisticPatch, perfActionId });
+    } else if (['DRAW_CARD', 'PLAY_LAND', 'CAST_SPELL', 'MOVE_ZONE', 'SWITCH_CARD_FACE', 'TAP_TOGGLE', 'ADD_CARD_REMINDER', 'REMOVE_CARD_REMINDER'].includes(actionType)) {
+      recordPerfOptimisticSkipped('No conservative local patch was produced.', perfActionId);
+    }
+
     if (UNDOABLE_ACTION_TYPES.has(actionType) && actionUpdatesRestorableState(updates)) {
       const actionLabel = normalizeUndoActionLabel(actionMessages[0] || payload.desc || actionType, actorName);
       await perfRunTransaction('runTransaction', async (transaction) => {
@@ -5795,6 +6001,9 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       await Promise.all(pendingRecapEvents.map((event) => appendEvent(gameId, event)));
     }
     } catch (error) {
+      clearOptimisticGame(error?.message || 'Firestore action failed', perfActionId);
+      setNotification(`Action failed: ${error?.message || String(error)}`);
+      setTimeout(() => setNotification(null), 3500);
       failPerfAction(perfActionId, error);
       debugActionsError(`handleAction threw: ${actionType}`, {
         actionType,

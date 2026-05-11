@@ -427,6 +427,192 @@ const debugActionsError = (message, details = {}) => {
 };
 
 
+const COMPACT_IMAGE_URI_KEYS = ['small', 'normal', 'large'];
+const COMPACT_CARD_FACE_FIELDS = [
+  'name',
+  'mana_cost',
+  'type_line',
+  'oracle_text',
+  'colors',
+  'power',
+  'toughness',
+  'loyalty',
+  'defense',
+  'image_uri'
+];
+const COMPACT_CARD_FIELDS = [
+  'id',
+  'oracle_id',
+  'name',
+  'mana_cost',
+  'type_line',
+  'oracle_text',
+  'colors',
+  'color_identity',
+  'colorIdentity',
+  'layout',
+  'power',
+  'toughness',
+  'loyalty',
+  'defense',
+  'image_uri',
+  'set',
+  'set_name',
+  'collector_number',
+  'rarity',
+  'artist',
+  'scryfall_uri',
+  'scryfallId',
+  'typeLine',
+  'rulesText',
+  'color',
+  'displayName'
+];
+const GAMEPLAY_CARD_FIELDS = [
+  'instanceId',
+  'ownerId',
+  'controllerId',
+  'zone',
+  'tapped',
+  'faceDown',
+  'counters',
+  'reminders',
+  'attachment',
+  'attachedToType',
+  'attachedToId',
+  'isToken',
+  'quantity',
+  'isCommander',
+  'commanderTax',
+  'commanderDamage',
+  'x',
+  'y',
+  'nx',
+  'ny',
+  'positionMode',
+  'positionBasisWidthPx',
+  'positionBasisHeightPx',
+  'tempDamage',
+  'controllerName',
+  'activeFaceIndex'
+];
+
+const copyDefinedFields = (source, fieldNames) => {
+  const result = {};
+  if (!source || typeof source !== 'object') return result;
+  fieldNames.forEach((field) => {
+    if (source[field] !== undefined) result[field] = source[field];
+  });
+  return result;
+};
+
+const sanitizeImageUris = (imageUris) => {
+  if (!imageUris || typeof imageUris !== 'object') return undefined;
+  const compact = {};
+  COMPACT_IMAGE_URI_KEYS.forEach((key) => {
+    if (typeof imageUris[key] === 'string' && imageUris[key]) compact[key] = imageUris[key];
+  });
+  return Object.keys(compact).length > 0 ? compact : undefined;
+};
+
+const sanitizeScryfallCardFaceForGame = (face = {}) => {
+  const compactFace = copyDefinedFields(face, COMPACT_CARD_FACE_FIELDS);
+  const imageUris = sanitizeImageUris(face.image_uris);
+  if (imageUris) compactFace.image_uris = imageUris;
+  if (!compactFace.image_uri) compactFace.image_uri = getBestImageUriFromImageUris(imageUris);
+  Object.keys(compactFace).forEach((key) => compactFace[key] === undefined && delete compactFace[key]);
+  return compactFace;
+};
+
+const getSanitizedCardFaces = (card = {}) => {
+  if (!Array.isArray(card.card_faces)) return undefined;
+  const faces = card.card_faces
+    .filter((face) => face && typeof face === 'object')
+    .map(sanitizeScryfallCardFaceForGame)
+    .filter((face) => face.name || face.type_line || face.oracle_text || face.image_uri || face.image_uris?.normal || face.image_uris?.large || face.mana_cost);
+  return faces.length > 0 ? faces : undefined;
+};
+
+const sanitizeScryfallCardForGame = (data = {}, extraFields = {}) => {
+  const compactCard = {
+    ...copyDefinedFields(data, COMPACT_CARD_FIELDS),
+    ...copyDefinedFields(extraFields, [...COMPACT_CARD_FIELDS, ...GAMEPLAY_CARD_FIELDS])
+  };
+  const imageUris = sanitizeImageUris(data.image_uris || extraFields.image_uris);
+  if (imageUris) compactCard.image_uris = imageUris;
+  const faces = getSanitizedCardFaces(data.card_faces ? data : extraFields);
+  if (faces) {
+    compactCard.card_faces = faces;
+    compactCard.activeFaceIndex = Number.isInteger(extraFields.activeFaceIndex) ? extraFields.activeFaceIndex : (Number.isInteger(data.activeFaceIndex) ? data.activeFaceIndex : 0);
+  }
+  if (!compactCard.image_uri) compactCard.image_uri = getCardImageUri({ ...compactCard, activeFaceIndex: compactCard.activeFaceIndex || 0 }) || getCardImageUri(data);
+  Object.keys(compactCard).forEach((key) => compactCard[key] === undefined && delete compactCard[key]);
+  return compactCard;
+};
+
+const normalizeGameCardForFirestore = (card = {}) => {
+  if (!card || typeof card !== 'object') return card;
+  const normalized = sanitizeScryfallCardForGame(card, card);
+  const faces = getSanitizedCardFaces(card);
+  if (faces) normalized.card_faces = faces;
+  else delete normalized.card_faces;
+  if (faces && Number.isInteger(card.activeFaceIndex)) normalized.activeFaceIndex = Math.min(Math.max(card.activeFaceIndex, 0), faces.length - 1);
+  else if (!faces) delete normalized.activeFaceIndex;
+  if (card.scryfallId === undefined && card.id !== undefined) normalized.scryfallId = card.id;
+  return normalized;
+};
+
+const normalizeGameCardsForFirestore = (cards = []) => Array.isArray(cards) ? cards.map(normalizeGameCardForFirestore) : cards;
+
+const normalizeUndoEntryForFirestore = (entry = {}) => {
+  if (!entry || typeof entry !== 'object') return entry;
+  const previousState = entry.previousState && typeof entry.previousState === 'object'
+    ? { ...entry.previousState }
+    : entry.previousState;
+  if (previousState && Array.isArray(previousState.cards)) previousState.cards = normalizeGameCardsForFirestore(previousState.cards);
+  return previousState === entry.previousState ? entry : { ...entry, previousState };
+};
+
+const normalizeUndoStackForFirestore = (undoStack = []) => Array.isArray(undoStack) ? undoStack.map(normalizeUndoEntryForFirestore) : undoStack;
+
+const normalizeGameUpdatesForFirestore = (updates = {}, debugContext = 'card write') => {
+  if (!updates || typeof updates !== 'object') return updates;
+  const normalized = { ...updates };
+  if (Array.isArray(normalized.cards)) normalized.cards = normalizeGameCardsForFirestore(normalized.cards);
+  if (Array.isArray(normalized.undoStack)) normalized.undoStack = normalizeUndoStackForFirestore(normalized.undoStack);
+  if (Array.isArray(normalized.cards)) logDebugCardWriteSize(debugContext, normalized.cards, normalized);
+  return normalized;
+};
+
+const estimateJsonByteSize = (value) => {
+  try {
+    return new TextEncoder().encode(JSON.stringify(value)).length;
+  } catch {
+    try {
+      return JSON.stringify(value).length;
+    } catch {
+      return null;
+    }
+  }
+};
+
+const logDebugCardWriteSize = (context, cards, updates = {}) => {
+  if (!isDebugActionsEnabled() || !Array.isArray(cards)) return;
+  const cardSizes = cards.map((card) => ({
+    name: getCardDisplayName(card, card?.name || 'Unknown'),
+    instanceId: card?.instanceId || null,
+    bytes: estimateJsonByteSize(card) || 0
+  })).sort((a, b) => b.bytes - a.bytes);
+  debugActionsLog('card write size estimate', {
+    context,
+    approxUpdateBytes: estimateJsonByteSize(updates),
+    approxCardsBytes: estimateJsonByteSize(cards),
+    cardCount: cards.length,
+    largestCards: cardSizes.slice(0, 5)
+  });
+};
+
+
 const debugObjectsDiffer = (a, b) => {
   if (!a || !b) return false;
   try {
@@ -572,11 +758,12 @@ const cloneUndoValue = (value) => {
 const buildUndoPreviousState = (currentGame = {}) => {
   const previousState = {};
   UNDO_STATE_FIELDS.forEach((field) => {
-    if (currentGame[field] !== undefined) previousState[field] = cloneUndoValue(currentGame[field]);
+    if (currentGame[field] !== undefined) previousState[field] = field === 'cards' ? normalizeGameCardsForFirestore(cloneUndoValue(currentGame[field])) : cloneUndoValue(currentGame[field]);
   });
   if (previousState.combat === undefined) previousState.combat = getEmptyCombatState();
   if (previousState.stack === undefined) previousState.stack = [];
   if (previousState.cards === undefined) previousState.cards = [];
+  else previousState.cards = normalizeGameCardsForFirestore(previousState.cards);
   if (previousState.players === undefined) previousState.players = [];
   if (previousState.reveals === undefined) previousState.reveals = [];
   if (previousState.targets === undefined) previousState.targets = [];
@@ -603,15 +790,15 @@ const buildUndoEntry = ({ currentGame, actorId, actorName, actionLabel }) => ({
   previousState: buildUndoPreviousState(currentGame)
 });
 
-const appendUndoEntry = (currentGame, undoEntry) => [
+const appendUndoEntry = (currentGame, undoEntry) => normalizeUndoStackForFirestore([
   ...((currentGame?.undoStack || []).slice(-(MAX_UNDO_STACK_ENTRIES - 1))),
   undoEntry
-];
+]);
 
 const getUndoRestoreUpdates = (previousState = {}) => {
   const updates = {};
   UNDO_STATE_FIELDS.forEach((field) => {
-    if (previousState[field] !== undefined) updates[field] = cloneUndoValue(previousState[field]);
+    if (previousState[field] !== undefined) updates[field] = field === 'cards' ? normalizeGameCardsForFirestore(cloneUndoValue(previousState[field])) : cloneUndoValue(previousState[field]);
   });
   return updates;
 };
@@ -3403,12 +3590,12 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           undoneActionId: latestUndoEntry.id
         });
 
-        transaction.update(gameRef, {
+        transaction.update(gameRef, normalizeGameUpdatesForFirestore({
           ...getUndoRestoreUpdates(latestUndoEntry.previousState || {}),
-          undoStack: currentUndoStack.slice(0, -1),
+          undoStack: normalizeUndoStackForFirestore(currentUndoStack.slice(0, -1)),
           log: [...(currentGame.log || []), undoLogEntry],
           updatedAt: serverTimestamp()
-        });
+        }, 'UNDO'));
         undone = true;
       });
     } catch (error) {
@@ -3551,7 +3738,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         const passedGame = advancePassPriorityState(currentGame, passLogEntry, (event) => turnStartEvents.push(event), layoutOptions);
         const { game: proxyGame } = runProxyAutoPassAdvances(passedGame, userId, actorName, (event) => turnStartEvents.push(event));
 
-        transaction.update(gameRef, {
+        transaction.update(gameRef, normalizeGameUpdatesForFirestore({
           phase: proxyGame.phase,
           turnNumber: proxyGame.turnNumber,
           activePlayerIndex: proxyGame.activePlayerIndex,
@@ -3571,7 +3758,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             actionLabel: normalizeUndoActionLabel(passLogEntry.message, actorName)
           })),
           updatedAt: serverTimestamp()
-        });
+        }, 'PASS_PRIORITY'));
       });
       if (turnStartEvents.length > 0) {
         await Promise.all(turnStartEvents.map((event) => appendEvent(gameId, event)));
@@ -3684,7 +3871,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             START_EXTRA_TURN: 'started an extra turn',
             SET_ACTIVE_PLAYER: 'changed the active player'
           };
-          transaction.update(gameRef, {
+          transaction.update(gameRef, normalizeGameUpdatesForFirestore({
             ...manualUpdates,
             undoStack: appendUndoEntry(currentGame, buildUndoEntry({
               currentGame,
@@ -3693,7 +3880,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               actionLabel: manualActionLabels[actionType] || 'changed time controls'
             })),
             updatedAt: serverTimestamp()
-          });
+          }, actionType));
         }
       });
       setAutoPassConfig(getDefaultAutoPassConfig());
@@ -3759,7 +3946,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           cardName
         });
 
-        transaction.update(gameRef, {
+        transaction.update(gameRef, normalizeGameUpdatesForFirestore({
           stack: currentStack,
           cards: updatedCards,
           consecutivePasses: 0,
@@ -3773,7 +3960,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             actionLabel: normalizeUndoActionLabel(stackLogEntry.message, logActorName)
           })),
           updatedAt: serverTimestamp()
-        });
+        }, actionType));
       });
       setSelectedStackItemId(null);
       setStackDetailOpen(false);
@@ -3812,7 +3999,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           resultLabel: `Random discard → ${discardedName}`
         });
 
-        transaction.update(gameRef, {
+        transaction.update(gameRef, normalizeGameUpdatesForFirestore({
           cards: nextCards,
           log: [...(currentGame.log || []), discardLogEntry],
           undoStack: appendUndoEntry(currentGame, buildUndoEntry({
@@ -3822,7 +4009,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             actionLabel: normalizeUndoActionLabel(discardLogEntry.message, transactionActorName)
           })),
           updatedAt: serverTimestamp()
-        });
+        }, 'DISCARD_RANDOM'));
       });
 
       if (emptyHand) {
@@ -4734,14 +4921,14 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         const currentPlayers = currentGame.players || [];
         if (!currentPlayers.some((player) => player.id === userId)) return;
         const transactionActorName = currentPlayers.find((player) => player.id === userId)?.name || actorName;
-        transaction.update(gameRef, {
+        transaction.update(gameRef, normalizeGameUpdatesForFirestore({
           ...updates,
           undoStack: appendUndoEntry(currentGame, buildUndoEntry({ currentGame, actorId: userId, actorName: transactionActorName, actionLabel })),
           updatedAt: serverTimestamp()
-        });
+        }, actionType));
       });
     } else {
-      await updateDoc(gameRef, updates);
+      await updateDoc(gameRef, normalizeGameUpdatesForFirestore(updates, actionType));
     }
     if (pendingRecapEvents.length > 0) {
       await Promise.all(pendingRecapEvents.map((event) => appendEvent(gameId, event)));
@@ -4840,7 +5027,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       const { game: proxyGame, advances } = runProxyAutoPassAdvances(currentGame, userId, actorName, (event) => turnStartEvents.push(event));
       if (advances === 0) return;
 
-      transaction.update(gameRef, {
+      transaction.update(gameRef, normalizeGameUpdatesForFirestore({
         phase: proxyGame.phase,
         turnNumber: proxyGame.turnNumber,
         activePlayerIndex: proxyGame.activePlayerIndex,
@@ -4853,7 +5040,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         combat: proxyGame.combat || getEmptyCombatState(),
         log: proxyGame.log,
         autopass: proxyGame.autopass || {}
-      });
+      }, 'AUTO_PASS'));
     }).then(async () => {
       if (turnStartEvents.length > 0) {
         await Promise.all(turnStartEvents.map((event) => appendEvent(gameId, event)));
@@ -4938,12 +5125,11 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           const hasCardFaces = Array.isArray(data.card_faces);
           const imageUri = getCardImageUri(hasCardFaces ? { ...data, activeFaceIndex: 0 } : data);
           for (let i = 0; i < entry.count; i++) {
-            const importedCard = {
-              ...data,
+            const importedCard = sanitizeScryfallCardForGame(data, {
               instanceId: generateCardId(),
               scryfallId: data.id,
               ...(imageUri ? { image_uri: imageUri } : {}),
-              ...(hasCardFaces ? { card_faces: data.card_faces, activeFaceIndex: 0 } : {}),
+              ...(hasCardFaces ? { activeFaceIndex: 0 } : {}),
               ownerId: userId,
               controllerId: userId,
               zone: entry.isCommander ? ZONES.COMMAND : ZONES.LIBRARY,
@@ -4954,7 +5140,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               x: xOffset,
               y: yOffset,
               ...(entry.isCommander ? { isCommander: true, commanderTax: 0, commanderDamage: {} } : {})
-            };
+            });
             importedCards.push(importedCard);
             importedCount += 1;
             if (entry.isCommander) importedCommanderCount += 1;
@@ -4980,7 +5166,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           const currentGame = snap.data();
           const currentPlayers = currentGame.players || [];
           if (!currentPlayers.some((player) => player.id === userId)) return;
-          transaction.update(gameRef, {
+          transaction.update(gameRef, normalizeGameUpdatesForFirestore({
             cards: [...(currentGame.cards || []), ...importedCards],
             log: arrayUnion(buildGameLogEntry({
               currentGame,
@@ -4997,7 +5183,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               actionLabel: normalizeUndoActionLabel(importMessage, importActorName)
             })),
             updatedAt: serverTimestamp()
-          });
+          }, 'IMPORT'));
         });
       }
 
@@ -5044,7 +5230,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         const nextCards = (currentGame.cards || []).filter(card => !deckCardIds.has(card.instanceId));
         const nextReveals = (currentGame.reveals || []).filter(entry => entry.revealerId !== userId && !deckCardIds.has(entry.cardId));
 
-        transaction.update(gameRef, {
+        transaction.update(gameRef, normalizeGameUpdatesForFirestore({
           cards: nextCards,
           reveals: nextReveals,
           log: arrayUnion(buildGameLogEntry({
@@ -5062,7 +5248,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             actionLabel: normalizeUndoActionLabel(deckDeleteMessage, deckDeleteActorName)
           })),
           updatedAt: serverTimestamp()
-        });
+        }, 'DECK_DELETE'));
       });
 
       setDeleteDeckConfirmOpen(false);
@@ -5477,7 +5663,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     });
 
     if (!changed) return;
-    updateDoc(doc(db, 'games_v3', gameId), { cards: nextCards });
+    updateDoc(doc(db, 'games_v3', gameId), normalizeGameUpdatesForFirestore({ cards: nextCards }, 'NORMALIZE_LEGACY_POSITION'));
   }, [gameId, game?.cards, viewAsPlayerId]);
 
   useEffect(() => {
@@ -5525,7 +5711,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       startX: Number(myBattlefieldLayout.startX?.toFixed?.(1) ?? 0),
       autoCardCount: autoBattlefieldIds.size
     });
-    updateDoc(doc(db, 'games_v3', gameId), { cards: nextCards });
+    updateDoc(doc(db, 'games_v3', gameId), normalizeGameUpdatesForFirestore({ cards: nextCards }, 'AUTO_LAYOUT_RESIZE'));
   }, [gameId, game?.cards, myBattlefield, myBattlefieldLayout, battlefieldViewport.width, battlefieldViewport.height, draggingCard]);
 
   const buildSectionDisplayNameMap = (cards) => buildDuplicateDisplayNameMap(cards);

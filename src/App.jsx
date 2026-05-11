@@ -727,6 +727,7 @@ const UNDOABLE_ACTION_TYPES = new Set([
   'TOGGLE_BLOCK_TARGET',
   'RESOLVE_STACK_TOP',
   'COUNTER_STACK_TOP',
+  'COPY_STACK_ITEM',
   'DISCARD_RANDOM',
   'SCRY_BOTTOM',
   'REORDER_TOP_LIBRARY',
@@ -804,6 +805,30 @@ const getUndoRestoreUpdates = (previousState = {}) => {
 };
 
 const actionUpdatesRestorableState = (updates = {}) => UNDO_STATE_FIELDS.some((field) => Object.prototype.hasOwnProperty.call(updates, field));
+
+const getCopyStackItemName = (item = {}) => {
+  const baseName = String(item?.name || item?.copiedFromName || 'Stack item').trim() || 'Stack item';
+  return /\(copy\)$/i.test(baseName) ? baseName : `${baseName} (Copy)`;
+};
+
+const buildCopiedStackItem = (item = {}) => {
+  const copiedItem = {
+    id: generateCardId(),
+    sourceId: item.sourceId || null,
+    copiedFromStackItemId: item.id || item.sourceId || null,
+    copiedFromName: String(item.name || item.copiedFromName || 'Stack item').trim() || 'Stack item',
+    name: getCopyStackItemName(item),
+    controllerId: item.controllerId || null,
+    timestamp: Date.now(),
+    targetIds: Array.isArray(item.targetIds) ? [...item.targetIds] : [],
+    targetPlayerIds: Array.isArray(item.targetPlayerIds) ? [...item.targetPlayerIds] : [],
+    isCopy: true
+  };
+  ['cardImage', 'typeLine', 'itemType', 'type'].forEach((field) => {
+    if (item[field] !== undefined && item[field] !== null) copiedItem[field] = item[field];
+  });
+  return copiedItem;
+};
 
 const buildGameLogEntry = ({ currentGame, playerId, playerName, type, category, message, timestamp = Date.now(), ...extra }) => ({
   timestamp,
@@ -3888,6 +3913,57 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       return;
     }
 
+    if (actionType === 'COPY_STACK_ITEM') {
+      let copiedStackItemId = null;
+      await runTransaction(db, async (transaction) => {
+        const snap = await transaction.get(gameRef);
+        if (!snap.exists()) return;
+        const currentGame = snap.data();
+        const currentPlayers = currentGame.players || [];
+        const currentPlayer = currentPlayers.find((player) => player.id === userId);
+        if (!currentPlayer) return;
+
+        const sourceStackItem = (currentGame.stack || []).find((item) => item?.id === payload.stackItemId || item?.sourceId === payload.stackItemId);
+        if (!sourceStackItem) return;
+
+        const copiedStackItem = buildCopiedStackItem(sourceStackItem);
+        copiedStackItemId = copiedStackItem.id;
+        const transactionActorName = currentPlayer.name || actorName;
+        const sourceName = sourceStackItem.name || sourceStackItem.copiedFromName || 'Stack item';
+        const stackLogEntry = buildGameLogEntry({
+          currentGame,
+          playerId: userId,
+          playerName: transactionActorName,
+          type: 'COPY_STACK_ITEM',
+          category: 'stack',
+          message: `${transactionActorName} copied ${sourceName} on the stack.`,
+          cardId: sourceStackItem.sourceId || null,
+          cardName: copiedStackItem.name,
+          copiedFromStackItemId: sourceStackItem.id || sourceStackItem.sourceId || null,
+          copiedFromName: sourceName,
+          copiedStackItemId: copiedStackItem.id
+        });
+
+        transaction.update(gameRef, normalizeGameUpdatesForFirestore({
+          stack: [...(currentGame.stack || []), copiedStackItem],
+          consecutivePasses: 0,
+          log: [...(currentGame.log || []), stackLogEntry],
+          undoStack: appendUndoEntry(currentGame, buildUndoEntry({
+            currentGame,
+            actorId: userId,
+            actorName: transactionActorName,
+            actionLabel: normalizeUndoActionLabel(stackLogEntry.message, transactionActorName)
+          })),
+          updatedAt: serverTimestamp()
+        }, actionType));
+      });
+      if (copiedStackItemId) {
+        setSelectedStackItemId(copiedStackItemId);
+        setStackDetailOpen(true);
+      }
+      return;
+    }
+
     if (actionType === 'RESOLVE_STACK_TOP' || actionType === 'COUNTER_STACK_TOP') {
       await runTransaction(db, async (transaction) => {
         const snap = await transaction.get(gameRef);
@@ -3903,8 +3979,10 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         const updatedCards = [...(currentGame.cards || [])];
         const cardIndex = updatedCards.findIndex(c => c.instanceId === topItem.sourceId);
         const cardName = topItem.name || 'Stack item';
+        const shouldMovePhysicalCard = !topItem.isCopy;
+        let cardsChanged = false;
 
-        if (cardIndex >= 0) {
+        if (shouldMovePhysicalCard && cardIndex >= 0) {
           const card = { ...updatedCards[cardIndex] };
           const isStackSpell = card.zone === 'stack_zone' || (topItem.itemType || topItem.type || '').toString().toUpperCase().includes('SPELL');
           if (actionType === 'RESOLVE_STACK_TOP' && isStackSpell) {
@@ -3929,6 +4007,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             card.tapped = false;
           }
           updatedCards[cardIndex] = card;
+          cardsChanged = true;
         }
 
         const currentPlayers = currentGame.players || [];
@@ -3941,14 +4020,13 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           playerName: logActorName,
           type: actionType === 'RESOLVE_STACK_TOP' ? 'RESOLVE_SPELL' : 'COUNTER_STACK_ITEM',
           category: 'stack',
-          message: actionType === 'RESOLVE_STACK_TOP' ? `${cardName} resolved.` : `${cardName} was countered/fizzled.`,
+          message: actionType === 'RESOLVE_STACK_TOP' ? `${logActorName} resolved ${cardName}.` : `${logActorName} countered/fizzled ${cardName}.`,
           cardId: topItem.sourceId || null,
           cardName
         });
 
-        transaction.update(gameRef, normalizeGameUpdatesForFirestore({
+        const stackUpdates = {
           stack: currentStack,
-          cards: updatedCards,
           consecutivePasses: 0,
           priorityIndex: nextPriorityIndex,
           priorityPlayerId: nextPriorityPlayerId,
@@ -3960,7 +4038,10 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             actionLabel: normalizeUndoActionLabel(stackLogEntry.message, logActorName)
           })),
           updatedAt: serverTimestamp()
-        }, actionType));
+        };
+        if (cardsChanged) stackUpdates.cards = updatedCards;
+
+        transaction.update(gameRef, normalizeGameUpdatesForFirestore(stackUpdates, actionType));
       });
       setSelectedStackItemId(null);
       setStackDetailOpen(false);
@@ -5833,6 +5914,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     typeLabel: getStackItemTypeLabel(item),
     typeLine: getStackItemTypeLine(item),
     targets: getStackTargetDisplayNames(item),
+    isCopy: Boolean(item?.isCopy),
     isTop: index === 0,
     stackPosition: stackCards.length - index
   }));
@@ -6326,7 +6408,12 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                         className="bg-black/60 p-2 rounded border-l-2 border-yellow-500 flex justify-between items-start gap-4 cursor-pointer hover:bg-black/80 transition-colors"
                       >
                         <div className="min-w-0">
-                          <div className="text-sm font-medium text-yellow-100 break-words">{item.name}</div>
+                          <div className="flex flex-wrap items-center gap-1.5 text-sm font-medium text-yellow-100 break-words">
+                            <span>{item.name}</span>
+                            {item.isCopy && (
+                              <span className="rounded-full border border-cyan-400/40 bg-cyan-950/60 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-cyan-100">Copy</span>
+                            )}
+                          </div>
                           {itemTargetInfo.targetDisplayNames.length > 0 && (
                             <div className="mt-0.5 text-[11px] text-yellow-200 break-words">
                               Targeting: {formatTargetListInline(itemTargetInfo.targetDisplayNames, 2)}
@@ -7001,12 +7088,17 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                   Stack is empty.
                 </div>
               ) : selectedStackDetailItem ? (() => {
-                const { item, name, casterName, typeLabel, typeLine, targets, isTop, stackPosition } = selectedStackDetailItem;
+                const { item, name, casterName, typeLabel, typeLine, targets, isCopy, isTop, stackPosition } = selectedStackDetailItem;
                 return (
                   <div className={`rounded-xl border p-3 shadow-lg ${isTop ? 'border-yellow-500/60 bg-yellow-950/30' : 'border-slate-700 bg-slate-800/70'}`}>
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
-                        <div className="font-bold text-slate-50 text-lg break-words">{name}</div>
+                        <div className="flex flex-wrap items-center gap-2 font-bold text-slate-50 text-lg break-words">
+                          <span>{name}</span>
+                          {isCopy && (
+                            <span className="rounded-full border border-cyan-400/40 bg-cyan-950/60 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-cyan-100">Copy</span>
+                          )}
+                        </div>
                         <div className="mt-1 text-xs text-slate-300">{typeLabel === 'Ability' ? 'Controller' : 'Caster'}: {casterName}</div>
                       </div>
                       {typeLabel && (
@@ -7075,6 +7167,13 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                       )}
                       <button
                         type="button"
+                        onClick={() => handleAction('COPY_STACK_ITEM', { stackItemId: item.id || item.sourceId })}
+                        className="rounded-lg border border-cyan-500/50 bg-cyan-950/60 hover:bg-cyan-900/70 px-3 py-2 text-sm font-bold text-cyan-100 shadow"
+                      >
+                        Copy stack item
+                      </button>
+                      <button
+                        type="button"
                         onClick={() => viewStackItemCard(item)}
                         className="rounded-lg border border-sky-500/50 bg-sky-950/60 hover:bg-sky-900/70 px-3 py-2 text-sm font-bold text-sky-100 shadow"
                       >
@@ -7090,7 +7189,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                     </div>
                   </div>
                 );
-              })() : stackDetailItems.map(({ item, name, casterName, typeLabel, typeLine, targets, isTop, stackPosition }) => (
+              })() : stackDetailItems.map(({ item, name, casterName, typeLabel, typeLine, targets, isCopy, isTop, stackPosition }) => (
                 <button
                   type="button"
                   key={item.id || `${item.sourceId}-${item.timestamp}`}
@@ -7099,7 +7198,12 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <div className="font-bold text-slate-50 break-words">{name}</div>
+                      <div className="flex flex-wrap items-center gap-1.5 font-bold text-slate-50 break-words">
+                        <span>{name}</span>
+                        {isCopy && (
+                          <span className="rounded-full border border-cyan-400/40 bg-cyan-950/60 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-cyan-100">Copy</span>
+                        )}
+                      </div>
                       <div className="mt-1 text-xs text-slate-300">{typeLabel === 'Ability' ? 'Controller' : 'Caster'}: {casterName}</div>
                     </div>
                     <span className="shrink-0 rounded-full border border-slate-600 bg-slate-950/80 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-300">

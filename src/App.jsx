@@ -416,14 +416,46 @@ const isDebugActionsEnabled = () => {
   }
 };
 
-const isPerfActionsEnabled = () => {
+const persistPerfActionsFromUrl = () => {
   if (typeof window === 'undefined') return false;
   try {
     const params = new URLSearchParams(window.location.search || '');
-    return params.get('perfActions') === '1' || window.localStorage?.getItem('perfActions') === '1';
+    if (params.get('perfActions') !== '1') return false;
+    window.localStorage.setItem('perfActions', '1');
+    return true;
   } catch {
     return false;
   }
+};
+
+const isPerfActionsEnabled = () => {
+  if (typeof window === 'undefined') return false;
+  try {
+    return persistPerfActionsFromUrl() || window.localStorage?.getItem('perfActions') === '1';
+  } catch {
+    return false;
+  }
+};
+
+persistPerfActionsFromUrl();
+
+const disablePerfActions = () => {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.removeItem('perfActions');
+    const url = new URL(window.location.href);
+    url.searchParams.delete('perfActions');
+    window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+  } catch {
+    // Best-effort debug toggle only.
+  }
+  perfActionsStore.state = createEmptyPerfState();
+  perfActionsStore.activeActionId = null;
+  perfActionsStore.lastWriteDoneActionId = null;
+  perfActionsStore.lastWriteDonePerfNow = null;
+  perfActionsStore.lastSnapshotPerfNow = null;
+  perfActionsStore.lastVisibleSignature = null;
+  emitPerfActionsState();
 };
 
 const getActionPerfNow = () => (typeof performance !== 'undefined' && typeof performance.now === 'function' ? performance.now() : Date.now());
@@ -2411,6 +2443,7 @@ const Lobby = ({
   };
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col items-center justify-center p-4">
+      <PerfDebugIndicator />
       <div className="max-w-md w-full space-y-8 relative">
         <div className="text-center">
           <h1 className="text-4xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-600">
@@ -3168,13 +3201,29 @@ const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isD
 const formatPerfMs = (value) => (Number.isFinite(value) ? `${Math.round(value)}ms` : '—');
 const formatPerfTime = (value) => (value ? new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—');
 
+const PerfDebugIndicator = () => {
+  if (!isPerfActionsEnabled()) return null;
+
+  return (
+    <div className="pointer-events-none fixed right-2 top-2 z-[80] rounded-full border border-cyan-300/60 bg-cyan-950/90 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-cyan-100 shadow-lg">
+      Perf debug on
+    </div>
+  );
+};
+
 const PerformanceDebugPanel = () => {
   const [perfState, setPerfState] = useState(() => getPerfActionsState());
   const [collapsed, setCollapsed] = useState(false);
+  const [disabled, setDisabled] = useState(false);
 
   useEffect(() => subscribePerfActions((nextState) => setPerfState({ ...nextState })), []);
 
-  if (!isPerfActionsEnabled()) return null;
+  if (disabled || !isPerfActionsEnabled()) return null;
+
+  const handleDisable = () => {
+    disablePerfActions();
+    setDisabled(true);
+  };
 
   const lastAction = perfState.actions[0];
   const stackBefore = lastAction?.gameBefore?.stackLength;
@@ -3194,6 +3243,13 @@ const PerformanceDebugPanel = () => {
       </button>
       {!collapsed && (
         <div className="max-h-[45vh] space-y-2 overflow-y-auto p-3">
+          <button
+            type="button"
+            onClick={handleDisable}
+            className="w-full rounded-lg border border-cyan-400/40 bg-slate-900 px-3 py-2 text-left text-[11px] font-bold text-cyan-100 transition hover:bg-slate-800"
+          >
+            Disable perf debug
+          </button>
           {!lastAction ? (
             <div className="rounded-lg border border-slate-700 bg-slate-900 p-2 text-slate-300">Waiting for a tracked action. Try Cast Spell, Play Land, Move Zone, stack actions, Draw, or Pass.</div>
           ) : (
@@ -6593,6 +6649,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       onMouseUp={handleDragEnd}
       onTouchEnd={handleDragEnd}
     >
+      <PerfDebugIndicator />
       <PerformanceDebugPanel />
       {/* 1. Header */}
       <div className="bg-slate-800 border-b border-slate-700 p-2 shrink-0 shadow-md top-action-scroll-wrap">

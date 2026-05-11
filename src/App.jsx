@@ -574,7 +574,8 @@ const IMPORTANT_PERF_ACTIONS = new Set([
   'BATCH_SCRY_LIBRARY',
   'BATCH_SURVEIL_LIBRARY',
   'PASS',
-  'PASS_PRIORITY'
+  'PASS_PRIORITY',
+  'UNDO_LAST_ACTION'
 ]);
 
 const createEmptyPerfState = () => ({
@@ -648,6 +649,7 @@ const getPerfGameCounts = (currentGame = {}) => {
 const getPerfExpectedLogType = (actionType) => {
   if (actionType === 'RESOLVE_STACK_TOP') return 'RESOLVE_SPELL';
   if (actionType === 'COUNTER_STACK_TOP') return 'COUNTER_STACK_ITEM';
+  if (actionType === 'UNDO_LAST_ACTION') return 'UNDO';
   return actionType;
 };
 
@@ -676,6 +678,7 @@ const getPerfActionMarker = ({ actionType, payload = {}, currentGame = null } = 
   if (actionType === 'REMOVE_CARD_REMINDER') marker.expected = { reminderId: payload?.reminderId || null };
   if (actionType === 'COPY_STACK_ITEM') marker.expected = { stackLength: before.stackLength + 1 };
   if (actionType === 'RESOLVE_STACK_TOP' || actionType === 'COUNTER_STACK_TOP') marker.expected = { stackLength: Math.max(0, before.stackLength - 1) };
+  if (actionType === 'UNDO_LAST_ACTION') marker.expected = { undoneActionId: payload?.undoEntryId || null };
   return marker;
 };
 
@@ -735,6 +738,9 @@ const doesPerfSnapshotReflectAction = (action = {}, data = {}, lastLog = null) =
   }
   if (action.actionType === 'RESOLVE_STACK_TOP' || action.actionType === 'COUNTER_STACK_TOP') {
     return logMatches && counts.stackLength <= expected.stackLength;
+  }
+  if (action.actionType === 'UNDO_LAST_ACTION') {
+    return logMatches && (!expected.undoneActionId || lastLog?.undoneActionId === expected.undoneActionId);
   }
   return logMatches;
 };
@@ -1537,6 +1543,23 @@ const getUndoRestoreUpdates = (previousState = {}) => {
     if (previousState[field] !== undefined) updates[field] = field === 'cards' ? normalizeGameCardsForFirestore(cloneUndoValue(previousState[field])) : cloneUndoValue(previousState[field]);
   });
   return updates;
+};
+
+const getUndoRestoredFields = (previousState = {}) => Object.keys(getUndoRestoreUpdates(previousState));
+
+const buildOptimisticUndoPatch = (currentGame = {}, undoEntry = {}) => {
+  if (!undoEntry?.previousState) return null;
+  const restoredUpdates = getUndoRestoreUpdates(undoEntry.previousState);
+  if (Object.keys(restoredUpdates).length === 0) return null;
+  const currentUndoStack = Array.isArray(currentGame?.undoStack) ? currentGame.undoStack : [];
+  const latestUndoEntry = currentUndoStack[currentUndoStack.length - 1];
+  const nextUndoStack = latestUndoEntry?.id === undoEntry.id
+    ? currentUndoStack.slice(0, -1)
+    : currentUndoStack.filter((entry) => entry?.id !== undoEntry.id);
+  return {
+    ...restoredUpdates,
+    undoStack: nextUndoStack
+  };
 };
 
 const actionUpdatesRestorableState = (updates = {}) => UNDO_STATE_FIELDS.some((field) => Object.prototype.hasOwnProperty.call(updates, field));
@@ -3659,8 +3682,11 @@ const PerformanceDebugPanel = () => {
                 <div className="rounded bg-slate-900 p-2"><span className="text-slate-400">Optimistic reconciled:</span> <b className={lastAction.optimisticReconciled ? 'text-emerald-300' : 'text-slate-300'}>{lastAction.optimisticReconciled == null ? '—' : (lastAction.optimisticReconciled ? 'yes' : 'no')}</b></div>
                 <div className="rounded bg-slate-900 p-2"><span className="text-slate-400">Optimistic reverted:</span> <b className={lastAction.optimisticReverted ? 'text-rose-300' : 'text-slate-300'}>{lastAction.optimisticReverted ? 'yes' : 'no'}</b></div>
                 <div className="rounded bg-slate-900 p-2"><span className="text-slate-400">Optimistic status:</span> <b>{lastAction.optimistic?.revertReason || lastAction.optimistic?.skippedReason || (lastAction.optimistic?.confirmed ? 'confirmed' : '—')}</b></div>
-                <div className="rounded bg-slate-900 p-2"><span className="text-slate-400">Undo source:</span> <b>{visibleUpdate?.undoSource || '—'}</b></div>
+                <div className="rounded bg-slate-900 p-2"><span className="text-slate-400">Undo source:</span> <b>{visibleUpdate?.undoSource || lastAction.undo?.source || '—'}</b></div>
                 <div className="rounded bg-slate-900 p-2"><span className="text-slate-400">Undo pending sync:</span> <b className={visibleUpdate?.undoPendingSync ? 'text-amber-300' : 'text-emerald-300'}>{visibleUpdate?.undoPendingSync ? 'yes' : 'no'}</b></div>
+                <div className="rounded bg-slate-900 p-2"><span className="text-slate-400">Undo optimistic applied:</span> <b className={lastAction.undo?.optimisticApplied ? 'text-emerald-300' : 'text-slate-300'}>{lastAction.undo?.optimisticApplied == null ? '—' : (lastAction.undo.optimisticApplied ? 'yes' : 'no')}</b></div>
+                <div className="rounded bg-slate-900 p-2"><span className="text-slate-400">Click → undo visible:</span> <b>{formatPerfMs(lastAction.undo?.clickToUndoVisibleMs)}</b></div>
+                <div className="col-span-2 rounded bg-slate-900 p-2"><span className="text-slate-400">Undo restored fields:</span> <span className="break-words font-mono">{lastAction.undo?.restoredFields?.length ? lastAction.undo.restoredFields.join(', ') : '—'}</span></div>
               </div>
               <div className="rounded-lg border border-slate-700 bg-slate-900 p-2 text-[11px]">
                 <div className="mb-1 font-black uppercase text-slate-300">Snapshot metadata</div>
@@ -4639,6 +4665,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
   const handleUndoLatestAction = async () => {
     if (!game) return;
+    const undoBaseGame = firestoreGame || game;
     if (isSpectator || !isPlayer) {
       setNotification("Spectators can't undo game actions.");
       setTimeout(() => setNotification(null), 2000);
@@ -4651,7 +4678,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       return;
     }
 
-    const expectedUndoEntry = getLatestUndoEntry();
+    const expectedUndoEntry = (undoBaseGame?.undoStack || [])[(undoBaseGame?.undoStack || []).length - 1] || null;
     if (!expectedUndoEntry) {
       setNotification('Nothing to undo.');
       setTimeout(() => setNotification(null), 2000);
@@ -4659,10 +4686,74 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       return;
     }
 
+    if (expectedUndoEntry.pendingSync) {
+      setNotification('Undo is available after this action syncs.');
+      setTimeout(() => setNotification(null), 2500);
+      return;
+    }
+
+    const restoredFields = getUndoRestoredFields(expectedUndoEntry.previousState || {});
+    const undoPayload = {
+      undoEntryId: expectedUndoEntry.id,
+      actionLabel: expectedUndoEntry.actionLabel || 'last action',
+      restoredFields
+    };
+    const perfActionId = startPerfAction({ actionType: 'UNDO_LAST_ACTION', payload: undoPayload, currentGame: undoBaseGame });
+    recordPerfCheckpoint('undo handler start', { undoEntryId: expectedUndoEntry.id }, perfActionId);
+    recordPerfUndo({
+      phase: 'executeUndo',
+      source: undoSource,
+      pendingSync: false,
+      restoredFields,
+      optimisticApplied: false
+    }, perfActionId);
+
+    const optimisticUndoPatch = buildOptimisticUndoPatch(undoBaseGame, expectedUndoEntry);
+    const optimisticUndoActionId = perfActionId || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    let appliedOptimisticUndo = false;
+
+    if (optimisticUndoPatch) {
+      const optimisticUndoGame = {
+        ...undoBaseGame,
+        ...optimisticUndoPatch,
+        combat: optimisticUndoPatch.combat || undoBaseGame.combat || getEmptyCombatState(),
+        __optimisticActionId: optimisticUndoActionId
+      };
+      const marker = getPerfActionMarker({ actionType: 'UNDO_LAST_ACTION', payload: undoPayload, currentGame: undoBaseGame });
+      pendingOptimisticActionRef.current = {
+        id: optimisticUndoActionId,
+        actionType: 'UNDO_LAST_ACTION',
+        payload: compactPerfPayload(undoPayload),
+        cardId: null,
+        marker,
+        handlerStartWallNow: getActionPerfWallNow(),
+        startedAt: getActionPerfNow()
+      };
+      setOptimisticGame(optimisticUndoGame);
+      setPendingOptimisticActionId(optimisticUndoActionId);
+      setPendingOptimisticStartedAt(pendingOptimisticActionRef.current.startedAt);
+      appliedOptimisticUndo = true;
+      recordPerfOptimisticApplied({ actionType: 'UNDO_LAST_ACTION', restoredFields }, perfActionId || optimisticUndoActionId);
+      recordPerfUndo({
+        optimisticApplied: true,
+        restoredFields,
+        clickToUndoVisibleMs: (() => {
+          const action = (getPerfActionsState().actions || []).find((candidate) => candidate.id === perfActionId);
+          return action?.clickPerfNow ? roundPerfMs(getActionPerfNow() - action.clickPerfNow) : null;
+        })()
+      }, perfActionId || optimisticUndoActionId);
+    } else {
+      recordPerfOptimisticSkipped('Undo entry has no restorable previous state.', perfActionId);
+    }
+
+    setUndoConfirmOpen(false);
+
     let undone = false;
     let stale = false;
+    let transactionError = null;
     const gameRef = doc(db, 'games_v3', gameId);
     try {
+      const transactionStartedAt = getActionPerfNow();
       await runTransaction(db, async (transaction) => {
         const snap = await transaction.get(gameRef);
         if (!snap.exists()) return;
@@ -4673,7 +4764,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
         const currentUndoStack = currentGame.undoStack || [];
         const latestUndoEntry = currentUndoStack[currentUndoStack.length - 1];
-        if (!latestUndoEntry || latestUndoEntry.id !== expectedUndoEntry.id) {
+        if (!latestUndoEntry || latestUndoEntry.id !== expectedUndoEntry.id || latestUndoEntry.pendingSync) {
           stale = true;
           return;
         }
@@ -4701,25 +4792,31 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         }, 'UNDO'));
         undone = true;
       });
+      markPerfFirestoreDone(perfActionId, { type: 'transaction', totalMs: roundPerfMs(getActionPerfNow() - transactionStartedAt) });
     } catch (error) {
+      transactionError = error;
       console.error('Undo failed', error);
+      failPerfAction(perfActionId, error);
     }
 
     if (stale) {
+      if (appliedOptimisticUndo) clearOptimisticGame('Undo target changed before transaction committed.', perfActionId || optimisticUndoActionId);
       setNotification('Could not undo because the game changed. Try again.');
       setTimeout(() => setNotification(null), 3000);
-      setUndoConfirmOpen(false);
+      finishPerfAction(perfActionId);
       return;
     }
 
     if (!undone) {
-      setNotification('Could not undo that action.');
-      setTimeout(() => setNotification(null), 2500);
-      setUndoConfirmOpen(false);
+      if (appliedOptimisticUndo) clearOptimisticGame(transactionError ? 'Undo transaction failed.' : 'Undo transaction did not apply.', perfActionId || optimisticUndoActionId);
+      setNotification(transactionError?.message ? `Could not undo: ${transactionError.message}` : 'Could not undo that action.');
+      setTimeout(() => setNotification(null), 3000);
+      finishPerfAction(perfActionId);
       return;
     }
 
     closeTransientGameModals();
+    finishPerfAction(perfActionId);
   };
 
   const handleAction = async (actionType, payload = {}) => {
@@ -8259,7 +8356,15 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                 </button>
                 <button
                   type="button"
-                  onClick={handleUndoLatestAction}
+                  onClick={() => {
+                    recordPerfActionClick({
+                      actionType: 'UNDO_LAST_ACTION',
+                      buttonName: 'Undo confirm',
+                      payload: { undoEntryId: latestUndoEntry?.id || null },
+                      currentGame: firestoreGame || game
+                    });
+                    handleUndoLatestAction();
+                  }}
                   disabled={undoConfirmDisabled}
                   className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-extrabold text-white hover:bg-amber-500 disabled:cursor-not-allowed disabled:opacity-50"
                 >

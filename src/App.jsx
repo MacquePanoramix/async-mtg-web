@@ -37,29 +37,32 @@ const TUTORIAL_SCRIPT_VERSION = 3;
 const TUTORIAL_SCRIPT_STEPS = [
   {
     id: 'intro',
-    chapter: 'The Bolas Protocol',
-    title: 'Nicol Bolas and the Infinite Priority Stack',
-    dialogue: 'Little planeswalker. You have opened a battlefield without understanding its teeth. Good. Fear is an excellent teacher.',
-    objective: 'Begin the tutorial battle.',
-    hint: 'Tap Next. The duel will use real app tools, but Nicol Bolas is scripted.',
+    chapter: 'Trial of the Elder Dragon',
+    title: 'Nicol Bolas and the Board of Doom',
+    scene: 'The arena unfolds like a book with teeth.',
+    dialogue: 'You have opened my training ground, little planeswalker. Survive the lesson and perhaps I will let you keep your turn.',
+    objective: 'Begin the scripted boss battle.',
+    hint: 'Tap Next. This tutorial uses the real app tools; Bolas is only scripted flavor.',
     anchor: null,
     completion: 'manual'
   },
   {
     id: 'room_code',
-    chapter: 'The Bolas Protocol',
-    title: 'The Room Code',
-    dialogue: 'Every duel needs a doorway. This code is how another mind finds yours. Guard it poorly and company arrives.',
+    chapter: 'Trial of the Elder Dragon',
+    title: 'Seal of Summoning',
+    scene: 'A rune burns above the battlefield: the room code.',
+    dialogue: 'Every duel needs a doorway. Share that code, and another mortal may enter my magnificent trap.',
     objective: 'Find the room code near the top of the screen.',
-    hint: 'This is the code you send to a friend so they can join or watch your game.',
+    hint: 'Send this code to friends so they can join or watch the game.',
     anchor: 'room-code',
     completion: 'manual'
   },
   {
     id: 'battlefields',
-    chapter: 'The Bolas Protocol',
-    title: 'Two Kingdoms, One Mistake',
-    dialogue: 'Above: my empire. Below: your little rebellion. Between them: every decision you will later regret.',
+    chapter: 'Trial of the Elder Dragon',
+    title: 'Two Thrones in the Sand',
+    scene: 'Two battlefields rise: yours below, Bolas above.',
+    dialogue: 'Observe the geography of defeat. My empire waits above; your rebellion trembles below.',
     objective: 'Find your battlefield and Nicol Bolas’s battlefield.',
     hint: 'Your battlefield is labeled with your name. The opponent battlefield is labeled Nicol Bolas.',
     anchor: 'battlefields',
@@ -67,39 +70,45 @@ const TUTORIAL_SCRIPT_STEPS = [
   },
   {
     id: 'bottom_toolbar',
-    chapter: 'The Library Gate',
+    chapter: 'Chapter 1 — The Library Gate · Power: The Deckless Void',
     title: 'The Relic Bar',
-    dialogue: 'Your tools sleep along the bottom edge, like knives under a banquet table. Some are hidden. Swipe sideways to reveal them.',
+    scene: 'Bolas sweeps your future into a dark vault, leaving only tools along the bottom edge.',
+    dialogue: 'I have hidden your possibilities. Your first weapon is not a spell, but the bar of relics at your feet.',
     objective: 'Find the bottom toolbar.',
-    hint: 'Swipe the bottom toolbar left or right if a tool is not visible.',
+    hint: 'Swipe the bottom toolbar sideways if a tool is not visible.',
     anchor: 'bottom-toolbar',
     completion: 'manual'
   },
   {
     id: 'open_library_tools',
-    chapter: 'The Library Gate',
+    chapter: 'Chapter 1 — The Library Gate · Power: The Deckless Void',
     title: 'Open the Library Gate',
-    dialogue: 'No spell begins in the hand. Everything begins in the library, waiting to be drawn like a blade.',
+    scene: 'A sealed library-door grinds open beneath Bolas’s shadow.',
+    dialogue: 'No future reaches your hand unless you pry it from the library. Open the gate.',
     objective: 'Open the Library tools menu.',
     hint: 'Tap the book/library icon. If you cannot see it, swipe the bottom toolbar sideways.',
+    reaction: 'Bolas: You found the tool shelf. Try not to look proud.',
     anchor: 'library-menu-button',
     completion: 'detect-or-manual'
   },
   {
     id: 'draw_card',
-    chapter: 'The Library Gate',
+    chapter: 'Chapter 1 — The Library Gate · Power: The Deckless Void',
     title: 'Draw the First Thread',
-    dialogue: 'Draw. The smallest action in Magic, and the first thread of catastrophe.',
+    scene: 'One card glows at the top of your library like a possible escape route.',
+    dialogue: 'Draw, and acquire a future. A small one. Possibly flammable.',
     objective: 'Draw one card.',
     hint: 'Use the blue Draw button. The tutorial deck has already been prepared for you.',
+    reaction: 'Bolas: Good. You have acquired a possibility. Try not to drop it.',
     anchor: 'draw-button',
     completion: 'detect'
   },
   {
     id: 'hand_area',
-    chapter: 'The Library Gate',
+    chapter: 'Chapter 1 — The Library Gate · Power: The Deckless Void',
     title: 'The Hand of Possible Futures',
-    dialogue: 'Your hand is not what you own. It is what might become real if you dare to spend the turn.',
+    scene: 'The new card joins a fan of options at the edge of the arena.',
+    dialogue: 'Your hand is not power. It is power waiting for nerve.',
     objective: 'Find your hand at the bottom of the screen.',
     hint: 'Cards in your hand appear along the bottom. You may need to scroll horizontally.',
     anchor: 'hand-area',
@@ -107,9 +116,10 @@ const TUTORIAL_SCRIPT_STEPS = [
   },
   {
     id: 'mulligan_note',
-    chapter: 'The Library Gate',
+    chapter: 'Chapter 1 — The Library Gate · Power: The Deckless Void',
     title: 'The Mercy of Seven',
-    dialogue: 'Sometimes the first future is insulting. You may send it back. Magic calls this mercy. I call it delay.',
+    scene: 'Bolas flicks one claw, offering a false second chance.',
+    dialogue: 'Sometimes the opening future is insulting. Magic calls the replacement a mulligan; I call it begging politely.',
     objective: 'Learn where Mulligan is.',
     hint: 'Open Library tools again. Mulligan is in the same menu as Draw, Scry, Search, and Shuffle.',
     anchor: 'library-menu-button',
@@ -117,349 +127,404 @@ const TUTORIAL_SCRIPT_STEPS = [
   },
   {
     id: 'play_land',
-    chapter: 'Cards Enter the World',
-    title: 'The Mountain Wakes',
-    dialogue: 'A land is not a card. It is a promise the table is forced to believe.',
+    chapter: 'Chapter 2 — Cards Enter the World · Power: The Seven Zones of Regret',
+    title: 'The Mountain Oath',
+    scene: 'The floor splits, and a red horizon burns beneath the board.',
+    dialogue: 'Choose a place for power to stand. A land is not merely played; it is sworn into reality.',
     objective: 'Play a Mountain from your hand.',
-    hint: 'Tap a Mountain in your hand, then choose Play Land.',
+    hint: 'Tap Mountain in your hand, then choose Play Land.',
+    reaction: 'Bolas: The table accepts your little mountain. How sentimental.',
     anchor: 'hand-area',
     completion: 'detect'
   },
   {
     id: 'undo_play_land',
-    chapter: 'Cards Enter the World',
-    title: 'Rewind the Mistake',
-    dialogue: 'Regret is powerful. In this place, it has a button.',
+    chapter: 'Chapter 2 — Cards Enter the World · Power: The Seven Zones of Regret',
+    title: 'Regret Has a Button',
+    scene: 'Bolas cracks the scene backward, showing the Mountain before it became real.',
+    dialogue: 'Ah, regret. The only spell mortals cast perfectly. Show me you can rewind a legal mistake.',
     objective: 'Undo the land play.',
-    hint: 'Tap the orange Undo button and confirm. This is for fixing mistakes, not rewriting history forever.',
+    hint: 'Tap the orange Undo button and confirm. Undo is for fixing recent mistakes, not rewriting an entire game.',
+    reaction: 'Bolas: Regret obeyed you once. Do not build a personality around it.',
     anchor: 'undo-button',
     completion: 'detect'
   },
   {
     id: 'cast_spell_to_stack',
-    chapter: 'Cards Enter the World',
-    title: 'Lightning on the Tower',
-    dialogue: 'Now place violence where all players can admire it: on the stack.',
+    chapter: 'Chapter 2 — Cards Enter the World · Power: The Seven Zones of Regret',
+    title: 'Lightning on Trial',
+    scene: 'Bolas raises one claw; the air becomes a courtroom for violence.',
+    dialogue: 'Do not throw the spell at me yet. Place it where all doomed choices must wait: the stack.',
     objective: 'Cast Lightning Bolt.',
-    hint: 'Tap Lightning Bolt in your hand, then choose Cast Spell. It will go to the stack first, not directly to the graveyard.',
+    hint: 'Tap Lightning Bolt in your hand, then choose Cast Spell. It goes to the stack first.',
+    reaction: 'Bolas: Violence properly filed. How civilized.',
     anchor: 'hand-area',
     completion: 'detect'
   },
   {
     id: 'inspect_stack',
-    chapter: 'The Infinite Priority Stack',
-    title: 'The Tower of Intentions',
-    dialogue: 'The stack is a tower built from threats, lies, responses, and one very confident instant.',
+    chapter: 'Chapter 3 — The Infinite Priority Stack · Power: The Tower Where Time Waits Its Turn',
+    title: 'The Tower Opens',
+    scene: 'The bolt hangs overhead, paused by a tower of waiting decisions.',
+    dialogue: 'The stack is where time queues politely before becoming terrible. Inspect your little storm.',
     objective: 'Open the stack panel and inspect Lightning Bolt.',
-    hint: 'Tap the Stack button near the top. It shows how many items are waiting to resolve.',
+    hint: 'Tap the Stack button near the top. It shows items waiting to resolve.',
     anchor: 'stack-button',
     completion: 'detect-or-manual'
   },
   {
     id: 'copy_stack_item',
-    chapter: 'The Infinite Priority Stack',
-    title: 'One Spell Becomes Two',
-    dialogue: 'Mortals count one bolt. Dragons count consequences.',
+    chapter: 'Chapter 3 — The Infinite Priority Stack · Power: The Tower Where Time Waits Its Turn',
+    title: 'Two Futures of Lightning',
+    scene: 'Bolas smiles, and the suspended bolt gains a shadow.',
+    dialogue: 'One threat is a spell. Two threats are a negotiation.',
     objective: 'Copy the Lightning Bolt on the stack.',
     hint: 'Open the stack item details and use Copy Stack Item.',
+    reaction: 'Bolas: I see. You have discovered multiplication. Dangerous.',
     anchor: 'stack-panel',
     completion: 'detect'
   },
   {
     id: 'resolve_stack_item',
-    chapter: 'The Infinite Priority Stack',
-    title: 'The Top Falls First',
-    dialogue: 'The topmost thought becomes real first. That is not fairness. That is architecture.',
+    chapter: 'Chapter 3 — The Infinite Priority Stack · Power: The Tower Where Time Waits Its Turn',
+    title: 'The Highest Doom Falls',
+    scene: 'The uppermost bolt shakes loose from the tower.',
+    dialogue: 'The top thought becomes real first. That is not fairness; that is architecture.',
     objective: 'Resolve the top stack item.',
     hint: 'Use Resolve Top Stack Item from the stack controls.',
+    reaction: 'Bolas: One future has happened. The others are still making threats.',
     anchor: 'stack-panel',
     completion: 'detect'
   },
   {
     id: 'counter_stack_item',
-    chapter: 'The Infinite Priority Stack',
-    title: 'Denied by the Dragon',
-    dialogue: 'Some futures are too embarrassing to permit.',
-    objective: 'Counter/fizzle the remaining stack item.',
-    hint: 'Use Counter/Fizzle Top Stack Item.',
+    chapter: 'Chapter 3 — The Infinite Priority Stack · Power: The Tower Where Time Waits Its Turn',
+    title: 'Erase the Remaining Future',
+    scene: 'Bolas pinches the last bolt between two talons.',
+    dialogue: 'Some futures deserve the graveyard without the dignity of happening. Deny it.',
+    objective: 'Counter or fizzle the remaining stack item.',
+    hint: 'Use Counter/Fizzle Top Stack Item from the stack controls.',
+    reaction: 'Bolas: Denial suits you. Try it on despair next.',
     anchor: 'stack-panel',
     completion: 'detect'
   },
   {
     id: 'pass_priority',
-    chapter: 'Priority Spiral',
-    title: 'The Sacred Passing of Blame',
-    dialogue: 'In asynchronous Magic, silence is not absence. It is priority, waiting with knives.',
+    chapter: 'Chapter 3 — The Infinite Priority Stack · Power: The Tower Where Time Waits Its Turn',
+    title: 'Speak the Dangerous Words',
+    scene: 'The tower waits for permission to move again.',
+    dialogue: 'Priority is the question beneath every duel: will you act, or will you let doom continue?',
     objective: 'Pass priority.',
-    hint: 'Tap Pass. This tells the other player you are done acting for now.',
+    hint: 'Tap Pass. Passing tells the table you are done acting for now.',
+    reaction: 'Bolas: You passed. Time limps forward.',
     anchor: 'pass-button',
     completion: 'detect'
   },
   {
     id: 'autopass',
-    chapter: 'Priority Spiral',
-    title: 'The Lazy Throne',
-    dialogue: 'Even kings automate boredom.',
-    objective: 'Find AutoPass.',
-    hint: 'AutoPass helps you automatically pass through routine priority windows.',
+    chapter: 'Chapter 9 — Async Survival · Power: The Silence Between Turns',
+    title: 'The Sleeping Sentinel',
+    scene: 'Bolas stretches one turn into an evening of waiting.',
+    dialogue: 'When nothing matters until later, command your sentinel to pass while you are away.',
+    objective: 'Learn AutoPass.',
+    hint: 'Tap AutoPass to see options for passing automatically until a phase or turn point.',
     anchor: 'autopass-button',
     completion: 'manual'
   },
   {
     id: 'game_log',
-    chapter: 'Priority Spiral',
-    title: 'The Chronicle of Bad Ideas',
-    dialogue: 'The log remembers what pride forgets.',
-    objective: 'Open or inspect the game log/chat area.',
-    hint: 'The log records major actions so asynchronous players can follow what happened.',
+    chapter: 'Chapter 9 — Async Survival · Power: The Silence Between Turns',
+    title: 'The Chronicle of Bruises',
+    scene: 'Every action carves a glowing line into the arena wall.',
+    dialogue: 'Memory is a weapon in asynchronous war. Leave a record, or argue with ghosts.',
+    objective: 'Find the game log and chat.',
+    hint: 'Open the log/chat button to review actions and leave messages.',
     anchor: 'log-chat-button',
     completion: 'manual'
   },
   {
     id: 'open_time_controls',
-    chapter: 'The Combat Step That Refused To End',
-    title: 'The Clock Has Teeth',
-    dialogue: 'A turn is not a circle. It is a hallway with traps in chronological order.',
-    objective: 'Open the phase/time controls.',
-    hint: 'Tap the phase indicator at the top-left.',
+    chapter: 'Chapter 4 — The Combat Step That Refused To End · Power: The War That Happens Twice',
+    title: 'Open the Clock Gate',
+    scene: 'Bolas bends the turn into sharp, labeled pieces.',
+    dialogue: 'Combat is not one door. It is a hallway with traps placed at excellent intervals.',
+    objective: 'Open the turn/phase controls.',
+    hint: 'Tap the current phase indicator near the top.',
     anchor: 'phase-indicator',
     completion: 'detect-or-manual'
   },
   {
     id: 'set_attackers_phase',
-    chapter: 'The Combat Step That Refused To End',
-    title: 'Declare the Threat',
-    dialogue: 'Combat begins when someone points at someone else and calls it destiny.',
+    chapter: 'Chapter 4 — The Combat Step That Refused To End · Power: The War That Happens Twice',
+    title: 'March to Attackers',
+    scene: 'The arena demands a declaration before steel may move.',
+    dialogue: 'Name the moment. If war is coming, put the game where attackers are chosen.',
     objective: 'Move to the Attackers step.',
-    hint: 'Use the phase controls and select Attackers.',
+    hint: 'In phase controls, choose the Attackers step.',
+    reaction: 'Bolas: The war has been scheduled. Bureaucracy improves violence.',
     anchor: 'phase-controls',
     completion: 'detect'
   },
   {
     id: 'declare_attacker_player',
-    chapter: 'The Combat Step That Refused To End',
-    title: 'Attack the Dragon',
-    dialogue: 'You may attack me. This is adorable, and therefore permitted.',
-    objective: 'Declare Llanowar Elves as attacking Nicol Bolas.',
-    hint: 'Tap Llanowar Elves on your battlefield, choose Attack, then choose Nicol Bolas as the target.',
+    chapter: 'Chapter 4 — The Combat Step That Refused To End · Power: The War That Happens Twice',
+    title: 'Point the Blade',
+    scene: 'A creature turns toward the dragon’s throne.',
+    dialogue: 'An attacker without a target is merely exercise. Give your creature a destination.',
+    objective: 'Declare an attacker at Nicol Bolas.',
+    hint: 'Tap your creature and use attack/target controls to attack the opposing player.',
+    reaction: 'Bolas: It walks toward me. Adorable.',
     anchor: 'own-battlefield',
     completion: 'detect'
   },
   {
     id: 'attack_planeswalker_battle_note',
-    chapter: 'The Combat Step That Refused To End',
-    title: 'Not Only Faces Bleed',
-    dialogue: 'Creatures do not merely attack players. They may also strike planeswalkers and battles. The law is broad enough for cruelty.',
-    objective: 'Learn that attackers can target players, planeswalkers, or battles.',
-    hint: 'The Attack target picker will include valid player, planeswalker, and battle targets when they exist.',
+    chapter: 'Chapter 4 — The Combat Step That Refused To End · Power: The War That Happens Twice',
+    title: 'Other Thrones Can Bleed',
+    scene: 'Illusions of planeswalkers and battles flicker beside Bolas.',
+    dialogue: 'Not every attack aims at a player. Some wars assault egos with loyalty counters.',
+    objective: 'Learn attack targets for planeswalkers and battles.',
+    hint: 'The combat summary can track attackers aimed at players, planeswalkers, or battles.',
     anchor: 'combat-summary',
     completion: 'manual'
   },
   {
     id: 'combat_summary',
-    chapter: 'The Combat Step That Refused To End',
-    title: 'The Combat Ledger',
-    dialogue: 'Here the battlefield confesses: who attacks, who blocks, and who pretends they planned this.',
-    objective: 'Find the Combat Summary.',
+    chapter: 'Chapter 4 — The Combat Step That Refused To End · Power: The War That Happens Twice',
+    title: 'The War Ledger',
+    scene: 'The battlefield writes down attackers, blockers, and damage windows.',
+    dialogue: 'A clear war is harder to dispute. Consult the ledger before the shouting begins.',
+    objective: 'Find the combat summary.',
     hint: 'It lists attackers, blockers, and damage-step information.',
     anchor: 'combat-summary',
     completion: 'manual'
   },
   {
     id: 'first_strike_step',
-    chapter: 'The Combat Step That Refused To End',
+    chapter: 'Chapter 4 — The Combat Step That Refused To End · Power: The War That Happens Twice',
     title: 'The First Blade',
-    dialogue: 'Some creatures strike before the moment officially arrives. This is called first strike, because “premeditated punctuality” was too long.',
+    scene: 'Bolas splits combat; the fastest wounds arrive early.',
+    dialogue: 'Some blades are arrogant enough to happen before the rest. Mark the first-strike window.',
     objective: 'Set combat damage step to First-strike damage.',
-    hint: 'Open phase/time controls and tap First-strike damage.',
+    hint: 'Open phase controls and choose First-strike damage in Combat Damage Step.',
+    reaction: 'Bolas: The quick blade has its moment.',
     anchor: 'phase-controls',
     completion: 'detect'
   },
   {
     id: 'regular_damage_step',
-    chapter: 'The Combat Step That Refused To End',
-    title: 'The Second Wound',
-    dialogue: 'Double strike is not hitting twice. It is making time sign the receipt twice.',
+    chapter: 'Chapter 4 — The Combat Step That Refused To End · Power: The War That Happens Twice',
+    title: 'The Second Impact',
+    scene: 'The first echo fades, and the rest of the war finally lands.',
+    dialogue: 'Now the ordinary violence catches up. Ordinary does not mean gentle.',
     objective: 'Set combat damage step to Regular damage.',
-    hint: 'Use the Combat Damage Step controls.',
+    hint: 'Choose Regular damage in the Combat Damage Step controls.',
+    reaction: 'Bolas: Twice-struck combat. Elegant, if inconvenient.',
     anchor: 'phase-controls',
     completion: 'detect'
   },
   {
     id: 'damage_markers',
-    chapter: 'The Combat Step That Refused To End',
-    title: 'Temporary Wounds',
-    dialogue: 'Damage fades at cleanup. Humiliation, less so.',
-    objective: 'Learn where damage markers live.',
-    hint: 'Tap a creature to see current damage controls. Damage is manual and visible on cards.',
+    chapter: 'Chapter 4 — The Combat Step That Refused To End · Power: The War That Happens Twice',
+    title: 'Wounds That Remember Cleanup',
+    scene: 'Red marks flare on damaged creatures.',
+    dialogue: 'Damage is temporary, but arguments about it are eternal. Mark it clearly.',
+    objective: 'Learn temporary damage markers.',
+    hint: 'Open a creature detail panel and use damage controls when combat or spells mark damage.',
     anchor: 'card-detail',
     completion: 'manual'
   },
   {
     id: 'tap_card',
-    chapter: 'The Masked Permanent',
-    title: 'Bow the Elf',
-    dialogue: 'To tap a creature is to make it admit it has already been useful.',
-    objective: 'Tap Llanowar Elves.',
-    hint: 'Tap Llanowar Elves, then choose Tap.',
+    chapter: 'Chapter 5 — The Masked Permanent · Power: The Creature That Forgot Its Own Face',
+    title: 'Bend the Knee',
+    scene: 'Bolas presses the world sideways; a permanent turns with it.',
+    dialogue: 'A tapped card is a creature bowing to exhaustion, payment, or intimidation.',
+    objective: 'Tap or untap a permanent.',
+    hint: 'Tap a permanent on your battlefield and use Tap/Untap.',
+    reaction: 'Bolas: Even your permanents know when to kneel.',
     anchor: 'own-battlefield',
     completion: 'detect'
   },
   {
     id: 'add_counter',
-    chapter: 'The Masked Permanent',
-    title: 'Numbers Become Flesh',
-    dialogue: 'A counter is a tiny law glued to a permanent.',
-    objective: 'Add a +1/+1 counter to Llanowar Elves.',
-    hint: 'Open the card details and use the counter controls.',
+    chapter: 'Chapter 5 — The Masked Permanent · Power: The Creature That Forgot Its Own Face',
+    title: 'Numbers With Teeth',
+    scene: 'A small counter lands like a crown made of math.',
+    dialogue: 'Counters are tiny destinies. Place one, and the object becomes harder to forget.',
+    objective: 'Add a counter to a permanent.',
+    hint: 'Open a card detail panel and use counter controls.',
+    reaction: 'Bolas: A number appears. Soon it will demand respect.',
     anchor: 'card-detail',
     completion: 'detect'
   },
   {
     id: 'add_reminder',
-    chapter: 'The Masked Permanent',
-    title: 'The Memory Curse',
-    dialogue: 'Until end of turn. Until cleanup. Until someone remembers. Magic is mostly temporary disasters.',
-    objective: 'Add a reminder marker to Llanowar Elves.',
-    hint: 'Open the card details and choose a reminder like +1/+1 until EOT or Can’t block.',
+    chapter: 'Chapter 5 — The Masked Permanent · Power: The Creature That Forgot Its Own Face',
+    title: 'The Sticky Curse',
+    scene: 'Bolas pins a note to reality.',
+    dialogue: 'When memory is not enough, nail the reminder to the thing itself.',
+    objective: 'Add a reminder to a permanent.',
+    hint: 'Open a card detail panel and add a reminder such as “dies at end step.”',
+    reaction: 'Bolas: A note! How mortal. How useful.',
     anchor: 'card-detail',
     completion: 'detect'
   },
   {
     id: 'phase_card',
-    chapter: 'The Masked Permanent',
-    title: 'Vanish Without Leaving',
-    dialogue: 'Phasing is exile’s weird cousin: present, absent, and deeply annoying.',
-    objective: 'Phase out Llanowar Elves, then phase it back in.',
-    hint: 'Open the card details and use Phase out / Phase in.',
+    chapter: 'Chapter 5 — The Masked Permanent · Power: The Creature That Forgot Its Own Face',
+    title: 'Half Outside Reality',
+    scene: 'The creature blinks sideways, present but untouchable.',
+    dialogue: 'Phasing is absence wearing a name tag. Mark it before anyone forgets what cannot be touched.',
+    objective: 'Phase a permanent out or in.',
+    hint: 'Open card details and use Phase Out/In.',
+    reaction: 'Bolas: It left without leaving. I approve of the rudeness.',
     anchor: 'card-detail',
     completion: 'detect-or-manual'
   },
   {
     id: 'transform_card',
-    chapter: 'The Masked Permanent',
-    title: 'The Other Face',
-    dialogue: 'Some cards are honest enough to admit they are two problems.',
-    objective: 'Transform or inspect a double-faced card.',
-    hint: 'Use Delver of Secrets if available. Open the card detail and use the double-faced card section.',
+    chapter: 'Chapter 5 — The Masked Permanent · Power: The Creature That Forgot Its Own Face',
+    title: 'The Other Face Opens',
+    scene: 'Bolas twists the card until its second face stares back.',
+    dialogue: 'Some permanents are liars with hinges. Turn the hinge.',
+    objective: 'Transform a double-faced permanent.',
+    hint: 'Open a transformable card and use the transform/switch face control.',
+    reaction: 'Bolas: A mask under the mask. Finally, taste.',
     anchor: 'card-detail',
     completion: 'detect-or-manual'
   },
   {
     id: 'face_down_reveal',
-    chapter: 'The Masked Permanent',
-    title: 'The Mask on the Table',
-    dialogue: 'A face-down card is a secret wearing cardboard.',
-    objective: 'Learn face-down and reveal tools.',
-    hint: 'Open a card detail. You can turn a card face down or reveal it when needed.',
+    chapter: 'Chapter 5 — The Masked Permanent · Power: The Creature That Forgot Its Own Face',
+    title: 'The Nameless Mask',
+    scene: 'The card forgets its own name, then remembers with a hiss.',
+    dialogue: 'Face-down cards are secrets placed in cardboard form. Hide them honestly; reveal them clearly.',
+    objective: 'Learn face-down and reveal controls.',
+    hint: 'Open card details to turn a card face down or reveal it when a card effect allows.',
     anchor: 'card-detail',
     completion: 'manual'
   },
   {
     id: 'create_token',
-    chapter: 'The Token Legion',
-    title: 'A Creature Made of Convenience',
-    dialogue: 'Tokens are creatures drawn from paperwork and audacity.',
+    chapter: 'Chapter 6 — The Token Legion · Power: The Army of Things That Were Never Cards',
+    title: 'Summon the Unprinted',
+    scene: 'A soldier made of pure bookkeeping crawls from the sand.',
+    dialogue: 'Behold an army that was never in a deck. Tokens are lies the table agrees to respect.',
     objective: 'Create a token.',
-    hint: 'Open Library tools or Token Tools and choose a preset token. Deck-derived tokens may appear if your imported deck creates them.',
+    hint: 'Open Token tools and create a preset or deck-derived token.',
+    reaction: 'Bolas: A thing that was never a card. The paperwork shivers.',
     anchor: 'token-tools',
     completion: 'detect'
   },
   {
     id: 'custom_token',
-    chapter: 'The Token Legion',
-    title: 'The Custom Monster',
-    dialogue: 'When reality lacks the correct monster, invent one and pretend it was always there.',
-    objective: 'Find custom token creation.',
-    hint: 'In Token Tools, scroll to Custom Token. You can choose name, stats, colors, abilities, and quantity.',
+    chapter: 'Chapter 6 — The Token Legion · Power: The Army of Things That Were Never Cards',
+    title: 'Invent a Monster',
+    scene: 'Bolas gestures at an empty space and dares you to define it.',
+    dialogue: 'When the printed world fails you, write a creature into being. Be concise; monsters dislike essays.',
+    objective: 'Learn custom tokens.',
+    hint: 'Use Token tools to create a custom token only when a card effect needs one.',
     anchor: 'token-tools',
     completion: 'manual'
   },
   {
     id: 'target_system',
-    chapter: 'The Token Legion',
-    title: 'The Red Thread',
-    dialogue: 'A target is a promise that something unfortunate knows exactly where to go.',
-    objective: 'Use the target system.',
-    hint: 'Open a spell or ability, choose target tools, and mark a target. You can clear targets later.',
+    chapter: 'Chapter 6 — The Token Legion · Power: The Army of Things That Were Never Cards',
+    title: 'Mark the Doomed',
+    scene: 'A blue sigil locks onto a creature, then a player, then a threat.',
+    dialogue: 'A spell without a target is just theater. Mark exactly what your effect is touching.',
+    objective: 'Use the target tool.',
+    hint: 'Tap a card or use target controls, then choose the intended target.',
+    reaction: 'Bolas: You pointed at doom. Doom noticed.',
     anchor: 'target-tools',
     completion: 'detect-or-manual'
   },
   {
     id: 'attach_to_permanent',
-    chapter: 'The Token Legion',
-    title: 'Chains Between Cards',
-    dialogue: 'Attachments are relationships with rules text.',
-    objective: 'Learn attach/link to permanent.',
-    hint: 'Open a card detail and use Attach to permanent. This is useful for Auras, Equipment, and similar links.',
+    chapter: 'Chapter 6 — The Token Legion · Power: The Army of Things That Were Never Cards',
+    title: 'Chains on Cardboard',
+    scene: 'A curse-chain lashes one permanent to another.',
+    dialogue: 'Auras, Equipment, and strange attachments need visible chains. Otherwise mortals start negotiating reality.',
+    objective: 'Learn attaching to permanents.',
+    hint: 'Open card details and use attachment controls when an effect attaches one card to another.',
     anchor: 'card-detail',
     completion: 'manual'
   },
   {
     id: 'attach_to_player',
-    chapter: 'The Token Legion',
-    title: 'Curse the Player, Not the Board',
-    dialogue: 'Some enchantments do not haunt creatures. They haunt people. Much more efficient.',
-    objective: 'Learn attach to player.',
-    hint: 'Use Attach to player for curses or player-bound effects.',
+    chapter: 'Chapter 6 — The Token Legion · Power: The Army of Things That Were Never Cards',
+    title: 'The Curse Chooses a Player',
+    scene: 'Bolas drops a glowing brand over your nameplate.',
+    dialogue: 'Some curses cling to players, not creatures. Make the victim obvious.',
+    objective: 'Learn player attachments and curses.',
+    hint: 'Use player attachment controls when an Aura, Curse, or effect attaches to a player.',
     anchor: 'player-panel',
     completion: 'manual'
   },
   {
     id: 'clone_control',
-    chapter: 'The Token Legion',
-    title: 'Copies and Betrayals',
-    dialogue: 'Clone a creature. Give control away. Nothing says friendship like administrative treason.',
-    objective: 'Learn Clone card and Give control.',
-    hint: 'Open a permanent’s card detail. Clone and control-change tools help represent paper Magic manually.',
+    chapter: 'Chapter 6 — The Token Legion · Power: The Army of Things That Were Never Cards',
+    title: 'The Stolen Reflection',
+    scene: 'A copy salutes the wrong commander.',
+    dialogue: 'Clones imitate. Control changes betray. Both must be displayed before trust collapses.',
+    objective: 'Learn clone and control tools.',
+    hint: 'Use card detail controls to clone a permanent or give control when a card effect says so.',
     anchor: 'card-detail',
     completion: 'manual'
   },
   {
     id: 'reveal_hand',
-    chapter: 'The Library Labyrinth',
+    chapter: 'Chapter 7 — The Library Labyrinth · Power: The Hand Behind the Hand',
     title: 'Public Secrets',
-    dialogue: 'To reveal a hand is to make hidden futures embarrassingly public.',
-    objective: 'Find Reveal Hand / Hide Hand tools.',
-    hint: 'Open your hand/card status tools. Revealed cards are public; hidden cards are private.',
+    scene: 'Bolas turns a hidden hand into a stained-glass confession.',
+    dialogue: 'Public information should shine where all may see it. Reveal, and remove excuses.',
+    objective: 'Learn reveal-hand tools.',
+    hint: 'Use Reveal Hand when a card effect makes a hand public.',
     anchor: 'reveal-tools',
     completion: 'manual'
   },
   {
     id: 'private_hand_peek',
-    chapter: 'The Library Labyrinth',
-    title: 'A Thought Stolen Quietly',
-    dialogue: 'Public knowledge is crude. True elegance is knowing what only you were allowed to see.',
-    objective: 'Use Private hand peek on Nicol Bolas.',
-    hint: 'Tap Private hand peek on the opponent battlefield. This is for effects like Thoughtseize or Gitaxian Probe.',
+    chapter: 'Chapter 7 — The Library Labyrinth · Power: The Hand Behind the Hand',
+    title: 'The Forbidden Glance',
+    scene: 'A single card peeks from behind Bolas’s sleeve and vanishes again.',
+    dialogue: 'Sometimes only one player is permitted to know. Look privately; do not turn secrecy into spectacle.',
+    objective: 'Privately peek at Nicol Bolas’s hand.',
+    hint: 'Use the private peek button near the opponent area. This is local-only information.',
+    reaction: 'Bolas: You saw a secret and did not announce it. Disturbingly competent.',
     anchor: 'private-hand-peek-button',
     completion: 'detect'
   },
   {
     id: 'scry_search_reorder',
-    chapter: 'The Library Labyrinth',
-    title: 'Rearranging Fate',
-    dialogue: 'The top of the library is destiny’s doormat. Wipe your boots on it.',
-    objective: 'Learn Scry, Search Library, Reorder Top, and Shuffle.',
+    chapter: 'Chapter 7 — The Library Labyrinth · Power: The Hand Behind the Hand',
+    title: 'Rearrange the Maze',
+    scene: 'The top of the library becomes a corridor of sliding doors.',
+    dialogue: 'Scry, search, shuffle, reorder: these are legal when a spell grants a map. Do not invent permission.',
+    objective: 'Learn scry/search/reorder tools.',
     hint: 'Open Library tools. These actions are manual and should only be used when a card effect allows them.',
     anchor: 'library-menu-button',
     completion: 'manual'
   },
   {
     id: 'batch_library_actions',
-    chapter: 'The Library Labyrinth',
-    title: 'Several Cards at Once',
-    dialogue: 'Drawing one card is etiquette. Milling ten is architecture.',
+    chapter: 'Chapter 7 — The Library Labyrinth · Power: The Hand Behind the Hand',
+    title: 'Many Doors at Once',
+    scene: 'Bolas fans several library cards like knives.',
+    dialogue: 'One card is a choice. Ten cards are logistics. Use the batch gate when effects arrive in swarms.',
     objective: 'Open Library Batch Actions.',
     hint: 'Use Batch Actions for Draw N, Mill N, Reveal top N, Exile top N, Scry N, or Surveil N.',
+    reaction: 'Bolas: Several futures moved at once. The maze applauds.',
     anchor: 'library-menu-button',
     completion: 'detect-or-manual'
   },
   {
     id: 'opponent_library_tools',
-    chapter: 'The Library Labyrinth',
-    title: 'Trespassing in the Enemy Library',
-    dialogue: 'Sometimes a spell gives you permission to look where you should not. Enjoy the legality while it lasts.',
+    chapter: 'Chapter 7 — The Library Labyrinth · Power: The Hand Behind the Hand',
+    title: 'Trespass with Permission',
+    scene: 'The enemy library opens exactly one crack.',
+    dialogue: 'Sometimes a spell grants trespass. Enjoy legality while it lasts; theft without text is merely cheating.',
     objective: 'Find opponent library tools.',
     hint: 'Open Library tools and look under Opponent Library. Use these only when a card effect allows it.',
     anchor: 'library-menu-button',
@@ -467,9 +532,10 @@ const TUTORIAL_SCRIPT_STEPS = [
   },
   {
     id: 'player_counters_statuses',
-    chapter: 'Crowns, Counters, and Curses',
-    title: 'The Player Panel',
-    dialogue: 'Cards are not the only things that accumulate consequences. Players do too.',
+    chapter: 'Chapter 8 — Crowns, Counters, and Curses · Power: The Crown That Counts You',
+    title: 'Open the Crown Ledger',
+    scene: 'Bolas drops crowns, poison, mana sparks, and tiny doom-numbers onto the players.',
+    dialogue: 'Cards are not the only objects that collect consequences. Players do too.',
     objective: 'Open Player Counters & Statuses.',
     hint: 'Tap the player/status/counter button near your battlefield.',
     anchor: 'player-counters-button',
@@ -477,59 +543,69 @@ const TUTORIAL_SCRIPT_STEPS = [
   },
   {
     id: 'player_counters',
-    chapter: 'Crowns, Counters, and Curses',
-    title: 'Poison, Energy, Experience',
-    dialogue: 'Some numbers sit on players like tiny doom accountants.',
+    chapter: 'Chapter 8 — Crowns, Counters, and Curses · Power: The Crown That Counts You',
+    title: 'Numbers on the Soul',
+    scene: 'A counter clicks beside your name like a lock.',
+    dialogue: 'Poison, energy, experience: little accountants of doom. Adjust them where everyone can see.',
     objective: 'Add and remove a player counter.',
     hint: 'Use Poison, Energy, Experience, or create a custom player counter.',
+    reaction: 'Bolas: The crown counts you now.',
     anchor: 'player-counters-panel',
     completion: 'detect-or-manual'
   },
   {
     id: 'mana_pool',
-    chapter: 'Crowns, Counters, and Curses',
+    chapter: 'Chapter 8 — Crowns, Counters, and Curses · Power: The Crown That Counts You',
     title: 'Floating Fire',
-    dialogue: 'Mana unspent is a threat with nowhere to stand.',
+    scene: 'Unused mana sparks above your name before fading.',
+    dialogue: 'Mana unspent is a threat with nowhere to stand. Track it, then dismiss it.',
     objective: 'Add mana to your mana pool, then clear it.',
-    hint: 'In Player Counters & Statuses, use the Mana Pool controls. It is manual and does not pay for spells automatically.',
+    hint: 'In Player Counters & Statuses, use Mana Pool controls. This is manual and does not pay for spells automatically.',
+    reaction: 'Bolas: Fire in a bowl. Quaint.',
     anchor: 'mana-pool-panel',
     completion: 'detect-or-manual'
   },
   {
     id: 'statuses',
-    chapter: 'Crowns, Counters, and Curses',
-    title: 'Thrones for the Easily Tempted',
-    dialogue: 'Monarch. Initiative. City’s Blessing. Titles are just counters with better hats.',
+    chapter: 'Chapter 8 — Crowns, Counters, and Curses · Power: The Crown That Counts You',
+    title: 'Badges of Trouble',
+    scene: 'A crown, an initiative torch, and a day-night sun orbit the duel.',
+    dialogue: 'Titles are counters with better hats. Wear one, remove one, remember who is blamed.',
     objective: 'Toggle a player status.',
     hint: 'Try Monarch, Initiative, City’s Blessing, Day/Night, or Ring temptation.',
+    reaction: 'Bolas: A title appears. Try not to govern poorly.',
     anchor: 'status-panel',
     completion: 'detect-or-manual'
   },
   {
     id: 'emblems',
-    chapter: 'Crowns, Counters, and Curses',
-    title: 'Permanent Bad Decisions',
-    dialogue: 'An emblem is what happens when a planeswalker’s threat survives the planeswalker.',
+    chapter: 'Chapter 8 — Crowns, Counters, and Curses · Power: The Crown That Counts You',
+    title: 'A Threat That Outlives Its Maker',
+    scene: 'A planeswalker-shaped warning burns into the sky.',
+    dialogue: 'An emblem is a threat that refuses to leave when its author does. Mark it with care.',
     objective: 'Add an emblem.',
     hint: 'Use a preset emblem, custom emblem, or a deck-derived emblem if available.',
+    reaction: 'Bolas: Permanent consequences. My favorite kind.',
     anchor: 'emblem-panel',
     completion: 'detect-or-manual'
   },
   {
     id: 'dungeons',
-    chapter: 'Crowns, Counters, and Curses',
-    title: 'The Room Beneath the Turn',
-    dialogue: 'Dungeons are maps that pretend they are cards. Initiative is the door kicking back.',
+    chapter: 'Chapter 8 — Crowns, Counters, and Curses · Power: The Crown That Counts You',
+    title: 'Rooms Beneath the Turn',
+    scene: 'Trapdoors open under the battlefield, labeled like very rude maps.',
+    dialogue: 'Dungeons are journeys pretending to be references. Keep the map visible; the app will not walk it for you.',
     objective: 'Find dungeon references.',
-    hint: 'Dungeon references may appear from your deck or from venture/initiative cards. This is a reference tool, not automatic progression.',
+    hint: 'Dungeon references may appear from your deck or venture/initiative cards. This is a reference tool, not automatic progression.',
     anchor: 'dungeon-references',
     completion: 'manual'
   },
   {
     id: 'commander_note',
-    chapter: 'Crowns, Counters, and Curses',
-    title: 'The Command Zone',
-    dialogue: 'In Commander, even death is just a tax form.',
+    chapter: 'Chapter 8 — Crowns, Counters, and Curses · Power: The Crown That Counts You',
+    title: 'The Command Zone Bargain',
+    scene: 'A commander’s shadow returns from exile with an invoice.',
+    dialogue: 'In Commander, even death negotiates. Track tax, damage, and the oversized ego in the command zone.',
     objective: 'Learn what Commander mode adds.',
     hint: 'Commander games start at 40 life and include command zone, commander tax, commander damage, and commander badges.',
     anchor: 'player-panel',
@@ -537,9 +613,10 @@ const TUTORIAL_SCRIPT_STEPS = [
   },
   {
     id: 'cleanup_old_games',
-    chapter: 'Async Survival',
+    chapter: 'Chapter 9 — Async Survival · Power: The Silence Between Turns',
     title: 'Sweep the Ruins',
-    dialogue: 'Abandoned games breed in the dark. Delete the old ones before they become a civilization.',
+    scene: 'Old battlefields rattle in the dark, begging to become clutter.',
+    dialogue: 'Abandoned games breed if left alone. Sweep your ruins before they achieve citizenship.',
     objective: 'Learn old game cleanup.',
     hint: 'In the lobby, Clean up old games can permanently remove host-owned zombie games.',
     anchor: null,
@@ -547,9 +624,10 @@ const TUTORIAL_SCRIPT_STEPS = [
   },
   {
     id: 'watch_game',
-    chapter: 'Async Survival',
+    chapter: 'Chapter 9 — Async Survival · Power: The Silence Between Turns',
     title: 'The Observer’s Eye',
-    dialogue: 'A watcher cannot change the duel. But they can judge it, which is often worse.',
+    scene: 'A silent watcher appears beyond the glass.',
+    dialogue: 'A watcher cannot change the duel. They can, however, judge it with unbearable accuracy.',
     objective: 'Learn Watch Game mode.',
     hint: 'From the lobby, a room code can be watched instead of joined.',
     anchor: null,
@@ -557,19 +635,21 @@ const TUTORIAL_SCRIPT_STEPS = [
   },
   {
     id: 'manual_toolbox_warning',
-    chapter: 'Async Survival',
-    title: 'The Swiss Army Knife',
-    dialogue: 'This machine is not a judge. It will not save you from illegal plays. It gives you blades, not wisdom.',
-    objective: 'Understand the app’s philosophy.',
-    hint: 'The app is a manual paper-Magic helper, not a full rules engine. Players represent actions honestly.',
+    chapter: 'Chapter 9 — Async Survival · Power: The Silence Between Turns',
+    title: 'Blades, Not Wisdom',
+    scene: 'Bolas hands you a toolbox and pointedly not a judge.',
+    dialogue: 'This machine will not save you from illegal plays. It gives you blades, not wisdom.',
+    objective: 'Understand the app’s manual-toolbox philosophy.',
+    hint: 'The app is a paper-Magic helper, not a full rules engine. Players represent actions honestly.',
     anchor: null,
     completion: 'manual'
   },
   {
     id: 'final_trial',
-    chapter: 'The Infinite Priority Stack',
+    chapter: 'Chapter 9 — Async Survival · Power: The Silence Between Turns',
     title: 'Final Trial: In Response',
-    dialogue: 'You have seen the library, the stack, the battlefield, the secret hand, the false creature, the crown, the dungeon, and the undo button. Now speak the oldest words in Magic.',
+    scene: 'The arena goes quiet, waiting for the oldest words in Magic.',
+    dialogue: 'You have learned logs, zones, secrets, tokens, crowns, and the tower of priority. Now let time move.',
     objective: 'Pass priority to end the tutorial.',
     hint: 'Tap Pass. This completes the tutorial battle.',
     anchor: 'pass-button',
@@ -579,9 +659,11 @@ const TUTORIAL_SCRIPT_STEPS = [
     id: 'tutorial_complete',
     chapter: 'Victory, Temporarily',
     title: 'The Dragon Allows You to Leave',
-    dialogue: 'You have learned the machine. Go now. Teach your friends the sacred terror of saying: “in response.”',
+    scene: 'Bolas folds the arena back into a deck-sized scar.',
+    dialogue: 'You have survived the lesson. Go teach your friends the sacred terror of saying “in response.”',
     objective: 'Finish the tutorial.',
     hint: 'You can restart tutorial mode from the lobby any time.',
+    reaction: 'Bolas: Temporary survival granted.',
     anchor: null,
     completion: 'finish'
   },
@@ -604,7 +686,9 @@ const normalizeTutorialStep = (step, fallbackId = 'intro') => {
     id: typeof safeStep.id === 'string' && safeStep.id ? safeStep.id : fallbackId,
     chapter: typeof safeStep.chapter === 'string' && safeStep.chapter ? safeStep.chapter : TUTORIAL_FALLBACK_STEP.chapter,
     title: typeof safeStep.title === 'string' && safeStep.title ? safeStep.title : TUTORIAL_FALLBACK_STEP.title,
+    scene: typeof safeStep.scene === 'string' && safeStep.scene ? safeStep.scene : TUTORIAL_FALLBACK_STEP.scene,
     dialogue: typeof safeStep.dialogue === 'string' && safeStep.dialogue ? safeStep.dialogue : TUTORIAL_FALLBACK_STEP.dialogue,
+    reaction: typeof safeStep.reaction === 'string' ? safeStep.reaction : '',
     objective: typeof safeStep.objective === 'string' && safeStep.objective ? safeStep.objective : TUTORIAL_FALLBACK_STEP.objective,
     hint: typeof safeStep.hint === 'string' && safeStep.hint ? safeStep.hint : TUTORIAL_FALLBACK_STEP.hint,
     anchor: typeof safeStep.anchor === 'string' || Array.isArray(safeStep.anchor) ? safeStep.anchor : null,
@@ -4907,7 +4991,7 @@ class GameBoardErrorBoundary extends React.Component {
   }
 }
 
-const TutorialOverlay = ({ game, currentStep, canGoBack, isMinimized, hasOpenPanel, onToggleMinimized, onNext, onBack, onSkip, onExit, onFocusTarget, onRestart, onExplore, errorMessage = '' }) => {
+const TutorialOverlay = ({ game, currentStep, canGoBack, isMinimized, hasOpenPanel, onToggleMinimized, onNext, onBack, onSkip, onExit, onFocusTarget, onRestart, onExplore, errorMessage = '', debugInfo = null }) => {
   const [dock, setDock] = useState('bottom');
   const forcedCompact = Boolean(hasOpenPanel);
   const safeCurrentStep = normalizeTutorialStep(currentStep, game?.tutorial?.stepId || 'intro');
@@ -4977,7 +5061,9 @@ const TutorialOverlay = ({ game, currentStep, canGoBack, isMinimized, hasOpenPan
           <div className="space-y-3 px-4 py-4">
             <div>
               <h2 className="text-lg font-black leading-tight text-amber-50">{safeCurrentStep.title}</h2>
-              <p className="mt-2 rounded-xl border border-purple-500/20 bg-purple-950/30 p-3 text-sm italic leading-relaxed text-purple-100">“{safeCurrentStep.dialogue}”</p>
+              {safeCurrentStep.reaction && <p className="mt-2 rounded-xl border border-amber-500/20 bg-amber-950/30 p-2 text-xs font-bold text-amber-100">{safeCurrentStep.reaction}</p>}
+              <p className="mt-2 text-sm leading-relaxed text-slate-300">{safeCurrentStep.scene}</p>
+              <p className="mt-2 rounded-xl border border-purple-500/20 bg-purple-950/30 p-3 text-sm italic leading-relaxed text-purple-100"><span className="font-black not-italic text-purple-200">Bolas:</span> “{safeCurrentStep.dialogue}”</p>
             </div>
             {stepUnavailable && (
               <div className="rounded-xl border border-red-400/40 bg-red-950/30 p-3 text-sm font-bold text-red-100">
@@ -4994,6 +5080,20 @@ const TutorialOverlay = ({ game, currentStep, canGoBack, isMinimized, hasOpenPan
                 <div className="mt-1 text-slate-300">{safeCurrentStep.hint}</div>
               </div>
             </div>
+
+            {debugInfo && (
+              <div className="rounded-xl border border-cyan-500/30 bg-cyan-950/20 p-3 text-[11px] text-cyan-100">
+                <div className="font-black uppercase tracking-widest text-cyan-200">Tutorial timing</div>
+                <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-1">
+                  <span>Action</span><span className="text-right font-mono">{debugInfo.lastAction || '—'}</span>
+                  <span>Local advance</span><span className="text-right font-mono">{debugInfo.localAdvanceMs == null ? '—' : `${debugInfo.localAdvanceMs}ms`}</span>
+                  <span>Firestore write</span><span className="text-right font-mono">{debugInfo.firestoreWriteMs == null ? '—' : `${debugInfo.firestoreWriteMs}ms`}</span>
+                  <span>Local step</span><span className="truncate text-right font-mono">{debugInfo.localStep || '—'}</span>
+                  <span>Server step</span><span className="truncate text-right font-mono">{debugInfo.serverStep || '—'}</span>
+                  <span>Pending sync</span><span className="text-right font-mono">{debugInfo.pendingSync ? 'yes' : 'no'}</span>
+                </div>
+              </div>
+            )}
             {isFinishedStep && game.tutorial?.finished ? (
               <div className="rounded-xl border border-emerald-400/40 bg-emerald-950/30 p-3">
                 <div className="text-sm font-black text-emerald-100">Tutorial complete. Nicol Bolas has permitted your temporary survival.</div>
@@ -5124,6 +5224,11 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const [repairGameSizeBusy, setRepairGameSizeBusy] = useState(false);
   const [tutorialMinimized, setTutorialMinimized] = useState(false);
   const [tutorialOverlayError, setTutorialOverlayError] = useState(null);
+  const [optimisticTutorialState, setOptimisticTutorialState] = useState(null);
+  const [tutorialSyncPending, setTutorialSyncPending] = useState(false);
+  const [tutorialDebugTiming, setTutorialDebugTiming] = useState({ lastAction: null, localAdvanceMs: null, firestoreWriteMs: null });
+  const optimisticTutorialRef = useRef(null);
+  const tutorialSyncWriteIdRef = useRef(0);
 
   // Chat State
   const [chatOpen, setChatOpen] = useState(false);
@@ -5162,11 +5267,18 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const undoSource = optimisticGame ? 'optimistic' : 'firestore';
   const undoPendingSync = Boolean(optimisticGame && pendingOptimisticActionId);
 
-  const isTutorialGame = Boolean(game?.isTutorial && !game?.tutorial?.inactive);
-  const currentTutorialStep = isTutorialGame ? getTutorialStepById(game?.tutorial?.stepId || 'intro') : null;
+  const serverTutorialState = firestoreGame?.tutorial || game?.tutorial || null;
+  const displayedTutorialState = optimisticTutorialState || serverTutorialState || null;
+  const isTutorialGame = Boolean(game?.isTutorial && !displayedTutorialState?.inactive);
+  const currentTutorialStep = isTutorialGame ? getTutorialStepById(displayedTutorialState?.stepId || 'intro') : null;
   const currentTutorialAnchor = currentTutorialStep?.anchor || null;
-  const tutorialCompletedStepIds = capTutorialCompletedStepIds(game?.tutorial?.completedStepIds || []);
   const canGoBackTutorial = isTutorialGame && getTutorialStepIndex(currentTutorialStep?.id) > 0;
+  const tutorialDebugInfo = (isDebugActionsEnabled() || isPerfActionsEnabled()) && isTutorialGame ? {
+    ...tutorialDebugTiming,
+    localStep: optimisticTutorialState?.stepId || displayedTutorialState?.stepId || null,
+    serverStep: serverTutorialState?.stepId || null,
+    pendingSync: tutorialSyncPending
+  } : null;
 
   const focusTutorialTarget = useCallback(() => {
     const anchor = Array.isArray(currentTutorialAnchor) ? currentTutorialAnchor[0] : currentTutorialAnchor;
@@ -5189,73 +5301,123 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     window.setTimeout(() => setTutorialPulseAnchor((current) => current === anchor ? null : current), 2800);
   }, [currentTutorialAnchor]);
 
-  const updateTutorialState = async (updates = {}) => {
-    if (!gameId || !game?.isTutorial) return;
-    try {
-      await updateDoc(doc(db, 'games_v3', gameId), {
-      tutorial: {
-        scriptVersion: game.tutorial?.scriptVersion || TUTORIAL_SCRIPT_VERSION,
-        stepId: updates.stepId ?? game.tutorial?.stepId ?? 'intro',
-        completedStepIds: capTutorialCompletedStepIds(updates.completedStepIds ?? game.tutorial?.completedStepIds ?? []),
-        playerId: game.tutorial?.playerId || userId,
-        opponentName: game.tutorial?.opponentName || 'Nicol Bolas',
-        opponentIsScripted: game.tutorial?.opponentIsScripted !== false,
-        finished: Boolean(updates.finished ?? game.tutorial?.finished),
-        inactive: Boolean(updates.inactive ?? game.tutorial?.inactive)
-      },
-      updatedAt: serverTimestamp()
-      });
-      setTutorialOverlayError(null);
-    } catch (error) {
-      console.error('Tutorial state update failed', error);
-      setTutorialOverlayError('Tutorial step unavailable. Skip or restart tutorial.');
+  useEffect(() => {
+    if (!optimisticTutorialState || !serverTutorialState) return;
+    const serverIndex = getTutorialStepIndex(serverTutorialState.stepId || 'intro');
+    const localIndex = getTutorialStepIndex(optimisticTutorialState.stepId || 'intro');
+    const serverCaughtUp = serverTutorialState.stepId === optimisticTutorialState.stepId
+      && Boolean(serverTutorialState.finished) === Boolean(optimisticTutorialState.finished)
+      && Boolean(serverTutorialState.inactive) === Boolean(optimisticTutorialState.inactive);
+    if (serverCaughtUp || serverIndex > localIndex) {
+      optimisticTutorialRef.current = null;
+      setOptimisticTutorialState(null);
+      setTutorialSyncPending(false);
     }
-  };
+  }, [optimisticTutorialState, serverTutorialState]);
 
-  const advanceTutorialStep = async ({ markCompleted = true, finish = false } = {}) => {
-    if (!isTutorialGame || !currentTutorialStep) return;
-    const completedStepIds = markCompleted
-      ? capTutorialCompletedStepIds([...tutorialCompletedStepIds, currentTutorialStep.id])
-      : tutorialCompletedStepIds;
-    await updateTutorialState({
-      stepId: finish ? currentTutorialStep.id : getNextTutorialStepId(currentTutorialStep.id),
-      completedStepIds,
-      finished: finish || game?.tutorial?.finished,
-      inactive: finish ? false : game?.tutorial?.inactive
+  const updateTutorialState = (updates = {}, { actionLabel = 'manual' } = {}) => {
+    if (!gameId || !game?.isTutorial) return Promise.resolve();
+    const localStartedAt = getActionPerfNow();
+    const baseTutorial = optimisticTutorialRef.current || displayedTutorialState || game.tutorial || {};
+    const nextTutorial = {
+      scriptVersion: baseTutorial.scriptVersion || TUTORIAL_SCRIPT_VERSION,
+      stepId: updates.stepId ?? baseTutorial.stepId ?? 'intro',
+      completedStepIds: capTutorialCompletedStepIds(updates.completedStepIds ?? baseTutorial.completedStepIds ?? []),
+      playerId: baseTutorial.playerId || userId,
+      opponentName: baseTutorial.opponentName || 'Nicol Bolas',
+      opponentIsScripted: baseTutorial.opponentIsScripted !== false,
+      finished: Boolean(updates.finished ?? baseTutorial.finished),
+      inactive: Boolean(updates.inactive ?? baseTutorial.inactive)
+    };
+    optimisticTutorialRef.current = nextTutorial;
+    setOptimisticTutorialState(nextTutorial);
+    setTutorialSyncPending(true);
+    setTutorialOverlayError(null);
+    setTutorialDebugTiming((current) => ({
+      ...current,
+      lastAction: actionLabel,
+      localAdvanceMs: Math.round((getActionPerfNow() - localStartedAt) * 10) / 10,
+      firestoreWriteMs: null
+    }));
+
+    const writeId = ++tutorialSyncWriteIdRef.current;
+    const writeStartedAt = getActionPerfNow();
+    const writePromise = updateDoc(doc(db, 'games_v3', gameId), {
+      tutorial: nextTutorial,
+      updatedAt: serverTimestamp()
+    }).then(() => {
+      const writeMs = Math.round((getActionPerfNow() - writeStartedAt) * 10) / 10;
+      setTutorialDebugTiming((current) => ({ ...current, firestoreWriteMs: writeMs }));
+      setTutorialOverlayError(null);
+      if (writeId === tutorialSyncWriteIdRef.current && serverTutorialState?.stepId === nextTutorial.stepId) {
+        setTutorialSyncPending(false);
+      }
+    }).catch((error) => {
+      console.error('Tutorial state update failed', error);
+      if (writeId === tutorialSyncWriteIdRef.current) setTutorialSyncPending(false);
+      setTutorialDebugTiming((current) => ({ ...current, firestoreWriteMs: Math.round((getActionPerfNow() - writeStartedAt) * 10) / 10 }));
+      setTutorialOverlayError('Tutorial sync warning: progress is local for now. You can keep playing.');
+      setNotification('Tutorial progress sync is delayed; you can keep playing.');
+      setTimeout(() => setNotification(null), 3000);
     });
+    return writePromise;
   };
 
-  const goBackTutorialStep = async () => {
-    if (!canGoBackTutorial || !currentTutorialStep) return;
-    await updateTutorialState({ stepId: getPreviousTutorialStepId(currentTutorialStep.id) });
+  const advanceTutorialStepFrom = (expectedStepId, { markCompleted = true, finish = false, actionLabel = 'advance' } = {}) => {
+    if (!isTutorialGame || !expectedStepId) return Promise.resolve(false);
+    const liveStepId = (optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.stepId || 'intro';
+    if (liveStepId !== expectedStepId) return Promise.resolve(false);
+    const baseCompletedStepIds = capTutorialCompletedStepIds((optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.completedStepIds || []);
+    const completedStepIds = markCompleted
+      ? capTutorialCompletedStepIds([...baseCompletedStepIds, expectedStepId])
+      : baseCompletedStepIds;
+    updateTutorialState({
+      stepId: finish ? expectedStepId : getNextTutorialStepId(expectedStepId),
+      completedStepIds,
+      finished: finish || Boolean((optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.finished),
+      inactive: finish ? false : Boolean((optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.inactive)
+    }, { actionLabel });
+    return Promise.resolve(true);
   };
 
-  const exitTutorial = async () => {
+  const advanceTutorialStep = ({ markCompleted = true, finish = false, actionLabel = 'manual next' } = {}) => {
+    if (!isTutorialGame || !currentTutorialStep) return Promise.resolve(false);
+    return advanceTutorialStepFrom(currentTutorialStep.id, { markCompleted, finish, actionLabel });
+  };
+
+  const goBackTutorialStep = () => {
+    if (!canGoBackTutorial || !currentTutorialStep) return Promise.resolve(false);
+    return updateTutorialState({ stepId: getPreviousTutorialStepId(currentTutorialStep.id) }, { actionLabel: 'manual back' });
+  };
+
+  const exitTutorial = () => {
     if (game?.isTutorial) {
-      await updateTutorialState({ inactive: true });
+      updateTutorialState({ inactive: true }, { actionLabel: 'exit tutorial' });
     }
     onExit?.();
   };
 
-  const restartTutorial = async () => {
-    if (!game?.isTutorial) return;
-    await updateTutorialState({ stepId: 'intro', completedStepIds: [], finished: false, inactive: false });
+  const restartTutorial = () => {
+    if (!game?.isTutorial) return Promise.resolve(false);
+    return updateTutorialState({ stepId: 'intro', completedStepIds: [], finished: false, inactive: false }, { actionLabel: 'restart tutorial' });
   };
 
-  const continueExploringTutorial = async () => {
-    if (!game?.isTutorial) return;
-    await updateTutorialState({ inactive: true, finished: true });
+  const continueExploringTutorial = () => {
+    if (!game?.isTutorial) return Promise.resolve(false);
+    return updateTutorialState({ inactive: true, finished: true }, { actionLabel: 'explore tutorial' });
   };
 
-  const maybeCompleteTutorialStep = async (stepId) => {
-    if (!isTutorialGame || game?.tutorial?.stepId !== stepId) return;
-    await advanceTutorialStep({ markCompleted: true });
+  const maybeCompleteTutorialStep = (stepId) => {
+    const liveStepId = (optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.stepId || 'intro';
+    if (!isTutorialGame || liveStepId !== stepId) return Promise.resolve(false);
+    return advanceTutorialStepFrom(stepId, { markCompleted: true, actionLabel: `step:${stepId}` });
   };
 
 
-  const maybeCompleteTutorialAction = async (actionType, payload = {}) => {
-    if (!isTutorialGame || !currentTutorialStep) return;
-    const stepId = currentTutorialStep.id;
+  const maybeCompleteTutorialAction = (actionType, payload = {}) => {
+    const liveStepId = (optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.stepId || 'intro';
+    if (!isTutorialGame || !liveStepId) return Promise.resolve(false);
+    const stepId = liveStepId;
     const actionStepMap = {
       DRAW_CARD: ['draw_card'],
       PLAY_LAND: ['play_land'],
@@ -5285,8 +5447,9 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       ADD_PLAYER_EMBLEM: ['emblems']
     };
     if ((actionStepMap[actionType] || []).includes(stepId)) {
-      await advanceTutorialStep({ markCompleted: true });
+      return advanceTutorialStepFrom(stepId, { markCompleted: true, actionLabel: actionType });
     }
+    return Promise.resolve(false);
   };
 
 
@@ -6352,6 +6515,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       setPendingOptimisticActionId(optimisticUndoActionId);
       setPendingOptimisticStartedAt(pendingOptimisticActionRef.current.startedAt);
       appliedOptimisticUndo = true;
+      maybeCompleteTutorialStep('undo_play_land');
       recordPerfOptimisticApplied({ actionType: 'UNDO_LAST_ACTION', restoredFields }, perfActionId || optimisticUndoActionId);
       recordPerfUndo({
         optimisticApplied: true,
@@ -6445,7 +6609,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     }
 
     closeTransientGameModals();
-    await maybeCompleteTutorialStep('undo_play_land');
+    maybeCompleteTutorialStep('undo_play_land');
     finishPerfAction(perfActionId);
   };
 
@@ -6491,6 +6655,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       setTimeout(() => setNotification(null), 2000);
       return;
     }
+    maybeCompleteTutorialAction(actionType, payload);
     // UPDATED: Path
     const gameRef = doc(db, 'games_v3', gameId);
     const perfRunTransaction = async (label, callback) => {
@@ -9607,20 +9772,21 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       <PerfDebugIndicator />
       <PerformanceDebugPanel game={game} onRepairGameSize={handleRepairGameSize} canRepairGameSize={isPlayer || isHost} repairGameSizeBusy={repairGameSizeBusy} />
       <TutorialOverlay
-        game={game}
+        game={{ ...game, tutorial: displayedTutorialState || game?.tutorial }}
         currentStep={currentTutorialStep}
         canGoBack={canGoBackTutorial}
         isMinimized={tutorialMinimized}
         hasOpenPanel={tutorialHasOpenPanel}
         onToggleMinimized={() => setTutorialMinimized((value) => !value)}
-        onNext={() => advanceTutorialStep({ markCompleted: true, finish: currentTutorialStep?.id === 'tutorial_complete' })}
+        onNext={() => advanceTutorialStep({ markCompleted: true, finish: currentTutorialStep?.id === 'tutorial_complete', actionLabel: 'manual next' })}
         onBack={goBackTutorialStep}
-        onSkip={() => advanceTutorialStep({ markCompleted: false, finish: currentTutorialStep?.id === 'tutorial_complete' })}
+        onSkip={() => advanceTutorialStep({ markCompleted: false, finish: currentTutorialStep?.id === 'tutorial_complete', actionLabel: 'manual skip' })}
         onExit={exitTutorial}
         onFocusTarget={focusTutorialTarget}
         onRestart={restartTutorial}
         onExplore={continueExploringTutorial}
-        errorMessage={tutorialOverlayError}
+        errorMessage={tutorialOverlayError || ''}
+        debugInfo={tutorialDebugInfo}
       />
       {/* 1. Header */}
       <div className="bg-slate-800 border-b border-slate-700 p-2 shrink-0 shadow-md top-action-scroll-wrap">

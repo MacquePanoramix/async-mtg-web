@@ -731,6 +731,8 @@ const buildPerfUndoCardDebug = ({ cardId = null, currentGame = {}, previousState
 const getPerfRecentLogs = (data = {}, limit = 8) => (Array.isArray(data.log) ? data.log.slice(-limit).reverse() : []);
 
 const getPerfLatestUndoEntry = (data = {}) => (Array.isArray(data.undoStack) && data.undoStack.length > 0 ? data.undoStack[data.undoStack.length - 1] : null);
+const getPerfRecentUndoEntries = (data = {}, limit = 8) => (Array.isArray(data.undoStack) ? data.undoStack.slice(-limit) : []);
+const getPerfUndoActionOrder = (data = {}, limit = 5) => getPerfRecentUndoEntries(data, limit).map((entry) => entry?.actionType || 'UNKNOWN').join(' > ');
 
 const getPerfEntryActionId = (entry = {}) => entry?.clientActionId || entry?.perfActionId || entry?.actionId || null;
 
@@ -768,8 +770,10 @@ const getPerfSnapshotReflection = (action = {}, data = {}, lastLog = null) => {
   const matchingLog = logsToCheck.find((log) => perfLogMatchesAction(log, action, marker)) || null;
   const logMatches = Boolean(matchingLog);
   const latestUndoEntry = getPerfLatestUndoEntry(data);
+  const recentUndoEntries = getPerfRecentUndoEntries(data);
   const latestUndoPendingSync = Boolean(latestUndoEntry?.pendingSync);
   const latestUndoMatches = Boolean(latestUndoEntry && !latestUndoPendingSync && perfEntryMatchesAction(latestUndoEntry, action));
+  const recentMatchingUndoEntry = [...recentUndoEntries].reverse().find((entry) => entry && !entry.pendingSync && perfEntryMatchesAction(entry, action)) || null;
   const actualCardZone = getPerfCardZone(data, action.cardId);
   const debug = {
     actionType: action.actionType,
@@ -780,8 +784,15 @@ const getPerfSnapshotReflection = (action = {}, data = {}, lastLog = null) => {
     latestUndoActionLabel: latestUndoEntry?.actionLabel || null,
     latestUndoPendingSync,
     latestUndoCardId: latestUndoEntry?.cardId || null,
+    newestServerUndoActionType: latestUndoEntry?.actionType || null,
+    newestServerUndoCardId: latestUndoEntry?.cardId || null,
     latestUndoCardIdMatches: !action.cardId || latestUndoEntry?.cardId === action.cardId,
     latestUndoMatches,
+    recentMatchingUndoActionType: recentMatchingUndoEntry?.actionType || null,
+    recentMatchingUndoCardId: recentMatchingUndoEntry?.cardId || null,
+    recentMatchingUndoIsLatest: Boolean(recentMatchingUndoEntry && latestUndoEntry && recentMatchingUndoEntry.id === latestUndoEntry.id),
+    undoStackLength: Array.isArray(data.undoStack) ? data.undoStack.length : null,
+    undoStackActionOrder: getPerfUndoActionOrder(data),
     recentLogMatchType: matchingLog?.type || null,
     recentLogMatchMessage: matchingLog?.message || matchingLog?.desc || null
   };
@@ -789,6 +800,7 @@ const getPerfSnapshotReflection = (action = {}, data = {}, lastLog = null) => {
   if (action.actionType === 'PLAY_LAND') {
     const cardInExpectedZone = actualCardZone === expected.cardZone;
     if (cardInExpectedZone && latestUndoMatches) return { reflects: true, reason: 'played card is on battlefield and latest server undo entry matches', debug };
+    if (cardInExpectedZone && recentMatchingUndoEntry) return { reflects: true, reason: 'played card is on battlefield and a recent server undo entry matches', debug };
     if (cardInExpectedZone && logMatches) return { reflects: true, reason: 'played card is on battlefield and a recent log entry matches', debug };
     if (!cardInExpectedZone) return { reflects: false, reason: `played card zone is ${actualCardZone || 'missing'}, expected ${expected.cardZone}`, debug };
     if (latestUndoEntry && latestUndoPendingSync) return { reflects: false, reason: 'latest undo entry is still pendingSync', debug };
@@ -1312,11 +1324,15 @@ const undoEntryIncludesCardSnapshot = (entry = {}) => Array.isArray(entry?.previ
 const pruneUndoStackForFirestore = (undoStack = [], { maxEntries = MAX_UNDO_STACK_ENTRIES, maxCardSnapshotEntries = MAX_UNDO_STACK_CARD_SNAPSHOT_ENTRIES, budgetBytes = FIRESTORE_UNDO_STACK_BUDGET_BYTES } = {}) => {
   if (!Array.isArray(undoStack)) return undoStack;
   let pruned = undoStack.map(normalizeUndoEntryForFirestore).slice(-maxEntries);
+
+  // The newest entry is the action currently being persisted. Keep it at the end
+  // so undo reconciliation never sees an older action as latest after pruning.
   while (pruned.filter(undoEntryIncludesCardSnapshot).length > maxCardSnapshotEntries) {
-    const firstCardSnapshotIndex = pruned.findIndex(undoEntryIncludesCardSnapshot);
-    if (firstCardSnapshotIndex < 0) break;
-    pruned = [...pruned.slice(0, firstCardSnapshotIndex), ...pruned.slice(firstCardSnapshotIndex + 1)];
+    const olderCardSnapshotIndex = pruned.slice(0, -1).findIndex(undoEntryIncludesCardSnapshot);
+    if (olderCardSnapshotIndex < 0) break;
+    pruned = [...pruned.slice(0, olderCardSnapshotIndex), ...pruned.slice(olderCardSnapshotIndex + 1)];
   }
+
   let estimatedBytes = estimateJsonByteSize(pruned);
   while (pruned.length > 1 && estimatedBytes != null && estimatedBytes > budgetBytes) {
     pruned = pruned.slice(1);
@@ -3888,8 +3904,14 @@ const PerformanceDebugPanel = ({ game = null, onRepairGameSize = null, canRepair
                     <div className="col-span-2 rounded bg-slate-900 p-2"><span className="text-slate-400">Played card id:</span> <span className="break-words font-mono">{reflectionDebug?.cardId || lastAction.cardId || '—'}</span></div>
                     <div className="rounded bg-slate-900 p-2"><span className="text-slate-400">Expected/actual zone:</span> <b>{reflectionDebug?.expectedZone || '—'} / {reflectionDebug?.actualZone || '—'}</b></div>
                     <div className="rounded bg-slate-900 p-2"><span className="text-slate-400">Latest undo:</span> <b>{reflectionDebug?.latestUndoActionType || '—'} · {reflectionDebug?.latestUndoActionLabel || '—'}</b></div>
+                    <div className="rounded bg-slate-900 p-2"><span className="text-slate-400">Latest undo card:</span> <b>{reflectionDebug?.newestServerUndoCardId || reflectionDebug?.latestUndoCardId || '—'}</b></div>
                     <div className="rounded bg-slate-900 p-2"><span className="text-slate-400">Latest undo pending:</span> <b className={reflectionDebug?.latestUndoPendingSync ? 'text-amber-300' : 'text-emerald-300'}>{reflectionDebug?.latestUndoPendingSync ? 'yes' : 'no'}</b></div>
                     <div className="rounded bg-slate-900 p-2"><span className="text-slate-400">Undo card matches:</span> <b className={reflectionDebug?.latestUndoCardIdMatches ? 'text-emerald-300' : 'text-rose-300'}>{reflectionDebug?.latestUndoCardIdMatches ? 'yes' : 'no'}</b></div>
+                    <div className="rounded bg-slate-900 p-2"><span className="text-slate-400">Write undoStack:</span> <b>{lastAction.undo?.writeIncludesUndoStack == null ? '—' : (lastAction.undo.writeIncludesUndoStack ? 'yes' : 'no')}</b></div>
+                    <div className="rounded bg-slate-900 p-2"><span className="text-slate-400">Undo len before/after:</span> <b>{lastAction.undo?.undoStackLengthBefore ?? '—'} / {lastAction.undo?.undoStackLengthAfter ?? reflectionDebug?.undoStackLength ?? '—'}</b></div>
+                    <div className="rounded bg-slate-900 p-2"><span className="text-slate-400">Pruned PLAY_LAND:</span> <b className={lastAction.undo?.pruningDroppedNewPlayLand ? 'text-rose-300' : 'text-emerald-300'}>{lastAction.undo?.pruningDroppedNewPlayLand == null ? '—' : (lastAction.undo.pruningDroppedNewPlayLand ? 'yes' : 'no')}</b></div>
+                    <div className="rounded bg-slate-900 p-2"><span className="text-slate-400">Recent PLAY_LAND undo:</span> <b>{reflectionDebug?.recentMatchingUndoActionType || '—'} · {reflectionDebug?.recentMatchingUndoCardId || '—'}</b></div>
+                    <div className="col-span-2 rounded bg-slate-900 p-2"><span className="text-slate-400">Undo order:</span> <span className="break-words font-mono">{lastAction.undo?.undoStackActionOrder || reflectionDebug?.undoStackActionOrder || '—'}</span></div>
                   </>
                 )}
                 {undoCardDebug && (
@@ -4370,7 +4392,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             const safeFallbackReflects = completedWrite
               && pendingOptimistic.actionType === 'PLAY_LAND'
               && getPerfCardZone(nextFirestoreGame, pendingOptimistic.cardId) === ZONES.BATTLEFIELD
-              && Boolean(getPerfLatestUndoEntry(nextFirestoreGame) && !getPerfLatestUndoEntry(nextFirestoreGame).pendingSync && perfEntryMatchesAction(getPerfLatestUndoEntry(nextFirestoreGame), pendingOptimistic));
+              && Boolean(getPerfRecentUndoEntries(nextFirestoreGame).some((entry) => entry && !entry.pendingSync && perfEntryMatchesAction(entry, pendingOptimistic)));
             const canReconcileOptimistic = pendingReflection.reflects && (serverSnapshot || completedWrite || safeFallbackReflects);
             if (canReconcileOptimistic || safeFallbackReflects) {
               recordPerfOptimisticConfirmed({
@@ -6839,46 +6861,86 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         if (!currentPlayers.some((player) => player.id === userId)) return;
         const transactionActorName = currentPlayers.find((player) => player.id === userId)?.name || actorName;
         let transactionUpdates = updates;
+        let undoBaseGame = currentGame;
+        let transactionActionLabel = actionLabel;
         if (actionType === 'PLAY_LAND') {
-          const currentPlayedCard = (currentGame.cards || []).find((card) => card.instanceId === payload.cardId);
-          if (!currentPlayedCard || currentPlayedCard.zone !== ZONES.HAND) return;
-          const transactionBattlefieldCard = { ...currentPlayedCard, zone: ZONES.BATTLEFIELD };
+          const currentCards = currentGame.cards || [];
+          const currentPlayedCard = currentCards.find((card) => card.instanceId === payload.cardId);
+          const localPlayedCardBeforeAction = (game.cards || []).find((card) => card.instanceId === payload.cardId);
+          const canRepairAlreadyMovedLand = currentPlayedCard?.zone === ZONES.BATTLEFIELD && localPlayedCardBeforeAction?.zone === ZONES.HAND;
+          if (!currentPlayedCard || (currentPlayedCard.zone !== ZONES.HAND && !canRepairAlreadyMovedLand)) return;
+          const playedCardForLog = currentPlayedCard || localPlayedCardBeforeAction;
+          const transactionBattlefieldCard = { ...playedCardForLog, zone: ZONES.BATTLEFIELD };
           const transactionSpawnPosition = getBattlefieldGridPosition({
             card: transactionBattlefieldCard,
-            existingBattlefieldCards: currentGame.cards || [],
+            existingBattlefieldCards: currentCards,
             controllerId: userId,
             containerWidth: getCurrentBattlefieldWidthPx(),
             isMobile: battlefieldViewport.width <= 900
           });
-          const transactionCards = (currentGame.cards || []).map((card) => (
+          const transactionCards = currentCards.map((card) => (
             card.instanceId === payload.cardId
               ? { ...card, zone: ZONES.BATTLEFIELD, ...getBattlefieldPositionCoordinates(transactionSpawnPosition) }
               : card
           ));
+          const playLandMessage = `${transactionActorName} played ${getSafeCardName(playedCardForLog, payload.cardName || 'a land')}.`;
+          transactionActionLabel = normalizeUndoActionLabel(playLandMessage, transactionActorName);
+          if (canRepairAlreadyMovedLand) {
+            undoBaseGame = {
+              ...currentGame,
+              cards: currentCards.map((card) => (
+                card.instanceId === payload.cardId
+                  ? { ...card, ...localPlayedCardBeforeAction, zone: ZONES.HAND }
+                  : card
+              ))
+            };
+          }
           transactionUpdates = {
             ...updates,
             cards: transactionCards,
-            log: arrayUnion(makeActionLog('PLAY_LAND', `${transactionActorName} played ${getSafeCardName(currentPlayedCard, payload.cardName || 'a land')}.`, {
+            log: arrayUnion(makeActionLog('PLAY_LAND', playLandMessage, {
               category: 'card',
-              cardId: currentPlayedCard.instanceId || payload.cardId,
-              cardName: getSafeCardName(currentPlayedCard, payload.cardName || 'a land')
+              cardId: playedCardForLog.instanceId || payload.cardId,
+              cardName: getSafeCardName(playedCardForLog, payload.cardName || 'a land')
             }))
           };
+          recordPerfCheckpoint('PLAY_LAND transaction prepared', {
+            updatesIncludeCards: Array.isArray(transactionUpdates.cards),
+            currentCardZone: currentPlayedCard?.zone || null,
+            repairedAlreadyMovedLand: canRepairAlreadyMovedLand,
+            undoStackLengthBefore: Array.isArray(currentGame.undoStack) ? currentGame.undoStack.length : 0,
+            previousNewestUndoActionType: getPerfLatestUndoEntry(currentGame)?.actionType || null,
+            previousNewestUndoCardId: getPerfLatestUndoEntry(currentGame)?.cardId || null
+          }, perfActionId);
+        }
+        const undoEntry = buildUndoEntry({
+          currentGame: undoBaseGame,
+          actorId: userId,
+          actorName: transactionActorName,
+          actionLabel: transactionActionLabel,
+          fields: getUndoFieldsForAction(actionType, { updates: transactionUpdates }),
+          actionType,
+          clientActionId,
+          cardId: getPerfActionCardId(payload),
+          postActionCards: transactionUpdates.cards
+        });
+        const nextUndoStack = appendUndoEntry(currentGame, undoEntry);
+        const newestUndoAfterAppend = nextUndoStack[nextUndoStack.length - 1] || null;
+        if (actionType === 'PLAY_LAND') {
+          recordPerfUndo({
+            writeIncludesUndoStack: true,
+            undoStackLengthBefore: Array.isArray(currentGame.undoStack) ? currentGame.undoStack.length : 0,
+            undoStackLengthAfter: nextUndoStack.length,
+            newestServerUndoActionType: newestUndoAfterAppend?.actionType || null,
+            newestServerUndoCardId: newestUndoAfterAppend?.cardId || null,
+            pruningDroppedNewPlayLand: newestUndoAfterAppend?.id !== undoEntry.id,
+            undoStackActionOrder: nextUndoStack.map((entry) => entry?.actionType || 'UNKNOWN').join(' > ')
+          }, perfActionId);
         }
         firestoreWriteCommitted = true;
         transaction.update(gameRef, normalizeGameUpdatesForFirestore({
           ...transactionUpdates,
-          undoStack: appendUndoEntry(currentGame, buildUndoEntry({
-            currentGame,
-            actorId: userId,
-            actorName: transactionActorName,
-            actionLabel,
-            fields: getUndoFieldsForAction(actionType, { updates: transactionUpdates }),
-            actionType,
-            clientActionId,
-            cardId: getPerfActionCardId(payload),
-            postActionCards: transactionUpdates.cards
-          })),
+          undoStack: nextUndoStack,
           updatedAt: serverTimestamp()
         }, actionType));
       });
@@ -6896,7 +6958,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         const reflection = getPerfSnapshotReflection(pendingOptimistic, latestFirestore, latestLog);
         const fallbackReflects = pendingOptimistic.actionType === 'PLAY_LAND'
           && getPerfCardZone(latestFirestore, pendingOptimistic.cardId) === ZONES.BATTLEFIELD
-          && Boolean(getPerfLatestUndoEntry(latestFirestore) && !getPerfLatestUndoEntry(latestFirestore).pendingSync && perfEntryMatchesAction(getPerfLatestUndoEntry(latestFirestore), pendingOptimistic));
+          && Boolean(getPerfRecentUndoEntries(latestFirestore).some((entry) => entry && !entry.pendingSync && perfEntryMatchesAction(entry, pendingOptimistic)));
         if (reflection.reflects || fallbackReflects) {
           recordPerfOptimisticConfirmed({ reflectionReason: reflection.reason, safeFallbackReflects: fallbackReflects, transactionResolvedFallback: true }, pendingOptimistic.id);
           completedOptimisticActionIdsRef.current.delete(pendingOptimistic.id);

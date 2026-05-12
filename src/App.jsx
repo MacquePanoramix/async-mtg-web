@@ -39,7 +39,7 @@ const TUTORIAL_SCRIPT_STEPS = [
   { id: 'room_code', chapter: 'Act 1 / Turn 1 — Main Phase', title: 'The Doorway Sigil', scene: 'A six-character room code burns above the battlefield.', dialogue: 'This code is the doorway. Send it to the friend you wish to inconvenience.', objective: 'Find the room code.', hint: 'In real games, friends use this code to join as a player or watch as a spectator.', anchor: 'room-code', completion: 'manual' },
   { id: 'battlefields', chapter: 'Act 1 / Turn 1 — Main Phase', title: 'Two Battlefields', scene: 'Two battlefields rise: yours below, mine above.', dialogue: 'Know the geography before you begin losing territory.', objective: 'Find your battlefield and Nicol Bolas’s battlefield.', hint: 'Your battlefield is near the bottom. Nicol Bolas is the scripted opponent above.', anchor: 'battlefields', completion: 'manual' },
   { id: 'hand_area', chapter: 'Act 1 / Turn 1 — Main Phase', title: 'Opening Hand', scene: 'Seven cards fan out like possible futures.', dialogue: 'Seven choices. Most mortals need only one to disappoint me.', objective: 'Find your hand.', hint: 'Your hand is at the bottom. Scroll sideways if needed.', anchor: 'hand-area', completion: 'manual' },
-  { id: 'import_deck', chapter: 'Act 1 / Turn 1 — Before the First Spell', title: 'The Deck You Brought', scene: 'Your prepared tutorial deck waits, but the import altar is visible beside your hand.', dialogue: 'Before a real duel, bring a real deck. Commander lists may even declare their Commander before the Deck.', objective: 'Learn where Import Deck is.', hint: 'Import Deck accepts pasted decklists. Delete Deck lets you safely re-import, and deck-derived token, emblem, and dungeon templates can appear from your list.', anchor: 'hand-area', completion: 'manual' },
+  { id: 'import_deck', chapter: 'Act 1 / Turn 1 — Before the First Spell', title: 'The Deck You Brought', scene: 'Your prepared tutorial deck waits, but the import altar is visible beside your hand.', dialogue: 'Before a real duel, bring a real deck. Commander lists may even declare their Commander before the Deck.', objective: 'Open Import Deck.', hint: 'Tap Import Deck. The tutorial opens a demo list without replacing your scripted duel deck.', anchor: 'import-deck-button', completion: 'detect-or-manual' },
   { id: 'play_land', chapter: 'Act 1 / Turn 1 — Main Phase', title: 'Play Mountain', scene: 'The floor splits into red stone.', dialogue: 'Put a place beneath your power.', objective: 'Play Mountain.', hint: 'Tap Mountain in your hand, then choose Play Land.', anchor: 'hand-area', completion: 'detect' },
   { id: 'undo_play_land', chapter: 'Act 1 / Turn 1 — Main Phase', title: 'Undo and Replay', scene: 'Time stutters around the Mountain.', dialogue: 'Regret is the first spell every player learns.', objective: 'Undo the Mountain, then play it again.', hint: 'Tap Undo, confirm, then replay Mountain. This uses the normal Play Land undo flow.', anchor: 'undo-button', completion: 'detect-or-manual' },
   { id: 'cast_spell_to_stack', chapter: 'Act 1 / Turn 1 — Main Phase', title: 'Lightning Bolt Enters the Stack', scene: 'A red spell ignites above your hand.', dialogue: 'Do not throw it at me yet. In Magic, even violence must wait in line.', objective: 'Cast Lightning Bolt targeting Nicol Bolas.', hint: 'Tap Lightning Bolt in your hand and choose Cast Spell or Cast + Target.', anchor: 'hand-area', completion: 'detect' },
@@ -97,16 +97,16 @@ const TUTORIAL_SCRIPT_STEPS = [
   { id: 'tutorial_complete', chapter: 'Victory, Temporarily', title: 'Nicol Bolas Defeated', scene: 'The dragon’s shadow cracks, but its smile remains.', dialogue: 'You have not defeated me. You have merely become inconvenient.', objective: 'Finish the tutorial duel.', hint: 'You can now return to the lobby, keep exploring this board, or restart the guided duel.', anchor: null, completion: 'finish' },
 ];
 const TUTORIAL_LOBBY_SCENES = [
-  { id: 'name', title: 'L0 — Name Yourself', scene: 'The lobby darkens like a summoning circle.', dialogue: 'Before a duel can wound you, it must know what to call you.', objective: 'Enter or confirm your display name.', hint: 'Your name appears in games and logs.', anchor: 'lobby-name-input' },
-  { id: 'laws', title: 'L1 — Choose the Laws of the Duel', scene: 'Two rule-stones burn: Regular and Commander.', dialogue: 'Twenty life is a duel. Forty life is a declaration of stubbornness.', objective: 'Find Regular and Commander mode.', hint: 'Regular starts at 20 life. Commander starts at 40 and adds command-zone tools.', anchor: 'lobby-game-mode' },
-  { id: 'title', title: 'L1b — Title the Duel', scene: 'A blank banner waits above the table.', dialogue: 'A battle with a title is easier to find when your memory has failed you.', objective: 'Find Game Title.', hint: 'Titles make rooms easier to recognize in My Games.', anchor: 'lobby-game-title' },
-  { id: 'create', title: 'L2 — Create a Game', scene: 'The room folds itself into existence.', dialogue: 'A battle is not found. It is authored.', objective: 'Learn Create Game.', hint: 'Create Game starts a new room you can share with a friend. The tutorial will not create a normal game here.', anchor: 'lobby-create-game' },
-  { id: 'join_watch', title: 'L3 — Join or Watch', scene: 'Two doors appear: one with a blade, one with an eye.', dialogue: 'Enter to fight. Watch to judge. Both are dangerous hobbies.', objective: 'Learn Join Game and Watch Game.', hint: 'Join Game is for players. Watch Game is for spectators.', anchor: 'lobby-join-watch' },
-  { id: 'room_code', title: 'L4 — Room Code', scene: 'A six-character sigil burns into the air.', dialogue: 'This code is the doorway. Send it to the friend you wish to inconvenience.', objective: 'Learn the room code.', hint: 'Give a room code to a friend so they can join or watch.', anchor: 'lobby-room-code-example' },
-  { id: 'my_games', title: 'L5 — My Games', scene: 'Recent rooms whisper from the bottom of the lobby.', dialogue: 'Abandoned games breed in the dark. Find them before they unionize.', objective: 'Find My Games.', hint: 'My Games lists rooms you recently hosted, joined, or watched.', anchor: 'lobby-my-games' },
-  { id: 'cleanup', title: 'L5b — Old Game Cleanup', scene: 'Old rooms rattle their bones.', dialogue: 'Sweep them away before they unionize.', objective: 'Find Clean up old games.', hint: 'Hosts can permanently remove old or zombie games they own.', anchor: 'lobby-cleanup-games' },
-  { id: 'deck', title: 'L5c — Deck Import Preview', scene: 'A decklist scroll seals itself for later.', dialogue: 'The duel will lend you cards. Real games expect you to bring your own doom.', objective: 'Learn the import deck concept.', hint: 'Inside a game, Import Deck lets you paste regular or Commander lists; Delete Deck lets you re-import safely.', anchor: 'lobby-tutorial-start' },
-  { id: 'begin', title: 'L6 — Tutorial Duel Begins', scene: 'The lobby cracks open. A second seat fills itself.', dialogue: 'Enough doors. Sit. Draw. Learn.', objective: 'Start the guided duel.', hint: 'The tutorial now creates a normal-looking game with a scripted Nicol Bolas opponent.', anchor: 'lobby-tutorial-start', final: true }
+  { id: 'name', completion: 'NAME_CONFIRMED', title: 'L0 — Name Yourself', scene: 'The lobby darkens like a summoning circle.', dialogue: 'Before a duel can wound you, it must know what to call you.', objective: 'Tap your name field and confirm the name you will use in the duel.', hint: 'Do it now: focus or edit Your Name. The name must not be empty.', anchor: 'lobby-name-input', reaction: 'Good. Now the room knows what to blame.' },
+  { id: 'laws', completion: 'GAME_MODE_SELECTED', title: 'L1 — Choose the Laws', scene: 'Two rule-stones burn: Regular and Commander.', dialogue: 'Twenty life is a duel. Forty life is a declaration of stubbornness.', objective: 'Choose Regular or Commander.', hint: 'Touch one of the mode buttons. Regular starts at 20 life; Commander starts at 40 and adds command-zone tools.', anchor: 'lobby-game-mode', reaction: 'A law chosen is a cage accepted.' },
+  { id: 'title', completion: 'GAME_TITLE_TOUCHED', title: 'L2 — Title the Duel', scene: 'A blank banner waits above the table.', dialogue: 'A battle with a title is easier to find when your memory has failed you.', objective: 'Tap the Game Title field.', hint: 'The title is optional, but touch the field so you know where to name rooms later.', anchor: 'lobby-game-title', reaction: 'Even an unnamed disaster should know where its banner hangs.' },
+  { id: 'create', completion: 'CREATE_GAME_PRACTICED', title: 'L3 — Create a Room', scene: 'The room folds itself toward existence, then waits.', dialogue: 'A battle is not found. It is authored.', objective: 'Tap Create Game.', hint: 'This is tutorial-safe practice: tapping Create Game here will not create a normal room.', anchor: 'lobby-create-game', reaction: 'Good. You found the forge without making unnecessary paperwork.' },
+  { id: 'join', completion: 'JOIN_GAME_PRACTICED', title: 'L4 — Join Door', scene: 'A door with a blade waits for a code.', dialogue: 'Enter to fight. Try not to look eager.', objective: 'Tap Join Game.', hint: 'This practice tap will not join a real game or require a code.', anchor: 'lobby-join-game', reaction: 'Correct door. Incorrect confidence.' },
+  { id: 'watch', completion: 'WATCH_GAME_PRACTICED', title: 'L5 — Watcher Door', scene: 'A door with an eye blinks from the lobby.', dialogue: 'Watching is safer, which is how you know it teaches less.', objective: 'Tap Watch Game.', hint: 'This practice tap will not navigate into a real game.', anchor: 'lobby-watch-game', reaction: 'Good. Spectatorship: cowardice with note-taking.' },
+  { id: 'room_code', completion: 'ROOM_CODE_INSPECTED', title: 'L6 — Room Code', scene: 'A six-character sigil burns into the air.', dialogue: 'This code is the doorway. Send it to the friend you wish to inconvenience.', objective: 'Touch the room code example.', hint: 'Room codes let friends join as players or watch as spectators.', anchor: 'lobby-room-code-example', reaction: 'A sigil noticed is a door weaponized.' },
+  { id: 'my_games', completion: 'MY_GAMES_INSPECTED', title: 'L7 — My Games', scene: 'Recent rooms whisper from the bottom of the lobby.', dialogue: 'Abandoned games breed in the dark. Find them before they unionize.', objective: 'Inspect My Games.', hint: 'Tap or scroll to the My Games panel to find rooms you hosted, joined, or watched.', anchor: 'lobby-my-games', reaction: 'Yes. Your past mistakes have an index.' },
+  { id: 'cleanup', completion: 'CLEANUP_BUTTON_INSPECTED', title: 'L8 — Clean Old Rooms', scene: 'Old rooms rattle their bones.', dialogue: 'Sweep them away before they unionize.', objective: 'Tap Clean up old games.', hint: 'This tutorial-safe tap will not delete anything.', anchor: 'lobby-cleanup-games', reaction: 'Good. Use this later when old host-owned rooms pile up.' },
+  { id: 'begin', completion: 'START_TUTORIAL_CONFIRMED', title: 'L9 — Begin Bolas Duel', scene: 'The lobby cracks open. A second seat fills itself.', dialogue: 'Enough doors. Sit. Draw. Learn.', objective: 'Tap Start Tutorial Battle.', hint: 'This action creates or opens the scripted Nicol Bolas tutorial duel.', anchor: 'lobby-tutorial-start', final: true }
 ];
 
 const TUTORIAL_FALLBACK_STEP = {
@@ -3400,6 +3400,10 @@ const Lobby = ({
   const [cleanupConfirmText, setCleanupConfirmText] = useState('');
   const [lobbyTutorialOpen, setLobbyTutorialOpen] = useState(false);
   const [lobbyTutorialIndex, setLobbyTutorialIndex] = useState(0);
+  const [lobbyTutorialMinimized, setLobbyTutorialMinimized] = useState(false);
+  const [lobbyTutorialDock, setLobbyTutorialDock] = useState('bottom');
+  const [lobbyTutorialReaction, setLobbyTutorialReaction] = useState('');
+  const lobbyTutorialAdvanceTimerRef = useRef(null);
   const isInitLoading = !currentUser;
   const isGoogleConnected = currentUser?.isAnonymous === false;
   const effectiveName = name || suggestedName || '';
@@ -3407,22 +3411,86 @@ const Lobby = ({
   const requiresDeleteText = selectedCleanupGames.length > 1;
   const canConfirmCleanup = selectedCleanupGames.length > 0 && (!requiresDeleteText || cleanupConfirmText === 'DELETE') && !isCleanupDeleting;
   const lobbyTutorialScene = TUTORIAL_LOBBY_SCENES[Math.min(lobbyTutorialIndex, TUTORIAL_LOBBY_SCENES.length - 1)];
+  const isLobbyTutorialActive = lobbyTutorialOpen && lobbyTutorialScene;
+
+  useEffect(() => () => {
+    if (lobbyTutorialAdvanceTimerRef.current) window.clearTimeout(lobbyTutorialAdvanceTimerRef.current);
+  }, []);
+
+  useEffect(() => {
+    if (!isLobbyTutorialActive || !lobbyTutorialScene?.anchor || typeof document === 'undefined') return undefined;
+    const updateDock = () => {
+      const target = document.querySelector(`[data-tutorial-anchor="${lobbyTutorialScene.anchor}"]`);
+      if (!target) return;
+      const rect = target.getBoundingClientRect();
+      const viewportMid = window.innerHeight / 2;
+      setLobbyTutorialDock(rect.top > viewportMid ? 'top' : 'bottom');
+    };
+    const rafId = window.requestAnimationFrame(updateDock);
+    window.addEventListener('resize', updateDock);
+    window.addEventListener('scroll', updateDock, true);
+    return () => {
+      window.cancelAnimationFrame(rafId);
+      window.removeEventListener('resize', updateDock);
+      window.removeEventListener('scroll', updateDock, true);
+    };
+  }, [isLobbyTutorialActive, lobbyTutorialScene?.anchor]);
 
   const focusLobbyTutorialTarget = () => {
     if (!lobbyTutorialScene?.anchor || typeof document === 'undefined') return;
+    setLobbyTutorialMinimized(true);
     const target = document.querySelector(`[data-tutorial-anchor="${lobbyTutorialScene.anchor}"]`);
     target?.scrollIntoView?.({ behavior: 'smooth', block: 'center', inline: 'center' });
     target?.classList?.add('tutorial-target-pulse');
     setTimeout(() => target?.classList?.remove('tutorial-target-pulse'), 1600);
   };
 
-  const advanceLobbyTutorial = () => {
+  const advanceLobbyTutorial = ({ launchFinal = false } = {}) => {
+    if (lobbyTutorialAdvanceTimerRef.current) {
+      window.clearTimeout(lobbyTutorialAdvanceTimerRef.current);
+      lobbyTutorialAdvanceTimerRef.current = null;
+    }
     if (lobbyTutorialScene?.final) {
+      if (!launchFinal) return;
       setLobbyTutorialOpen(false);
       onStartTutorial(effectiveName);
       return;
     }
+    setLobbyTutorialReaction('');
     setLobbyTutorialIndex((current) => Math.min(current + 1, TUTORIAL_LOBBY_SCENES.length - 1));
+  };
+
+  const completeLobbyTutorialStep = (stepId) => {
+    if (!isLobbyTutorialActive || lobbyTutorialScene.id !== stepId || lobbyTutorialAdvanceTimerRef.current) return false;
+    if (lobbyTutorialScene.final) {
+      setLobbyTutorialOpen(false);
+      onStartTutorial(effectiveName);
+      return true;
+    }
+    setLobbyTutorialReaction(lobbyTutorialScene.reaction || 'Good. Continue.');
+    lobbyTutorialAdvanceTimerRef.current = window.setTimeout(() => {
+      lobbyTutorialAdvanceTimerRef.current = null;
+      setLobbyTutorialReaction('');
+      setLobbyTutorialIndex((current) => Math.min(current + 1, TUTORIAL_LOBBY_SCENES.length - 1));
+    }, 900);
+    return true;
+  };
+
+  const startLobbyTutorial = () => {
+    if (lobbyTutorialAdvanceTimerRef.current) {
+      window.clearTimeout(lobbyTutorialAdvanceTimerRef.current);
+      lobbyTutorialAdvanceTimerRef.current = null;
+    }
+    setLobbyTutorialIndex(0);
+    setLobbyTutorialReaction('');
+    setLobbyTutorialMinimized(false);
+    setLobbyTutorialOpen(true);
+    window.setTimeout(() => {
+      const target = document.querySelector('[data-tutorial-anchor="lobby-name-input"]');
+      target?.scrollIntoView?.({ behavior: 'smooth', block: 'center', inline: 'center' });
+      target?.classList?.add('tutorial-target-pulse');
+      setTimeout(() => target?.classList?.remove('tutorial-target-pulse'), 1600);
+    }, 0);
   };
 
   const openCleanup = async () => {
@@ -3536,7 +3604,8 @@ const Lobby = ({
               data-tutorial-anchor="lobby-name-input"
               type="text"
               value={effectiveName}
-              onChange={(e) => setName(e.target.value)}
+              onFocus={() => { if (effectiveName.trim()) completeLobbyTutorialStep('name'); }}
+              onChange={(e) => { setName(e.target.value); if (e.target.value.trim()) completeLobbyTutorialStep('name'); }}
               className="w-full bg-slate-900 border border-slate-700 rounded p-3 text-white focus:ring-2 focus:ring-purple-500 outline-none"
               placeholder="Planeswalker Name"
             />
@@ -3547,15 +3616,23 @@ const Lobby = ({
               <div className="grid grid-cols-2 gap-3">
                 <button
                   data-tutorial-anchor="lobby-create-game"
-                  onClick={() => onCreate(effectiveName, gameTitle, gameMode)}
+                  onClick={() => {
+                    if (completeLobbyTutorialStep('create')) return;
+                    if (isLobbyTutorialActive) { focusLobbyTutorialTarget(); return; }
+                    onCreate(effectiveName, gameTitle, gameMode);
+                  }}
                   disabled={!effectiveName.trim() || isInitLoading || isActionLoading}
                   className="bg-purple-600 hover:bg-purple-700 disabled:opacity-50 disabled:cursor-wait text-white p-3 rounded-lg font-bold transition-colors flex justify-center items-center gap-2"
                 >
                   {isActionLoading ? <Loader2 className="animate-spin" size={18}/> : 'Create Game'}
                 </button>
                 <button
-                  data-tutorial-anchor="lobby-join-watch"
-                  onClick={() => setMode('join')}
+                  data-tutorial-anchor="lobby-join-game"
+                  onClick={() => {
+                    if (completeLobbyTutorialStep('join')) return;
+                    if (isLobbyTutorialActive) { focusLobbyTutorialTarget(); return; }
+                    setMode('join');
+                  }}
                   disabled={!effectiveName.trim() || isInitLoading || isActionLoading}
                   className="bg-slate-700 hover:bg-slate-600 disabled:opacity-50 disabled:cursor-wait text-white p-3 rounded-lg font-bold transition-colors flex justify-center items-center gap-2"
                 >
@@ -3568,7 +3645,8 @@ const Lobby = ({
                   type="text"
                   value={gameTitle}
                   data-tutorial-anchor="lobby-game-title"
-                  onChange={(e) => setGameTitle(e.target.value)}
+                  onFocus={() => completeLobbyTutorialStep('title')}
+                  onChange={(e) => { setGameTitle(e.target.value); completeLobbyTutorialStep('title'); }}
                   className="w-full bg-slate-900 border border-slate-700 rounded p-3 text-white focus:ring-2 focus:ring-purple-500 outline-none"
                   placeholder="e.g. 'Mono-Red vs Elves'"
                   maxLength={80}
@@ -3584,7 +3662,7 @@ const Lobby = ({
                     <button
                       key={option.id}
                       type="button"
-                      onClick={() => setGameMode(option.id)}
+                      onClick={() => { setGameMode(option.id); completeLobbyTutorialStep('laws'); }}
                       className={`rounded-lg border p-3 text-left transition-colors ${gameMode === option.id ? 'border-purple-400 bg-purple-900/40 text-white' : 'border-slate-700 bg-slate-900 text-slate-300 hover:border-slate-500'}`}
                     >
                       <div className="text-sm font-bold">{option.label}</div>
@@ -3593,10 +3671,14 @@ const Lobby = ({
                   ))}
                 </div>
               </div>
-              <div data-tutorial-anchor="lobby-room-code-example" className="rounded-lg border border-slate-700 bg-slate-900/70 p-2 text-xs text-slate-400">Example room code: <span className="font-mono tracking-widest text-slate-200">A7X92B</span></div>
+              <button type="button" data-tutorial-anchor="lobby-room-code-example" onClick={() => completeLobbyTutorialStep('room_code')} className="w-full rounded-lg border border-slate-700 bg-slate-900/70 p-2 text-left text-xs text-slate-400 hover:border-amber-400/60">Example room code: <span className="font-mono tracking-widest text-slate-200">A7X92B</span></button>
               <button
-                data-tutorial-anchor="lobby-join-watch"
-                onClick={() => setMode('watch')}
+                data-tutorial-anchor="lobby-watch-game"
+                onClick={() => {
+                  if (completeLobbyTutorialStep('watch')) return;
+                  if (isLobbyTutorialActive) { focusLobbyTutorialTarget(); return; }
+                  setMode('watch');
+                }}
                 disabled={!effectiveName.trim() || isInitLoading || isActionLoading}
                 className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-wait text-white p-3 rounded-lg font-bold transition-colors flex justify-center items-center gap-2"
               >
@@ -3605,7 +3687,14 @@ const Lobby = ({
               <button
                 type="button"
                 data-tutorial-anchor="lobby-tutorial-start"
-                onClick={() => { setLobbyTutorialIndex(0); setLobbyTutorialOpen(true); }}
+                onClick={() => {
+                  if (isLobbyTutorialActive && lobbyTutorialScene?.final) {
+                    completeLobbyTutorialStep('begin');
+                    return;
+                  }
+                  if (isLobbyTutorialActive) { focusLobbyTutorialTarget(); return; }
+                  startLobbyTutorial();
+                }}
                 disabled={!effectiveName.trim() || isInitLoading || isActionLoading}
                 className="w-full rounded-lg border border-amber-500/40 bg-gradient-to-r from-amber-950/80 to-purple-950/70 p-3 text-left text-amber-50 transition-colors hover:border-amber-300/70 hover:from-amber-900/80 hover:to-purple-900/80 disabled:cursor-wait disabled:opacity-50"
               >
@@ -3715,12 +3804,17 @@ const Lobby = ({
             {isGoogleConnected && <span className="text-emerald-300">(Google)</span>}
           </div>
 
-          <div data-tutorial-anchor="lobby-my-games" className="border border-slate-700 rounded-lg p-3 space-y-2">
+          <div data-tutorial-anchor="lobby-my-games" onClick={() => completeLobbyTutorialStep('my_games')} className="border border-slate-700 rounded-lg p-3 space-y-2">
             <div className="flex items-center justify-between gap-2">
               <div className="text-sm font-semibold text-slate-300">My Games</div>
               <button
                 data-tutorial-anchor="lobby-cleanup-games"
-                onClick={openCleanup}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  if (completeLobbyTutorialStep('cleanup')) return;
+                  if (isLobbyTutorialActive) { focusLobbyTutorialTarget(); return; }
+                  openCleanup();
+                }}
                 disabled={isInitLoading || isActionLoading || isCleanupLoading}
                 className="text-[11px] bg-slate-900 hover:bg-slate-700 disabled:opacity-50 text-slate-300 border border-slate-700 rounded px-2 py-1 flex items-center gap-1"
               >
@@ -3795,26 +3889,39 @@ const Lobby = ({
       )}
 
       {lobbyTutorialOpen && lobbyTutorialScene && (
-        <div className="fixed inset-0 z-[100] flex items-end justify-center bg-black/70 p-3 sm:items-center" onClick={() => setLobbyTutorialOpen(false)}>
-          <div className="w-full max-w-md rounded-2xl border border-amber-400/40 bg-slate-950 shadow-2xl" onClick={(event) => event.stopPropagation()}>
-            <div className="border-b border-amber-500/20 bg-gradient-to-r from-amber-950/80 to-purple-950/80 p-4">
-              <div className="text-[10px] font-black uppercase tracking-[0.2em] text-amber-200">Lobby Tutorial · {lobbyTutorialIndex + 1}/{TUTORIAL_LOBBY_SCENES.length}</div>
-              <h2 className="mt-1 text-lg font-black text-white">{lobbyTutorialScene.title}</h2>
-            </div>
-            <div className="space-y-3 p-4">
-              <p className="text-sm text-slate-300">{lobbyTutorialScene.scene}</p>
-              <p className="rounded-xl border border-purple-500/20 bg-purple-950/30 p-3 text-sm italic text-purple-100"><span className="font-black not-italic text-purple-200">Bolas:</span> “{lobbyTutorialScene.dialogue}”</p>
-              <div className="rounded-xl border border-slate-700 bg-slate-900/80 p-3 text-sm"><div className="text-[10px] font-black uppercase tracking-widest text-emerald-300">Objective</div><div className="mt-1 text-slate-100">{lobbyTutorialScene.objective}</div></div>
-              <div className="rounded-xl border border-slate-700 bg-slate-900/70 p-3 text-sm"><div className="text-[10px] font-black uppercase tracking-widest text-sky-300">Hint</div><div className="mt-1 text-slate-300">{lobbyTutorialScene.hint}</div></div>
-              <div className="flex flex-wrap justify-between gap-2 pt-1">
-                <button type="button" onClick={() => setLobbyTutorialIndex((current) => Math.max(current - 1, 0))} disabled={lobbyTutorialIndex === 0} className="min-h-10 rounded-lg border border-slate-700 px-3 text-sm font-bold text-slate-300 disabled:opacity-40">Back</button>
-                <div className="ml-auto flex gap-2">
-                  <button type="button" onClick={focusLobbyTutorialTarget} className="min-h-10 rounded-lg border border-amber-500/40 px-3 text-sm font-black text-amber-100">Show me</button>
-                  <button type="button" onClick={() => setLobbyTutorialOpen(false)} className="min-h-10 rounded-lg border border-slate-700 px-3 text-sm font-bold text-slate-300">Exit</button>
-                  <button type="button" onClick={advanceLobbyTutorial} className="min-h-10 rounded-lg bg-amber-500 px-4 text-sm font-black text-slate-950">{lobbyTutorialScene.final ? 'Start duel' : 'Next'}</button>
-                </div>
+        <div className={`pointer-events-none fixed inset-x-0 ${lobbyTutorialDock === 'top' ? 'top-16 sm:top-4' : 'bottom-4'} z-[100] px-3 sm:px-4`}>
+          <div className={`pointer-events-auto mx-auto overflow-hidden rounded-2xl border border-amber-400/40 bg-slate-950/95 shadow-2xl shadow-black/60 backdrop-blur ${lobbyTutorialMinimized ? 'max-w-sm' : 'max-w-md'}`}>
+            <div className="flex items-center justify-between gap-3 border-b border-amber-500/20 bg-gradient-to-r from-amber-950/80 to-purple-950/80 px-4 py-3">
+              <button type="button" onClick={lobbyTutorialMinimized ? () => setLobbyTutorialMinimized(false) : undefined} className="min-w-0 flex-1 text-left" aria-label={lobbyTutorialMinimized ? 'Expand lobby tutorial' : undefined}>
+                <div className="text-[10px] font-black uppercase tracking-[0.2em] text-amber-200">Lobby Tutorial · {lobbyTutorialIndex + 1}/{TUTORIAL_LOBBY_SCENES.length}</div>
+                <h2 className="mt-1 truncate text-sm font-black text-white">{lobbyTutorialScene.title}</h2>
+              </button>
+              <div className="flex items-center gap-2">
+                <button type="button" onClick={focusLobbyTutorialTarget} className="rounded-full border border-amber-300/40 px-3 py-1.5 text-xs font-black text-amber-100 hover:bg-white/10">Show me</button>
+                <button type="button" onClick={() => setLobbyTutorialMinimized((value) => !value)} className="rounded-full p-2 text-amber-100 hover:bg-white/10" aria-label={lobbyTutorialMinimized ? 'Expand lobby tutorial' : 'Minimize lobby tutorial'}>
+                  {lobbyTutorialMinimized ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                </button>
+                <button type="button" onClick={() => setLobbyTutorialOpen(false)} className="rounded-full p-2 text-slate-300 hover:bg-red-950/60 hover:text-red-100" aria-label="Exit lobby tutorial"><X size={16} /></button>
               </div>
             </div>
+            {!lobbyTutorialMinimized && (
+              <div className="space-y-3 p-4">
+                <p className="text-sm text-slate-300">{lobbyTutorialScene.scene}</p>
+                <p className="rounded-xl border border-purple-500/20 bg-purple-950/30 p-3 text-sm italic text-purple-100"><span className="font-black not-italic text-purple-200">Bolas:</span> “{lobbyTutorialScene.dialogue}”</p>
+                {lobbyTutorialReaction && <p className="rounded-xl border border-amber-500/30 bg-amber-950/30 p-3 text-sm font-bold text-amber-100">{lobbyTutorialReaction}</p>}
+                <div className="rounded-xl border border-slate-700 bg-slate-900/80 p-3 text-sm"><div className="text-[10px] font-black uppercase tracking-widest text-emerald-300">Objective</div><div className="mt-1 text-slate-100">{lobbyTutorialScene.objective}</div></div>
+                <div className="rounded-xl border border-slate-700 bg-slate-900/70 p-3 text-sm"><div className="text-[10px] font-black uppercase tracking-widest text-sky-300">Hint</div><div className="mt-1 text-slate-300">{lobbyTutorialScene.hint}</div></div>
+                <div className="flex flex-wrap justify-between gap-2 pt-1">
+                  <button type="button" onClick={() => { if (lobbyTutorialAdvanceTimerRef.current) { window.clearTimeout(lobbyTutorialAdvanceTimerRef.current); lobbyTutorialAdvanceTimerRef.current = null; } setLobbyTutorialReaction(''); setLobbyTutorialIndex((current) => Math.max(current - 1, 0)); }} disabled={lobbyTutorialIndex === 0} className="min-h-10 rounded-lg border border-slate-700 px-3 text-sm font-bold text-slate-300 disabled:opacity-40">Back</button>
+                  <div className="ml-auto flex gap-2">
+                    <button type="button" onClick={focusLobbyTutorialTarget} className="min-h-10 rounded-lg border border-amber-500/40 px-3 text-sm font-black text-amber-100">Show me</button>
+                    <button type="button" onClick={() => setLobbyTutorialOpen(false)} className="min-h-10 rounded-lg border border-slate-700 px-3 text-sm font-bold text-slate-300">Exit</button>
+                    <button type="button" onClick={() => advanceLobbyTutorial()} className="min-h-10 rounded-lg border border-slate-700 px-3 text-sm font-bold text-slate-400 hover:bg-slate-800">Skip Step</button>
+                    <button type="button" disabled className="min-h-10 rounded-lg bg-slate-700 px-4 text-sm font-black text-slate-300 opacity-70">Waiting…</button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -4573,6 +4680,7 @@ const TutorialOverlay = ({ game, currentStep, canGoBack, isMinimized, hasOpenPan
   if (!game?.isTutorial || game?.tutorial?.inactive) return null;
   const isFinishedStep = safeCurrentStep.id === 'tutorial_complete';
   const stepNumber = getTutorialStepIndex(safeCurrentStep.id) + 1;
+  const isActionStep = ['detect', 'detect-or-manual'].includes(safeCurrentStep.completion);
 
   const collapsed = isMinimized || forcedCompact;
   const effectiveDock = safeCurrentStep.anchor ? dock : 'bottom';
@@ -4657,9 +4765,15 @@ const TutorialOverlay = ({ game, currentStep, canGoBack, isMinimized, hasOpenPan
                   <button type="button" onClick={onSkip} className="min-h-10 rounded-lg border border-slate-700 px-3 text-sm font-bold text-slate-300 hover:bg-slate-800">
                     Skip step
                   </button>
-                  <button type="button" onClick={onNext} className="min-h-10 rounded-lg bg-amber-500 px-4 text-sm font-black text-slate-950 hover:bg-amber-400">
-                    {isFinishedStep ? 'Finish' : 'Next'}
-                  </button>
+                  {isActionStep ? (
+                    <button type="button" disabled className="min-h-10 rounded-lg bg-slate-700 px-4 text-sm font-black text-slate-300 opacity-70">
+                      Waiting…
+                    </button>
+                  ) : (
+                    <button type="button" onClick={onNext} className="min-h-10 rounded-lg bg-amber-500 px-4 text-sm font-black text-slate-950 hover:bg-amber-400">
+                      {isFinishedStep ? 'Finish' : 'Next'}
+                    </button>
+                  )}
                 </div>
               </div>
             )}
@@ -10237,10 +10351,13 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         )}
 
         <div data-tutorial-anchor="hand-area" className={`p-2 overflow-x-auto whitespace-nowrap hide-scrollbar flex gap-2 min-h-[140px] items-center px-4${getTutorialAnchorClass(currentTutorialAnchor, 'hand-area', tutorialPulseAnchor)}`}>
-          {canAct && noDeckLoaded && (
+          {canAct && (noDeckLoaded || currentTutorialStep?.id === 'import_deck') && (
             <button
               data-tutorial-anchor="import-deck-button"
-              onClick={() => setDeckInput(commanderModeEnabled ? "Commander\n1 Atraxa, Praetors' Voice\n\nDeck\n1 Sol Ring\n1 Command Tower" : '20 Mountain\n20 Lightning Bolt\n20 Llanowar Elves')}
+              onClick={() => {
+                setDeckInput(commanderModeEnabled ? "Commander\n1 Atraxa, Praetors' Voice\n\nDeck\n1 Sol Ring\n1 Command Tower" : '20 Mountain\n20 Lightning Bolt\n20 Llanowar Elves');
+                maybeCompleteTutorialStep('import_deck');
+              }}
               className={`mx-auto text-sm text-slate-500 border border-slate-600 border-dashed rounded px-4 py-2 hover:text-white hover:border-slate-400${getTutorialAnchorClass(currentTutorialAnchor, 'import-deck-button', tutorialPulseAnchor)}`}
             >
               Import Deck
@@ -12125,7 +12242,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         </div>
       )}
 
-      {deckInput !== '' && !importing && noDeckLoaded && (
+      {deckInput !== '' && !importing && (noDeckLoaded || game?.isTutorial) && (
         <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
           <div className="bg-slate-800 w-full max-w-md rounded-xl p-6 shadow-2xl border border-slate-600">
             <h3 className="text-xl font-bold mb-2">Import Deck</h3>
@@ -12144,7 +12261,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             />
             <div className="flex gap-3 mt-4">
               <button onClick={() => setDeckInput('')} className="flex-1 bg-slate-700 py-2 rounded">Cancel</button>
-              <button onClick={importDeck} className="flex-1 bg-green-600 py-2 rounded font-bold text-white">Import Cards</button>
+              <button onClick={game?.isTutorial && !noDeckLoaded ? () => { setDeckInput(''); setNotification('Tutorial import preview closed. Your scripted duel deck is unchanged.'); setTimeout(() => setNotification(null), 2500); } : importDeck} className="flex-1 bg-green-600 py-2 rounded font-bold text-white">{game?.isTutorial && !noDeckLoaded ? 'Keep Tutorial Deck' : 'Import Cards'}</button>
             </div>
           </div>
         </div>

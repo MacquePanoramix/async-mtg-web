@@ -86,6 +86,12 @@ const MAX_PLAYER_EMBLEM_NAME_LENGTH = 64;
 const MAX_PLAYER_EMBLEM_SOURCE_LENGTH = 80;
 const MAX_PLAYER_EMBLEM_TEXT_LENGTH = 600;
 const MAX_PLAYER_EMBLEMS = 20;
+const MAX_DECK_EXTRA_TOKENS = 30;
+const MAX_DECK_EXTRA_EMBLEMS = 20;
+const MAX_DECK_EXTRA_DUNGEONS = 10;
+const MAX_DECK_EXTRA_SOURCE_CARDS = 6;
+const DUNGEON_FALLBACK_NAMES = ['Lost Mine of Phandelver', 'Dungeon of the Mad Mage', 'Tomb of Annihilation'];
+const INITIATIVE_DUNGEON_FALLBACK_NAMES = ['The Undercity'];
 const PLAYER_EMBLEM_PRESETS = [
   { label: 'Chandra', name: 'Chandra Emblem', sourceName: 'Chandra, Torch of Defiance', text: 'Whenever you cast a spell, this emblem deals 5 damage to any target.' },
   { label: 'Teferi', name: 'Teferi Emblem', sourceName: 'Teferi, Temporal Archmage', text: 'You may activate loyalty abilities of planeswalkers you control on any player’s turn any time you could cast an instant.' },
@@ -112,6 +118,86 @@ const sanitizeCustomPlayerStatusText = (text) => String(text || '').replace(/\s+
 const sanitizeEmblemName = (name) => String(name || '').replace(/\s+/g, ' ').trim().slice(0, MAX_PLAYER_EMBLEM_NAME_LENGTH);
 const sanitizeEmblemSourceName = (sourceName) => String(sourceName || '').replace(/\s+/g, ' ').trim().slice(0, MAX_PLAYER_EMBLEM_SOURCE_LENGTH);
 const sanitizeEmblemText = (text) => String(text || '').replace(/\s+/g, ' ').trim().slice(0, MAX_PLAYER_EMBLEM_TEXT_LENGTH);
+const sanitizeDeckExtraText = (text, maxLength = 900) => String(text || '').replace(/\s+/g, ' ').trim().slice(0, maxLength);
+const normalizeDeckExtraKeyText = (text) => String(text || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+const getDeckExtraDedupKey = (template = {}) => template.id ? `id:${template.id}` : `name:${normalizeDeckExtraKeyText(template.name)}|type:${normalizeDeckExtraKeyText(template.typeLine)}`;
+const getDeckExtraCap = (kind) => ({ tokens: MAX_DECK_EXTRA_TOKENS, emblems: MAX_DECK_EXTRA_EMBLEMS, dungeons: MAX_DECK_EXTRA_DUNGEONS }[kind] || 0);
+const getEmptyDeckExtras = () => ({ tokens: [], emblems: [], dungeons: [] });
+const getPlayerDeckExtras = (player = {}) => {
+  const extras = player?.deckExtras && typeof player.deckExtras === 'object' ? player.deckExtras : {};
+  return {
+    tokens: Array.isArray(extras.tokens) ? extras.tokens.map((template) => sanitizeDeckExtraTemplate(template, 'tokens')).filter(Boolean).slice(0, MAX_DECK_EXTRA_TOKENS) : [],
+    emblems: Array.isArray(extras.emblems) ? extras.emblems.map((template) => sanitizeDeckExtraTemplate(template, 'emblems')).filter(Boolean).slice(0, MAX_DECK_EXTRA_EMBLEMS) : [],
+    dungeons: Array.isArray(extras.dungeons) ? extras.dungeons.map((template) => sanitizeDeckExtraTemplate(template, 'dungeons')).filter(Boolean).slice(0, MAX_DECK_EXTRA_DUNGEONS) : []
+  };
+};
+
+const getDeckExtraOracleText = (card = {}) => {
+  if (typeof card.oracle_text === 'string' && card.oracle_text.trim()) return card.oracle_text;
+  if (!Array.isArray(card.card_faces)) return '';
+  return card.card_faces
+    .map((face) => [face?.name, face?.oracle_text].filter(Boolean).join(': '))
+    .filter(Boolean)
+    .join(' // ');
+};
+
+const sanitizeDeckExtraSourceCards = (sourceCards = []) => (Array.isArray(sourceCards) ? sourceCards : [sourceCards])
+  .map((name) => sanitizeDeckExtraText(name, 80))
+  .filter(Boolean)
+  .filter((name, index, names) => names.indexOf(name) === index)
+  .slice(0, MAX_DECK_EXTRA_SOURCE_CARDS);
+
+const sanitizeDeckExtraTemplate = (template = {}, kind = 'tokens') => {
+  if (!template || typeof template !== 'object') return null;
+  const name = sanitizeDeckExtraText(template.name, 80);
+  const typeLine = sanitizeDeckExtraText(template.typeLine || template.type_line, 120);
+  if (!name || !typeLine) return null;
+  const compact = {
+    ...(template.id ? { id: String(template.id).slice(0, 80) } : {}),
+    name,
+    typeLine,
+    ...(sanitizeDeckExtraText(template.oracleText || template.oracle_text, kind === 'tokens' ? 500 : 900) ? { oracleText: sanitizeDeckExtraText(template.oracleText || template.oracle_text, kind === 'tokens' ? 500 : 900) } : {}),
+    ...(template.imageUrl || template.image_uri ? { imageUrl: String(template.imageUrl || template.image_uri).slice(0, 300) } : {}),
+    sourceCards: sanitizeDeckExtraSourceCards(template.sourceCards)
+  };
+  if (kind === 'tokens') {
+    const colorIdentity = Array.isArray(template.colorIdentity || template.color_identity) ? (template.colorIdentity || template.color_identity).filter((symbol) => MANA_COLORS.includes(symbol)).slice(0, 5) : [];
+    return {
+      ...compact,
+      ...(template.power !== undefined ? { power: String(template.power).slice(0, 12) } : {}),
+      ...(template.toughness !== undefined ? { toughness: String(template.toughness).slice(0, 12) } : {}),
+      colors: Array.isArray(template.colors) ? template.colors.filter((symbol) => MANA_COLORS.includes(symbol)).slice(0, 5) : colorIdentity,
+      colorIdentity
+    };
+  }
+  return compact;
+};
+
+const mergeDeckExtraLists = (existing = [], incoming = [], kind = 'tokens') => {
+  const merged = new Map();
+  [...existing, ...incoming].forEach((template) => {
+    const compact = sanitizeDeckExtraTemplate(template, kind);
+    if (!compact) return;
+    const key = getDeckExtraDedupKey(compact);
+    const previous = merged.get(key);
+    if (!previous) {
+      merged.set(key, compact);
+      return;
+    }
+    merged.set(key, {
+      ...previous,
+      ...Object.fromEntries(Object.entries(compact).filter(([, value]) => value !== undefined && value !== '' && (!Array.isArray(value) || value.length > 0))),
+      sourceCards: sanitizeDeckExtraSourceCards([...(previous.sourceCards || []), ...(compact.sourceCards || [])])
+    });
+  });
+  return [...merged.values()].slice(0, getDeckExtraCap(kind));
+};
+
+const mergePlayerDeckExtras = (existingExtras = getEmptyDeckExtras(), incomingExtras = getEmptyDeckExtras()) => ({
+  tokens: mergeDeckExtraLists(existingExtras.tokens, incomingExtras.tokens, 'tokens'),
+  emblems: mergeDeckExtraLists(existingExtras.emblems, incomingExtras.emblems, 'emblems'),
+  dungeons: mergeDeckExtraLists(existingExtras.dungeons, incomingExtras.dungeons, 'dungeons')
+});
 
 const getPlayerEmblems = (player = {}) => (Array.isArray(player?.emblems) ? player.emblems : [])
   .filter((emblem) => emblem && typeof emblem === 'object')
@@ -1309,6 +1395,103 @@ const normalizeGameCardForFirestore = (card = {}) => {
 };
 
 const normalizeGameCardsForFirestore = (cards = []) => Array.isArray(cards) ? cards.map(normalizeGameCardForFirestore) : cards;
+
+const getDeckExtraKindFromScryfallCard = (card = {}) => {
+  const typeLine = String(card.type_line || '').toLowerCase();
+  const component = String(card.component || '').toLowerCase();
+  if (typeLine.includes('dungeon') || component.includes('dungeon')) return 'dungeons';
+  if (typeLine.includes('emblem') || component.includes('emblem')) return 'emblems';
+  if (typeLine.includes('token') || component.includes('token')) return 'tokens';
+  return null;
+};
+
+const buildDeckExtraTemplateFromScryfallCard = (card = {}, kind = getDeckExtraKindFromScryfallCard(card), sourceCards = []) => {
+  if (!kind) return null;
+  const imageUrl = getCardImageUri(card) || getBestImageUriFromImageUris(sanitizeImageUris(card.image_uris));
+  return sanitizeDeckExtraTemplate({
+    id: card.id,
+    name: card.name,
+    typeLine: card.type_line,
+    oracleText: getDeckExtraOracleText(card),
+    power: card.power,
+    toughness: card.toughness,
+    colors: Array.isArray(card.colors) ? card.colors : [],
+    colorIdentity: Array.isArray(card.color_identity) ? card.color_identity : [],
+    imageUrl,
+    sourceCards
+  }, kind);
+};
+
+const collectDeckExtraCandidatesFromCard = (card = {}, sourceCardName = '') => {
+  const candidates = [];
+  const sourceCards = sanitizeDeckExtraSourceCards([sourceCardName || card.name]);
+  if (Array.isArray(card.all_parts)) {
+    card.all_parts.forEach((part) => {
+      const kind = getDeckExtraKindFromScryfallCard(part);
+      if (!kind) return;
+      candidates.push({
+        kind,
+        id: part.id,
+        uri: part.uri,
+        fallback: sanitizeDeckExtraTemplate({
+          id: part.id,
+          name: part.name,
+          typeLine: part.type_line,
+          sourceCards
+        }, kind),
+        sourceCards
+      });
+    });
+  }
+
+  const oracleText = [card.oracle_text, ...(Array.isArray(card.card_faces) ? card.card_faces.map((face) => face?.oracle_text) : [])]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+  if (oracleText.includes('venture into the dungeon')) {
+    DUNGEON_FALLBACK_NAMES.forEach((name) => candidates.push({ kind: 'dungeons', exactName: name, fallback: { name, typeLine: 'Dungeon', sourceCards }, sourceCards }));
+  }
+  if (oracleText.includes('take the initiative') || /\binitiative\b/.test(oracleText)) {
+    INITIATIVE_DUNGEON_FALLBACK_NAMES.forEach((name) => candidates.push({ kind: 'dungeons', exactName: name, fallback: { name, typeLine: 'Dungeon', sourceCards }, sourceCards }));
+  }
+  return candidates;
+};
+
+const fetchScryfallJsonSafely = async (url) => {
+  try {
+    const res = await fetch(url);
+    const data = await res.json();
+    if (!res.ok || !data?.name) return null;
+    return data;
+  } catch (error) {
+    console.warn('Skipping deck extra Scryfall fetch', error);
+    return null;
+  }
+};
+
+const resolveDeckExtraTemplates = async (candidates = []) => {
+  const incoming = getEmptyDeckExtras();
+  const seenFetchKeys = new Set();
+  const cappedCandidates = candidates.slice(0, MAX_DECK_EXTRA_TOKENS + MAX_DECK_EXTRA_EMBLEMS + MAX_DECK_EXTRA_DUNGEONS + 20);
+
+  for (const candidate of cappedCandidates) {
+    const kind = candidate.kind;
+    if (!getDeckExtraCap(kind) || incoming[kind].length >= getDeckExtraCap(kind)) continue;
+    const fetchKey = candidate.id || candidate.uri || candidate.exactName;
+    let card = null;
+    if (fetchKey && !seenFetchKeys.has(`${kind}:${fetchKey}`)) {
+      seenFetchKeys.add(`${kind}:${fetchKey}`);
+      const url = candidate.uri || `https://api.scryfall.com/cards/named?fuzzy=${encodeURIComponent(candidate.exactName)}`;
+      card = await fetchScryfallJsonSafely(url);
+      await new Promise((resolve) => setTimeout(resolve, 35));
+    }
+    const template = card
+      ? buildDeckExtraTemplateFromScryfallCard(card, kind, candidate.sourceCards)
+      : sanitizeDeckExtraTemplate({ ...(candidate.fallback || {}), sourceCards: candidate.sourceCards }, kind);
+    if (template) incoming[kind] = mergeDeckExtraLists(incoming[kind], [template], kind);
+  }
+  return incoming;
+};
 
 const estimateJsonByteSize = (value) => {
   try {
@@ -4100,6 +4283,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const [emblemFormPlayerId, setEmblemFormPlayerId] = useState(null);
   const [emblemForm, setEmblemForm] = useState({ name: '', sourceName: '', text: '' });
   const [expandedEmblemId, setExpandedEmblemId] = useState(null);
+  const [expandedDungeonId, setExpandedDungeonId] = useState(null);
   const [commanderDamageSummaryPlayerId, setCommanderDamageSummaryPlayerId] = useState(null);
   const [peekCard, setPeekCard] = useState(null);
   const [privateHandPeek, setPrivateHandPeek] = useState(null); // local-only: { playerId }
@@ -6305,6 +6489,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           color,
           colorIdentity,
           rulesText: payload.rulesText || '',
+          ...(payload.imageUrl || payload.image_uri ? { image_uri: String(payload.imageUrl || payload.image_uri).slice(0, 300) } : {}),
           ownerId: userId,
           controllerId: userId,
           zone: ZONES.BATTLEFIELD,
@@ -7403,6 +7588,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     let xOffset = 5, yOffset = 5;
     let importedCount = 0;
     let importedCommanderCount = 0;
+    const deckExtraCandidates = [];
 
     try {
       for (const entry of entries) {
@@ -7412,6 +7598,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           if (!res.ok || !data?.name) {
             throw new Error(data?.details || `Scryfall could not find ${entry.name}.`);
           }
+
+          deckExtraCandidates.push(...collectDeckExtraCandidatesFromCard(data, data.name || entry.name));
 
           const hasCardFaces = Array.isArray(data.card_faces);
           const imageUri = getCardImageUri(hasCardFaces ? { ...data, activeFaceIndex: 0 } : data);
@@ -7447,26 +7635,46 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       if (importedCards.length > 0) {
         // UPDATED: Path
         const importActorName = myPlayer?.name || displayName || 'Unknown';
+        const importedDeckExtras = await resolveDeckExtraTemplates(deckExtraCandidates);
         const importMessage = importedCommanderCount > 0
           ? `${importActorName} imported ${importedCount} cards and moved ${importedCommanderCount} commander card${importedCommanderCount === 1 ? '' : 's'} to the command zone.`
           : `${importActorName} imported ${importedCount} cards into their library.`;
+        const extrasMessage = (importedDeckExtras.tokens.length || importedDeckExtras.emblems.length || importedDeckExtras.dungeons.length)
+          ? `${importActorName} imported deck extras: ${importedDeckExtras.tokens.length} token${importedDeckExtras.tokens.length === 1 ? '' : 's'}, ${importedDeckExtras.emblems.length} emblem${importedDeckExtras.emblems.length === 1 ? '' : 's'}, ${importedDeckExtras.dungeons.length} dungeon${importedDeckExtras.dungeons.length === 1 ? '' : 's'}.`
+          : '';
         await runTransaction(db, async (transaction) => {
           const gameRef = doc(db, 'games_v3', gameId);
           const snap = await transaction.get(gameRef);
           if (!snap.exists()) return;
           const currentGame = snap.data();
           const currentPlayers = currentGame.players || [];
-          if (!currentPlayers.some((player) => player.id === userId)) return;
-          transaction.update(gameRef, normalizeGameUpdatesForFirestore({
-            cards: [...(currentGame.cards || []), ...importedCards],
-            log: pruneLogForFirestore([...(currentGame.log || []), buildGameLogEntry({
+          const currentPlayer = currentPlayers.find((player) => player.id === userId);
+          if (!currentPlayer) return;
+          const nextPlayers = currentPlayers.map((player) => player.id === userId
+            ? { ...player, deckExtras: mergePlayerDeckExtras(getPlayerDeckExtras(player), importedDeckExtras) }
+            : player);
+          const nextLog = [...(currentGame.log || []), buildGameLogEntry({
+            currentGame,
+            playerId: userId,
+            playerName: importActorName,
+            type: 'IMPORT',
+            category: 'setup',
+            message: importMessage
+          })];
+          if (extrasMessage) {
+            nextLog.push(buildGameLogEntry({
               currentGame,
               playerId: userId,
               playerName: importActorName,
-              type: 'IMPORT',
+              type: 'IMPORT_EXTRAS',
               category: 'setup',
-              message: importMessage
-            })]),
+              message: extrasMessage
+            }));
+          }
+          transaction.update(gameRef, normalizeGameUpdatesForFirestore({
+            cards: [...(currentGame.cards || []), ...importedCards],
+            players: nextPlayers,
+            log: pruneLogForFirestore(nextLog),
             undoStack: appendUndoEntry(currentGame, buildUndoEntry({
               currentGame,
               actorId: userId,
@@ -7565,6 +7773,35 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     if (!preset) return;
     await handleAction('CREATE_TOKEN', preset);
     setTokenModal(null);
+  };
+
+  const submitDeckTokenTemplate = async (template) => {
+    const tokenTemplate = sanitizeDeckExtraTemplate(template, 'tokens');
+    if (!tokenTemplate) return;
+    await handleAction('CREATE_TOKEN', {
+      name: tokenTemplate.name,
+      colorIdentity: tokenTemplate.colorIdentity,
+      color: getTokenColorLabel(tokenTemplate.colorIdentity),
+      typeLine: tokenTemplate.typeLine,
+      power: tokenTemplate.power || '',
+      toughness: tokenTemplate.toughness || '',
+      rulesText: tokenTemplate.oracleText || '',
+      imageUrl: tokenTemplate.imageUrl,
+      quantity: 1,
+      tapped: false
+    });
+    setTokenModal(null);
+  };
+
+  const addEmblemFromDeckTemplate = (targetPlayerId, template) => {
+    const emblemTemplate = sanitizeDeckExtraTemplate(template, 'emblems');
+    if (!emblemTemplate || !targetPlayerId) return;
+    handleAction('ADD_PLAYER_EMBLEM', {
+      targetPlayerId,
+      name: emblemTemplate.name,
+      text: emblemTemplate.oracleText || 'Deck-derived emblem reference.',
+      sourceName: (emblemTemplate.sourceCards || []).join(', ')
+    });
   };
 
   const submitCustomToken = async () => {
@@ -10035,6 +10272,30 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                 </div>
               </div>
 
+              {getPlayerDeckExtras(myPlayer).tokens.length > 0 && (
+                <div className="rounded-xl border border-emerald-500/30 bg-emerald-950/10 p-3">
+                  <div className="mb-2 text-[11px] font-black uppercase tracking-widest text-emerald-200">From your deck</div>
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    {getPlayerDeckExtras(myPlayer).tokens.map((template) => {
+                      const accent = getTokenColorAccent(getTokenColorLabel(template.colorIdentity), template.colorIdentity);
+                      const pt = isCreatureTypeLine(template.typeLine) && template.power && template.toughness ? `${template.power}/${template.toughness} ` : '';
+                      return (
+                        <button
+                          key={getDeckExtraDedupKey(template)}
+                          type="button"
+                          onClick={() => submitDeckTokenTemplate(template)}
+                          className={`min-h-14 rounded-xl border px-3 py-2 text-left text-sm font-bold shadow-sm bg-gradient-to-br ${accent.frame} active:scale-[0.98]`}
+                        >
+                          <div className="truncate leading-tight">{pt}{template.name}</div>
+                          <div className="mt-0.5 truncate text-[10px] font-semibold opacity-75">{template.typeLine}</div>
+                          {template.sourceCards?.length > 0 && <div className="mt-0.5 truncate text-[10px] opacity-70">From {template.sourceCards.join(', ')}</div>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
               <div className="rounded-xl border border-slate-700 bg-slate-900/55 p-3">
                 <div className="mb-3 flex items-center justify-between gap-2">
                   <div>
@@ -10304,6 +10565,45 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                           Add Custom Status
                         </button>
 
+                        {getPlayerDeckExtras(player).dungeons.length > 0 && (
+                          <div className="mt-3 rounded-lg border border-emerald-500/30 bg-emerald-950/10 p-2">
+                            <div className="mb-2 flex items-center justify-between gap-2">
+                              <div>
+                                <div className="text-[10px] font-black uppercase tracking-widest text-emerald-200">Dungeon references</div>
+                                <div className="text-[11px] text-slate-400">From venture / initiative cards in deck.</div>
+                              </div>
+                              <span className="rounded-full border border-emerald-500/30 px-2 py-0.5 text-[10px] font-bold text-emerald-100">{getPlayerDeckExtras(player).dungeons.length}</span>
+                            </div>
+                            <div className="space-y-2">
+                              {getPlayerDeckExtras(player).dungeons.map((dungeon) => {
+                                const dungeonKey = `${player.id}:${getDeckExtraDedupKey(dungeon)}`;
+                                const expanded = expandedDungeonId === dungeonKey;
+                                return (
+                                  <div key={dungeonKey} className="rounded border border-slate-700 bg-slate-950/70 p-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => setExpandedDungeonId(expanded ? null : dungeonKey)}
+                                      className="w-full text-left"
+                                    >
+                                      <div className="truncate text-xs font-black text-emerald-100">{dungeon.name}</div>
+                                      <div className="truncate text-[10px] text-slate-400">{dungeon.typeLine}</div>
+                                    </button>
+                                    {expanded && (
+                                      <div className="mt-2 space-y-2">
+                                        {dungeon.imageUrl && <img src={dungeon.imageUrl} alt={dungeon.name} className="max-h-64 w-full rounded border border-slate-700 object-contain" loading="lazy" />}
+                                        <div className="whitespace-pre-wrap rounded bg-slate-900 p-2 text-xs leading-relaxed text-slate-200">
+                                          {dungeon.oracleText || 'No dungeon text available.'}
+                                        </div>
+                                        {dungeon.sourceCards?.length > 0 && <div className="text-[10px] text-slate-400">Sources: {dungeon.sourceCards.join(', ')}</div>}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+
                         <div className="mt-3 rounded-lg border border-pink-500/30 bg-pink-950/10 p-2">
                           <div className="mb-2 flex items-center justify-between gap-2">
                             <div>
@@ -10392,6 +10692,25 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                             </div>
                           ) : (
                             <div className="mt-2 space-y-2">
+                              {getPlayerDeckExtras(player).emblems.length > 0 && (
+                                <div className="rounded border border-pink-500/25 bg-pink-950/20 p-2">
+                                  <div className="mb-1 text-[10px] font-black uppercase tracking-widest text-pink-200">From your deck</div>
+                                  <div className="grid grid-cols-1 gap-1.5">
+                                    {getPlayerDeckExtras(player).emblems.map((template) => (
+                                      <button
+                                        key={getDeckExtraDedupKey(template)}
+                                        type="button"
+                                        disabled={!canAct || getPlayerEmblems(player).length >= MAX_PLAYER_EMBLEMS}
+                                        onClick={() => addEmblemFromDeckTemplate(player.id, template)}
+                                        className="rounded border border-pink-400/30 bg-pink-900/30 px-2 py-1.5 text-left text-[11px] font-bold text-pink-50 disabled:opacity-50"
+                                      >
+                                        <div className="truncate">{template.name}</div>
+                                        {template.sourceCards?.length > 0 && <div className="truncate text-[10px] font-medium text-pink-100/70">From {template.sourceCards.join(', ')}</div>}
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
                               <div className="grid grid-cols-2 gap-1.5">
                                 {PLAYER_EMBLEM_PRESETS.map((preset) => (
                                   <button
@@ -11459,6 +11778,7 @@ export default function App() {
           manaPool: clearManaPool(),
           statuses: { monarch: false, initiative: false, citysBlessing: false, ringBearerLevel: 0, custom: [] },
           emblems: [],
+          deckExtras: getEmptyDeckExtras(),
           handRevealed: false,
           lastSeenChatAt: Date.now()
         }],
@@ -11538,6 +11858,7 @@ export default function App() {
             manaPool: clearManaPool(),
             statuses: { monarch: false, initiative: false, citysBlessing: false, ringBearerLevel: 0, custom: [] },
             emblems: [],
+            deckExtras: getEmptyDeckExtras(),
             handRevealed: false,
             lastSeenChatAt: Date.now()
           };

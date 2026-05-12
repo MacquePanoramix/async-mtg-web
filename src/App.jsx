@@ -33,75 +33,565 @@ const GAME_MODES = {
   COMMANDER: 'commander'
 };
 
-const TUTORIAL_SCRIPT_VERSION = 2;
+const TUTORIAL_SCRIPT_VERSION = 3;
 const TUTORIAL_SCRIPT_STEPS = [
   {
     id: 'intro',
     chapter: 'The Bolas Protocol',
     title: 'Nicol Bolas and the Infinite Priority Stack',
-    dialogue: 'Little planeswalker, you have stepped into my practice apocalypse. Excellent. I shall teach you the interface by threatening it dramatically.',
+    dialogue: 'Little planeswalker. You have opened a battlefield without understanding its teeth. Good. Fear is an excellent teacher.',
     objective: 'Begin the tutorial battle.',
-    hint: 'Tap Next. Bolas will introduce only the core controls for now.',
+    hint: 'Tap Next. The duel will use real app tools, but Nicol Bolas is scripted.',
     anchor: null,
     completion: 'manual'
   },
   {
-    id: 'lobby_code',
-    chapter: 'Lobby Basics',
+    id: 'room_code',
+    chapter: 'The Bolas Protocol',
     title: 'The Room Code',
-    dialogue: 'Behold the sigil of entry. With these few runes, lesser beings may find the arena where I will almost certainly monologue at them.',
-    objective: 'Look at the room code near the top of the screen.',
-    hint: 'This is the code you send to a friend so they can join or watch.',
+    dialogue: 'Every duel needs a doorway. This code is how another mind finds yours. Guard it poorly and company arrives.',
+    objective: 'Find the room code near the top of the screen.',
+    hint: 'This is the code you send to a friend so they can join or watch your game.',
     anchor: 'room-code',
     completion: 'manual'
   },
   {
-    id: 'battlefield_overview',
-    chapter: 'Battlefield Basics',
-    title: 'The Two Battlefields',
-    dialogue: 'Above broods my dominion. Below trembles yours. The distance between them is where bold plans go to become cautionary tales.',
+    id: 'battlefields',
+    chapter: 'The Bolas Protocol',
+    title: 'Two Kingdoms, One Mistake',
+    dialogue: 'Above: my empire. Below: your little rebellion. Between them: every decision you will later regret.',
     objective: 'Find your battlefield and Nicol Bolas’s battlefield.',
     hint: 'Your battlefield is labeled with your name. The opponent battlefield is labeled Nicol Bolas.',
     anchor: 'battlefields',
     completion: 'manual'
   },
   {
-    id: 'library_button',
-    chapter: 'First Tools',
-    title: 'The Library Gate',
-    dialogue: 'Your library is a sealed vault of possible futures. Open it, and try not to look impressed when fate obeys you.',
+    id: 'bottom_toolbar',
+    chapter: 'The Library Gate',
+    title: 'The Relic Bar',
+    dialogue: 'Your tools sleep along the bottom edge, like knives under a banquet table. Some are hidden. Swipe sideways to reveal them.',
+    objective: 'Find the bottom toolbar.',
+    hint: 'Swipe the bottom toolbar left or right if a tool is not visible.',
+    anchor: 'bottom-toolbar',
+    completion: 'manual'
+  },
+  {
+    id: 'open_library_tools',
+    chapter: 'The Library Gate',
+    title: 'Open the Library Gate',
+    dialogue: 'No spell begins in the hand. Everything begins in the library, waiting to be drawn like a blade.',
     objective: 'Open the Library tools menu.',
-    hint: 'Swipe the bottom toolbar sideways until you see the book/library icon, then tap it.',
+    hint: 'Tap the book/library icon. If you cannot see it, swipe the bottom toolbar sideways.',
     anchor: 'library-menu-button',
     completion: 'detect-or-manual'
   },
   {
     id: 'draw_card',
-    chapter: 'First Tools',
+    chapter: 'The Library Gate',
     title: 'Draw the First Thread',
-    dialogue: 'Your first thread waits in the library. Pull it free; every card you draw is another future I must graciously allow you to misunderstand.',
+    dialogue: 'Draw. The smallest action in Magic, and the first thread of catastrophe.',
     objective: 'Draw one card.',
-    hint: 'Use the blue Draw button in the bottom control bar. If it is not visible, swipe the bottom bar sideways.',
+    hint: 'Use the blue Draw button. The tutorial deck has already been prepared for you.',
     anchor: 'draw-button',
+    completion: 'detect'
+  },
+  {
+    id: 'hand_area',
+    chapter: 'The Library Gate',
+    title: 'The Hand of Possible Futures',
+    dialogue: 'Your hand is not what you own. It is what might become real if you dare to spend the turn.',
+    objective: 'Find your hand at the bottom of the screen.',
+    hint: 'Cards in your hand appear along the bottom. You may need to scroll horizontally.',
+    anchor: 'hand-area',
+    completion: 'manual'
+  },
+  {
+    id: 'mulligan_note',
+    chapter: 'The Library Gate',
+    title: 'The Mercy of Seven',
+    dialogue: 'Sometimes the first future is insulting. You may send it back. Magic calls this mercy. I call it delay.',
+    objective: 'Learn where Mulligan is.',
+    hint: 'Open Library tools again. Mulligan is in the same menu as Draw, Scry, Search, and Shuffle.',
+    anchor: 'library-menu-button',
+    completion: 'manual'
+  },
+  {
+    id: 'play_land',
+    chapter: 'Cards Enter the World',
+    title: 'The Mountain Wakes',
+    dialogue: 'A land is not a card. It is a promise the table is forced to believe.',
+    objective: 'Play a Mountain from your hand.',
+    hint: 'Tap a Mountain in your hand, then choose Play Land.',
+    anchor: 'hand-area',
+    completion: 'detect'
+  },
+  {
+    id: 'undo_play_land',
+    chapter: 'Cards Enter the World',
+    title: 'Rewind the Mistake',
+    dialogue: 'Regret is powerful. In this place, it has a button.',
+    objective: 'Undo the land play.',
+    hint: 'Tap the orange Undo button and confirm. This is for fixing mistakes, not rewriting history forever.',
+    anchor: 'undo-button',
+    completion: 'detect'
+  },
+  {
+    id: 'cast_spell_to_stack',
+    chapter: 'Cards Enter the World',
+    title: 'Lightning on the Tower',
+    dialogue: 'Now place violence where all players can admire it: on the stack.',
+    objective: 'Cast Lightning Bolt.',
+    hint: 'Tap Lightning Bolt in your hand, then choose Cast Spell. It will go to the stack first, not directly to the graveyard.',
+    anchor: 'hand-area',
+    completion: 'detect'
+  },
+  {
+    id: 'inspect_stack',
+    chapter: 'The Infinite Priority Stack',
+    title: 'The Tower of Intentions',
+    dialogue: 'The stack is a tower built from threats, lies, responses, and one very confident instant.',
+    objective: 'Open the stack panel and inspect Lightning Bolt.',
+    hint: 'Tap the Stack button near the top. It shows how many items are waiting to resolve.',
+    anchor: 'stack-button',
     completion: 'detect-or-manual'
   },
   {
-    id: 'finish_foundation_test',
-    chapter: 'Tutorial Foundation Test',
-    title: 'The First Lesson Ends',
-    dialogue: 'You survived the smallest hinge of my grand design. Do not celebrate; this was merely the tutorial sharpening its claws.',
-    objective: 'Finish this foundation tutorial.',
-    hint: 'Tap Finish. The full scripted Bolas battle will arrive in a later pass.',
+    id: 'copy_stack_item',
+    chapter: 'The Infinite Priority Stack',
+    title: 'One Spell Becomes Two',
+    dialogue: 'Mortals count one bolt. Dragons count consequences.',
+    objective: 'Copy the Lightning Bolt on the stack.',
+    hint: 'Open the stack item details and use Copy Stack Item.',
+    anchor: 'stack-panel',
+    completion: 'detect'
+  },
+  {
+    id: 'resolve_stack_item',
+    chapter: 'The Infinite Priority Stack',
+    title: 'The Top Falls First',
+    dialogue: 'The topmost thought becomes real first. That is not fairness. That is architecture.',
+    objective: 'Resolve the top stack item.',
+    hint: 'Use Resolve Top Stack Item from the stack controls.',
+    anchor: 'stack-panel',
+    completion: 'detect'
+  },
+  {
+    id: 'counter_stack_item',
+    chapter: 'The Infinite Priority Stack',
+    title: 'Denied by the Dragon',
+    dialogue: 'Some futures are too embarrassing to permit.',
+    objective: 'Counter/fizzle the remaining stack item.',
+    hint: 'Use Counter/Fizzle Top Stack Item.',
+    anchor: 'stack-panel',
+    completion: 'detect'
+  },
+  {
+    id: 'pass_priority',
+    chapter: 'Priority Spiral',
+    title: 'The Sacred Passing of Blame',
+    dialogue: 'In asynchronous Magic, silence is not absence. It is priority, waiting with knives.',
+    objective: 'Pass priority.',
+    hint: 'Tap Pass. This tells the other player you are done acting for now.',
+    anchor: 'pass-button',
+    completion: 'detect'
+  },
+  {
+    id: 'autopass',
+    chapter: 'Priority Spiral',
+    title: 'The Lazy Throne',
+    dialogue: 'Even kings automate boredom.',
+    objective: 'Find AutoPass.',
+    hint: 'AutoPass helps you automatically pass through routine priority windows.',
+    anchor: 'autopass-button',
+    completion: 'manual'
+  },
+  {
+    id: 'game_log',
+    chapter: 'Priority Spiral',
+    title: 'The Chronicle of Bad Ideas',
+    dialogue: 'The log remembers what pride forgets.',
+    objective: 'Open or inspect the game log/chat area.',
+    hint: 'The log records major actions so asynchronous players can follow what happened.',
+    anchor: 'log-chat-button',
+    completion: 'manual'
+  },
+  {
+    id: 'open_time_controls',
+    chapter: 'The Combat Step That Refused To End',
+    title: 'The Clock Has Teeth',
+    dialogue: 'A turn is not a circle. It is a hallway with traps in chronological order.',
+    objective: 'Open the phase/time controls.',
+    hint: 'Tap the phase indicator at the top-left.',
+    anchor: 'phase-indicator',
+    completion: 'detect-or-manual'
+  },
+  {
+    id: 'set_attackers_phase',
+    chapter: 'The Combat Step That Refused To End',
+    title: 'Declare the Threat',
+    dialogue: 'Combat begins when someone points at someone else and calls it destiny.',
+    objective: 'Move to the Attackers step.',
+    hint: 'Use the phase controls and select Attackers.',
+    anchor: 'phase-controls',
+    completion: 'detect'
+  },
+  {
+    id: 'declare_attacker_player',
+    chapter: 'The Combat Step That Refused To End',
+    title: 'Attack the Dragon',
+    dialogue: 'You may attack me. This is adorable, and therefore permitted.',
+    objective: 'Declare Llanowar Elves as attacking Nicol Bolas.',
+    hint: 'Tap Llanowar Elves on your battlefield, choose Attack, then choose Nicol Bolas as the target.',
+    anchor: 'own-battlefield',
+    completion: 'detect'
+  },
+  {
+    id: 'attack_planeswalker_battle_note',
+    chapter: 'The Combat Step That Refused To End',
+    title: 'Not Only Faces Bleed',
+    dialogue: 'Creatures do not merely attack players. They may also strike planeswalkers and battles. The law is broad enough for cruelty.',
+    objective: 'Learn that attackers can target players, planeswalkers, or battles.',
+    hint: 'The Attack target picker will include valid player, planeswalker, and battle targets when they exist.',
+    anchor: 'combat-summary',
+    completion: 'manual'
+  },
+  {
+    id: 'combat_summary',
+    chapter: 'The Combat Step That Refused To End',
+    title: 'The Combat Ledger',
+    dialogue: 'Here the battlefield confesses: who attacks, who blocks, and who pretends they planned this.',
+    objective: 'Find the Combat Summary.',
+    hint: 'It lists attackers, blockers, and damage-step information.',
+    anchor: 'combat-summary',
+    completion: 'manual'
+  },
+  {
+    id: 'first_strike_step',
+    chapter: 'The Combat Step That Refused To End',
+    title: 'The First Blade',
+    dialogue: 'Some creatures strike before the moment officially arrives. This is called first strike, because “premeditated punctuality” was too long.',
+    objective: 'Set combat damage step to First-strike damage.',
+    hint: 'Open phase/time controls and tap First-strike damage.',
+    anchor: 'phase-controls',
+    completion: 'detect'
+  },
+  {
+    id: 'regular_damage_step',
+    chapter: 'The Combat Step That Refused To End',
+    title: 'The Second Wound',
+    dialogue: 'Double strike is not hitting twice. It is making time sign the receipt twice.',
+    objective: 'Set combat damage step to Regular damage.',
+    hint: 'Use the Combat Damage Step controls.',
+    anchor: 'phase-controls',
+    completion: 'detect'
+  },
+  {
+    id: 'damage_markers',
+    chapter: 'The Combat Step That Refused To End',
+    title: 'Temporary Wounds',
+    dialogue: 'Damage fades at cleanup. Humiliation, less so.',
+    objective: 'Learn where damage markers live.',
+    hint: 'Tap a creature to see current damage controls. Damage is manual and visible on cards.',
+    anchor: 'card-detail',
+    completion: 'manual'
+  },
+  {
+    id: 'tap_card',
+    chapter: 'The Masked Permanent',
+    title: 'Bow the Elf',
+    dialogue: 'To tap a creature is to make it admit it has already been useful.',
+    objective: 'Tap Llanowar Elves.',
+    hint: 'Tap Llanowar Elves, then choose Tap.',
+    anchor: 'own-battlefield',
+    completion: 'detect'
+  },
+  {
+    id: 'add_counter',
+    chapter: 'The Masked Permanent',
+    title: 'Numbers Become Flesh',
+    dialogue: 'A counter is a tiny law glued to a permanent.',
+    objective: 'Add a +1/+1 counter to Llanowar Elves.',
+    hint: 'Open the card details and use the counter controls.',
+    anchor: 'card-detail',
+    completion: 'detect'
+  },
+  {
+    id: 'add_reminder',
+    chapter: 'The Masked Permanent',
+    title: 'The Memory Curse',
+    dialogue: 'Until end of turn. Until cleanup. Until someone remembers. Magic is mostly temporary disasters.',
+    objective: 'Add a reminder marker to Llanowar Elves.',
+    hint: 'Open the card details and choose a reminder like +1/+1 until EOT or Can’t block.',
+    anchor: 'card-detail',
+    completion: 'detect'
+  },
+  {
+    id: 'phase_card',
+    chapter: 'The Masked Permanent',
+    title: 'Vanish Without Leaving',
+    dialogue: 'Phasing is exile’s weird cousin: present, absent, and deeply annoying.',
+    objective: 'Phase out Llanowar Elves, then phase it back in.',
+    hint: 'Open the card details and use Phase out / Phase in.',
+    anchor: 'card-detail',
+    completion: 'detect-or-manual'
+  },
+  {
+    id: 'transform_card',
+    chapter: 'The Masked Permanent',
+    title: 'The Other Face',
+    dialogue: 'Some cards are honest enough to admit they are two problems.',
+    objective: 'Transform or inspect a double-faced card.',
+    hint: 'Use Delver of Secrets if available. Open the card detail and use the double-faced card section.',
+    anchor: 'card-detail',
+    completion: 'detect-or-manual'
+  },
+  {
+    id: 'face_down_reveal',
+    chapter: 'The Masked Permanent',
+    title: 'The Mask on the Table',
+    dialogue: 'A face-down card is a secret wearing cardboard.',
+    objective: 'Learn face-down and reveal tools.',
+    hint: 'Open a card detail. You can turn a card face down or reveal it when needed.',
+    anchor: 'card-detail',
+    completion: 'manual'
+  },
+  {
+    id: 'create_token',
+    chapter: 'The Token Legion',
+    title: 'A Creature Made of Convenience',
+    dialogue: 'Tokens are creatures drawn from paperwork and audacity.',
+    objective: 'Create a token.',
+    hint: 'Open Library tools or Token Tools and choose a preset token. Deck-derived tokens may appear if your imported deck creates them.',
+    anchor: 'token-tools',
+    completion: 'detect'
+  },
+  {
+    id: 'custom_token',
+    chapter: 'The Token Legion',
+    title: 'The Custom Monster',
+    dialogue: 'When reality lacks the correct monster, invent one and pretend it was always there.',
+    objective: 'Find custom token creation.',
+    hint: 'In Token Tools, scroll to Custom Token. You can choose name, stats, colors, abilities, and quantity.',
+    anchor: 'token-tools',
+    completion: 'manual'
+  },
+  {
+    id: 'target_system',
+    chapter: 'The Token Legion',
+    title: 'The Red Thread',
+    dialogue: 'A target is a promise that something unfortunate knows exactly where to go.',
+    objective: 'Use the target system.',
+    hint: 'Open a spell or ability, choose target tools, and mark a target. You can clear targets later.',
+    anchor: 'target-tools',
+    completion: 'detect-or-manual'
+  },
+  {
+    id: 'attach_to_permanent',
+    chapter: 'The Token Legion',
+    title: 'Chains Between Cards',
+    dialogue: 'Attachments are relationships with rules text.',
+    objective: 'Learn attach/link to permanent.',
+    hint: 'Open a card detail and use Attach to permanent. This is useful for Auras, Equipment, and similar links.',
+    anchor: 'card-detail',
+    completion: 'manual'
+  },
+  {
+    id: 'attach_to_player',
+    chapter: 'The Token Legion',
+    title: 'Curse the Player, Not the Board',
+    dialogue: 'Some enchantments do not haunt creatures. They haunt people. Much more efficient.',
+    objective: 'Learn attach to player.',
+    hint: 'Use Attach to player for curses or player-bound effects.',
+    anchor: 'player-panel',
+    completion: 'manual'
+  },
+  {
+    id: 'clone_control',
+    chapter: 'The Token Legion',
+    title: 'Copies and Betrayals',
+    dialogue: 'Clone a creature. Give control away. Nothing says friendship like administrative treason.',
+    objective: 'Learn Clone card and Give control.',
+    hint: 'Open a permanent’s card detail. Clone and control-change tools help represent paper Magic manually.',
+    anchor: 'card-detail',
+    completion: 'manual'
+  },
+  {
+    id: 'reveal_hand',
+    chapter: 'The Library Labyrinth',
+    title: 'Public Secrets',
+    dialogue: 'To reveal a hand is to make hidden futures embarrassingly public.',
+    objective: 'Find Reveal Hand / Hide Hand tools.',
+    hint: 'Open your hand/card status tools. Revealed cards are public; hidden cards are private.',
+    anchor: 'reveal-tools',
+    completion: 'manual'
+  },
+  {
+    id: 'private_hand_peek',
+    chapter: 'The Library Labyrinth',
+    title: 'A Thought Stolen Quietly',
+    dialogue: 'Public knowledge is crude. True elegance is knowing what only you were allowed to see.',
+    objective: 'Use Private hand peek on Nicol Bolas.',
+    hint: 'Tap Private hand peek on the opponent battlefield. This is for effects like Thoughtseize or Gitaxian Probe.',
+    anchor: 'private-hand-peek-button',
+    completion: 'detect'
+  },
+  {
+    id: 'scry_search_reorder',
+    chapter: 'The Library Labyrinth',
+    title: 'Rearranging Fate',
+    dialogue: 'The top of the library is destiny’s doormat. Wipe your boots on it.',
+    objective: 'Learn Scry, Search Library, Reorder Top, and Shuffle.',
+    hint: 'Open Library tools. These actions are manual and should only be used when a card effect allows them.',
+    anchor: 'library-menu-button',
+    completion: 'manual'
+  },
+  {
+    id: 'batch_library_actions',
+    chapter: 'The Library Labyrinth',
+    title: 'Several Cards at Once',
+    dialogue: 'Drawing one card is etiquette. Milling ten is architecture.',
+    objective: 'Open Library Batch Actions.',
+    hint: 'Use Batch Actions for Draw N, Mill N, Reveal top N, Exile top N, Scry N, or Surveil N.',
+    anchor: 'library-menu-button',
+    completion: 'detect-or-manual'
+  },
+  {
+    id: 'opponent_library_tools',
+    chapter: 'The Library Labyrinth',
+    title: 'Trespassing in the Enemy Library',
+    dialogue: 'Sometimes a spell gives you permission to look where you should not. Enjoy the legality while it lasts.',
+    objective: 'Find opponent library tools.',
+    hint: 'Open Library tools and look under Opponent Library. Use these only when a card effect allows it.',
+    anchor: 'library-menu-button',
+    completion: 'manual'
+  },
+  {
+    id: 'player_counters_statuses',
+    chapter: 'Crowns, Counters, and Curses',
+    title: 'The Player Panel',
+    dialogue: 'Cards are not the only things that accumulate consequences. Players do too.',
+    objective: 'Open Player Counters & Statuses.',
+    hint: 'Tap the player/status/counter button near your battlefield.',
+    anchor: 'player-counters-button',
+    completion: 'detect-or-manual'
+  },
+  {
+    id: 'player_counters',
+    chapter: 'Crowns, Counters, and Curses',
+    title: 'Poison, Energy, Experience',
+    dialogue: 'Some numbers sit on players like tiny doom accountants.',
+    objective: 'Add and remove a player counter.',
+    hint: 'Use Poison, Energy, Experience, or create a custom player counter.',
+    anchor: 'player-counters-panel',
+    completion: 'detect-or-manual'
+  },
+  {
+    id: 'mana_pool',
+    chapter: 'Crowns, Counters, and Curses',
+    title: 'Floating Fire',
+    dialogue: 'Mana unspent is a threat with nowhere to stand.',
+    objective: 'Add mana to your mana pool, then clear it.',
+    hint: 'In Player Counters & Statuses, use the Mana Pool controls. It is manual and does not pay for spells automatically.',
+    anchor: 'mana-pool-panel',
+    completion: 'detect-or-manual'
+  },
+  {
+    id: 'statuses',
+    chapter: 'Crowns, Counters, and Curses',
+    title: 'Thrones for the Easily Tempted',
+    dialogue: 'Monarch. Initiative. City’s Blessing. Titles are just counters with better hats.',
+    objective: 'Toggle a player status.',
+    hint: 'Try Monarch, Initiative, City’s Blessing, Day/Night, or Ring temptation.',
+    anchor: 'status-panel',
+    completion: 'detect-or-manual'
+  },
+  {
+    id: 'emblems',
+    chapter: 'Crowns, Counters, and Curses',
+    title: 'Permanent Bad Decisions',
+    dialogue: 'An emblem is what happens when a planeswalker’s threat survives the planeswalker.',
+    objective: 'Add an emblem.',
+    hint: 'Use a preset emblem, custom emblem, or a deck-derived emblem if available.',
+    anchor: 'emblem-panel',
+    completion: 'detect-or-manual'
+  },
+  {
+    id: 'dungeons',
+    chapter: 'Crowns, Counters, and Curses',
+    title: 'The Room Beneath the Turn',
+    dialogue: 'Dungeons are maps that pretend they are cards. Initiative is the door kicking back.',
+    objective: 'Find dungeon references.',
+    hint: 'Dungeon references may appear from your deck or from venture/initiative cards. This is a reference tool, not automatic progression.',
+    anchor: 'dungeon-references',
+    completion: 'manual'
+  },
+  {
+    id: 'commander_note',
+    chapter: 'Crowns, Counters, and Curses',
+    title: 'The Command Zone',
+    dialogue: 'In Commander, even death is just a tax form.',
+    objective: 'Learn what Commander mode adds.',
+    hint: 'Commander games start at 40 life and include command zone, commander tax, commander damage, and commander badges.',
+    anchor: 'player-panel',
+    completion: 'manual'
+  },
+  {
+    id: 'cleanup_old_games',
+    chapter: 'Async Survival',
+    title: 'Sweep the Ruins',
+    dialogue: 'Abandoned games breed in the dark. Delete the old ones before they become a civilization.',
+    objective: 'Learn old game cleanup.',
+    hint: 'In the lobby, Clean up old games can permanently remove host-owned zombie games.',
+    anchor: null,
+    completion: 'manual'
+  },
+  {
+    id: 'watch_game',
+    chapter: 'Async Survival',
+    title: 'The Observer’s Eye',
+    dialogue: 'A watcher cannot change the duel. But they can judge it, which is often worse.',
+    objective: 'Learn Watch Game mode.',
+    hint: 'From the lobby, a room code can be watched instead of joined.',
+    anchor: null,
+    completion: 'manual'
+  },
+  {
+    id: 'manual_toolbox_warning',
+    chapter: 'Async Survival',
+    title: 'The Swiss Army Knife',
+    dialogue: 'This machine is not a judge. It will not save you from illegal plays. It gives you blades, not wisdom.',
+    objective: 'Understand the app’s philosophy.',
+    hint: 'The app is a manual paper-Magic helper, not a full rules engine. Players represent actions honestly.',
+    anchor: null,
+    completion: 'manual'
+  },
+  {
+    id: 'final_trial',
+    chapter: 'The Infinite Priority Stack',
+    title: 'Final Trial: In Response',
+    dialogue: 'You have seen the library, the stack, the battlefield, the secret hand, the false creature, the crown, the dungeon, and the undo button. Now speak the oldest words in Magic.',
+    objective: 'Pass priority to end the tutorial.',
+    hint: 'Tap Pass. This completes the tutorial battle.',
+    anchor: 'pass-button',
+    completion: 'detect-or-manual'
+  },
+  {
+    id: 'tutorial_complete',
+    chapter: 'Victory, Temporarily',
+    title: 'The Dragon Allows You to Leave',
+    dialogue: 'You have learned the machine. Go now. Teach your friends the sacred terror of saying: “in response.”',
+    objective: 'Finish the tutorial.',
+    hint: 'You can restart tutorial mode from the lobby any time.',
     anchor: null,
     completion: 'finish'
-  }
+  },
 ];
 const TUTORIAL_STEP_IDS = TUTORIAL_SCRIPT_STEPS.map((step) => step.id);
 const getTutorialStepById = (stepId) => TUTORIAL_SCRIPT_STEPS.find((step) => step.id === stepId) || TUTORIAL_SCRIPT_STEPS[0];
 const getTutorialStepIndex = (stepId) => Math.max(0, TUTORIAL_STEP_IDS.indexOf(stepId));
 const getNextTutorialStepId = (stepId) => TUTORIAL_SCRIPT_STEPS[Math.min(getTutorialStepIndex(stepId) + 1, TUTORIAL_SCRIPT_STEPS.length - 1)]?.id || stepId;
 const getPreviousTutorialStepId = (stepId) => TUTORIAL_SCRIPT_STEPS[Math.max(getTutorialStepIndex(stepId) - 1, 0)]?.id || stepId;
-const capTutorialCompletedStepIds = (stepIds = []) => [...new Set(stepIds.filter(Boolean))].slice(-24);
+const capTutorialCompletedStepIds = (stepIds = []) => [...new Set(stepIds.filter(Boolean))].slice(-80);
 const getTutorialAnchorClass = (activeAnchor, anchor, pulseAnchor = null) => {
   if (!activeAnchor || !anchor) return '';
   const anchors = Array.isArray(anchor) ? anchor : [anchor];
@@ -4385,7 +4875,7 @@ class GameBoardErrorBoundary extends React.Component {
   }
 }
 
-const TutorialOverlay = ({ game, currentStep, canGoBack, isMinimized, hasOpenPanel, onToggleMinimized, onNext, onBack, onSkip, onExit, onFocusTarget }) => {
+const TutorialOverlay = ({ game, currentStep, canGoBack, isMinimized, hasOpenPanel, onToggleMinimized, onNext, onBack, onSkip, onExit, onFocusTarget, onRestart, onExplore }) => {
   const [dock, setDock] = useState('bottom');
   const forcedCompact = Boolean(hasOpenPanel);
 
@@ -4417,7 +4907,7 @@ const TutorialOverlay = ({ game, currentStep, canGoBack, isMinimized, hasOpenPan
   }, [currentStep?.anchor]);
 
   if (!game?.isTutorial || !currentStep || game.tutorial?.inactive) return null;
-  const isFinishedStep = currentStep.id === 'finish_foundation_test';
+  const isFinishedStep = currentStep.id === 'tutorial_complete';
   const stepNumber = getTutorialStepIndex(currentStep.id) + 1;
 
   const collapsed = isMinimized || forcedCompact;
@@ -4461,22 +4951,33 @@ const TutorialOverlay = ({ game, currentStep, canGoBack, isMinimized, hasOpenPan
                 <div className="mt-1 text-slate-300">{currentStep.hint}</div>
               </div>
             </div>
-            <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-              <button type="button" onClick={onBack} disabled={!canGoBack} className="min-h-10 rounded-lg border border-slate-700 px-3 text-sm font-bold text-slate-300 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40">
-                Back
-              </button>
-              <div className="ml-auto flex gap-2">
-                <button type="button" onClick={onFocusTarget} disabled={!currentStep.anchor} className="min-h-10 rounded-lg border border-amber-500/40 px-3 text-sm font-black text-amber-100 hover:bg-amber-950/40 disabled:cursor-not-allowed disabled:opacity-40">
-                  Show me
-                </button>
-                <button type="button" onClick={onSkip} className="min-h-10 rounded-lg border border-slate-700 px-3 text-sm font-bold text-slate-300 hover:bg-slate-800">
-                  Skip step
-                </button>
-                <button type="button" onClick={onNext} className="min-h-10 rounded-lg bg-amber-500 px-4 text-sm font-black text-slate-950 hover:bg-amber-400">
-                  {isFinishedStep ? 'Finish' : 'Next'}
-                </button>
+            {isFinishedStep && game.tutorial?.finished ? (
+              <div className="rounded-xl border border-emerald-400/40 bg-emerald-950/30 p-3">
+                <div className="text-sm font-black text-emerald-100">Tutorial complete. Nicol Bolas has permitted your temporary survival.</div>
+                <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                  <button type="button" onClick={onExit} className="min-h-10 rounded-lg bg-slate-800 px-3 text-sm font-bold text-slate-100 hover:bg-slate-700">Return to lobby</button>
+                  <button type="button" onClick={onExplore} className="min-h-10 rounded-lg border border-emerald-500/40 px-3 text-sm font-bold text-emerald-100 hover:bg-emerald-950/40">Explore board</button>
+                  <button type="button" onClick={onRestart} className="min-h-10 rounded-lg border border-amber-500/40 px-3 text-sm font-black text-amber-100 hover:bg-amber-950/40">Restart</button>
+                </div>
               </div>
-            </div>
+            ) : (
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                <button type="button" onClick={onBack} disabled={!canGoBack} className="min-h-10 rounded-lg border border-slate-700 px-3 text-sm font-bold text-slate-300 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40">
+                  Back
+                </button>
+                <div className="ml-auto flex gap-2">
+                  <button type="button" onClick={onFocusTarget} disabled={!currentStep.anchor} className="min-h-10 rounded-lg border border-amber-500/40 px-3 text-sm font-black text-amber-100 hover:bg-amber-950/40 disabled:cursor-not-allowed disabled:opacity-40">
+                    Show me
+                  </button>
+                  <button type="button" onClick={onSkip} className="min-h-10 rounded-lg border border-slate-700 px-3 text-sm font-bold text-slate-300 hover:bg-slate-800">
+                    Skip step
+                  </button>
+                  <button type="button" onClick={onNext} className="min-h-10 rounded-lg bg-amber-500 px-4 text-sm font-black text-slate-950 hover:bg-amber-400">
+                    {isFinishedStep ? 'Finish' : 'Next'}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -4668,9 +5169,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       stepId: finish ? currentTutorialStep.id : getNextTutorialStepId(currentTutorialStep.id),
       completedStepIds,
       finished: finish || game?.tutorial?.finished,
-      inactive: finish ? true : game?.tutorial?.inactive
+      inactive: finish ? false : game?.tutorial?.inactive
     });
-    if (finish) onExit?.();
   };
 
   const goBackTutorialStep = async () => {
@@ -4685,10 +5185,146 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     onExit?.();
   };
 
+  const restartTutorial = async () => {
+    if (!game?.isTutorial) return;
+    await updateTutorialState({ stepId: 'intro', completedStepIds: [], finished: false, inactive: false });
+  };
+
+  const continueExploringTutorial = async () => {
+    if (!game?.isTutorial) return;
+    await updateTutorialState({ inactive: true, finished: true });
+  };
+
   const maybeCompleteTutorialStep = async (stepId) => {
     if (!isTutorialGame || game?.tutorial?.stepId !== stepId) return;
     await advanceTutorialStep({ markCompleted: true });
   };
+
+
+  const maybeCompleteTutorialAction = async (actionType, payload = {}) => {
+    if (!isTutorialGame || !currentTutorialStep) return;
+    const stepId = currentTutorialStep.id;
+    const actionStepMap = {
+      DRAW_CARD: ['draw_card'],
+      PLAY_LAND: ['play_land'],
+      CAST_SPELL: ['cast_spell_to_stack'],
+      COPY_STACK_ITEM: ['copy_stack_item'],
+      RESOLVE_STACK_TOP: ['resolve_stack_item'],
+      COUNTER_STACK_TOP: ['counter_stack_item'],
+      PASS_PRIORITY: ['pass_priority', 'final_trial'],
+      MANUAL_SET_STEP: payload?.phaseId === 'combat_attackers' ? ['set_attackers_phase'] : [],
+      SET_COMBAT_DAMAGE_STEP: payload?.combatDamageStep === COMBAT_DAMAGE_STEPS.FIRST_STRIKE ? ['first_strike_step'] : (payload?.combatDamageStep === COMBAT_DAMAGE_STEPS.REGULAR ? ['regular_damage_step'] : []),
+      SET_ATTACK_TARGET: ['declare_attacker_player'],
+      TAP_TOGGLE: ['tap_card'],
+      MOD_COUNTER: ['add_counter'],
+      ADD_CARD_REMINDER: ['add_reminder'],
+      PHASE_TOGGLE: ['phase_card'],
+      SWITCH_CARD_FACE: ['transform_card'],
+      CREATE_TOKEN: ['create_token'],
+      TARGET: ['target_system'],
+      PRIVATE_PEEK_HAND: ['private_hand_peek'],
+      PLAYER_COUNTER: ['player_counters'],
+      MANA_POOL_ADJUST: ['mana_pool'],
+      MANA_POOL_CLEAR: ['mana_pool'],
+      PLAYER_STATUS_TOGGLE: ['statuses'],
+      RING_TEMPTATION: ['statuses'],
+      TOGGLE_PLAYER_STATUS: ['statuses'],
+      SET_DAY_NIGHT: ['statuses'],
+      ADD_PLAYER_EMBLEM: ['emblems']
+    };
+    if ((actionStepMap[actionType] || []).includes(stepId)) {
+      await advanceTutorialStep({ markCompleted: true });
+    }
+  };
+
+
+  const buildTutorialCardInstance = useCallback((cardName, ownerId, zone = ZONES.HAND, controllerId = ownerId) => {
+    const seed = TUTORIAL_STARTER_CARD_SEED.find((card) => card.name === cardName) || { name: cardName, type_line: 'Card', oracle_text: '' };
+    return sanitizeScryfallCardForGame(seed, {
+      id: `tutorial-${cardName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
+      instanceId: generateCardId(),
+      ownerId,
+      controllerId,
+      zone,
+      tapped: false,
+      counters: {},
+      tempDamage: 0,
+      faceDown: false,
+      x: 8,
+      y: 8
+    });
+  }, []);
+
+  const ensureTutorialStepSetup = useCallback(async (stepId) => {
+    if (!gameId || !game?.isTutorial || game.tutorial?.inactive || !userId) return;
+    const needs = {
+      play_land: [{ name: 'Mountain', zone: ZONES.HAND, ownerId: userId, controllerId: userId }],
+      undo_play_land: [{ name: 'Mountain', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId }],
+      cast_spell_to_stack: [{ name: 'Lightning Bolt', zone: ZONES.HAND, ownerId: userId, controllerId: userId }],
+      inspect_stack: [{ name: 'Lightning Bolt', zone: 'stack_zone', ownerId: userId, controllerId: userId, stack: true }],
+      copy_stack_item: [{ name: 'Lightning Bolt', zone: 'stack_zone', ownerId: userId, controllerId: userId, stack: true }],
+      resolve_stack_item: [{ name: 'Lightning Bolt', zone: 'stack_zone', ownerId: userId, controllerId: userId, stack: true }],
+      counter_stack_item: [{ name: 'Lightning Bolt', zone: 'stack_zone', ownerId: userId, controllerId: userId, stack: true }],
+      declare_attacker_player: [{ name: 'Llanowar Elves', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId }],
+      attack_planeswalker_battle_note: [{ name: 'Nicol Bolas, Planeswalker', zone: ZONES.BATTLEFIELD, ownerId: opponent?.id || userId, controllerId: opponent?.id || userId }],
+      tap_card: [{ name: 'Llanowar Elves', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId }],
+      add_counter: [{ name: 'Llanowar Elves', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId }],
+      add_reminder: [{ name: 'Llanowar Elves', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId }],
+      phase_card: [{ name: 'Llanowar Elves', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId }],
+      transform_card: [{ name: 'Delver of Secrets', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId }],
+      face_down_reveal: [{ name: 'Delver of Secrets', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId }],
+      create_token: [],
+      target_system: [{ name: 'Llanowar Elves', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId }],
+      attach_to_permanent: [{ name: 'Llanowar Elves', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId }],
+      clone_control: [{ name: 'Llanowar Elves', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId }]
+    }[stepId];
+    if (!needs) return;
+
+    let nextCards = [...(game.cards || [])];
+    let nextStack = [...(game.stack || [])];
+    let changed = false;
+
+    needs.forEach((need) => {
+      const matching = nextCards.find((card) => card.name === need.name && card.ownerId === need.ownerId) || nextCards.find((card) => card.name === need.name);
+      let card = matching;
+      if (!card) {
+        card = buildTutorialCardInstance(need.name, need.ownerId, need.zone, need.controllerId);
+        nextCards.push(card);
+        changed = true;
+      }
+      if (card.zone !== need.zone || card.controllerId !== need.controllerId || (need.zone === ZONES.BATTLEFIELD && card.tapped)) {
+        nextCards = nextCards.map((candidate) => candidate.instanceId === card.instanceId ? { ...candidate, zone: need.zone, controllerId: need.controllerId, tapped: false, phasedOut: false } : candidate);
+        card = nextCards.find((candidate) => candidate.instanceId === card.instanceId) || card;
+        changed = true;
+      }
+      if (need.stack && !nextStack.some((item) => item.sourceId === card.instanceId || item.name === need.name)) {
+        nextStack.push({
+          id: `tutorial-stack-${card.instanceId}`,
+          sourceId: card.instanceId,
+          name: need.name,
+          controllerId: need.controllerId,
+          ownerId: need.ownerId,
+          itemType: 'SPELL',
+          type: 'SPELL',
+          createdAt: Date.now()
+        });
+        changed = true;
+      }
+    });
+
+    if (['declare_attacker_player', 'first_strike_step', 'regular_damage_step'].includes(stepId) && game.phase !== 'combat_attackers') {
+      await updateDoc(doc(db, 'games_v3', gameId), { phase: 'combat_attackers', combat: normalizeCombatState(game.combat), cards: nextCards, stack: nextStack, updatedAt: serverTimestamp() });
+      return;
+    }
+
+    if (changed) {
+      await updateDoc(doc(db, 'games_v3', gameId), { cards: nextCards, stack: nextStack, updatedAt: serverTimestamp() });
+    }
+  }, [buildTutorialCardInstance, game, gameId, opponent?.id, userId]);
+
+  useEffect(() => {
+    ensureTutorialStepSetup(currentTutorialStep?.id);
+  }, [currentTutorialStep?.id, ensureTutorialStepSetup]);
 
   const handleRepairGameSize = async () => {
     if (!gameId || !userId || (!isHost && !isPlayer)) {
@@ -5747,6 +6383,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     }
 
     closeTransientGameModals();
+    await maybeCompleteTutorialStep('undo_play_land');
     finishPerfAction(perfActionId);
   };
 
@@ -6139,6 +6776,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       });
       setAutoPassConfig(getDefaultAutoPassConfig());
       setTimeControlsOpen(false);
+      await maybeCompleteTutorialAction(actionType, payload);
       return;
     }
 
@@ -6213,6 +6851,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         setSelectedStackItemId(copiedStackItemId);
         setStackDetailOpen(true);
       }
+      await maybeCompleteTutorialAction(actionType, payload);
       return;
     }
 
@@ -6334,6 +6973,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       });
       setSelectedStackItemId(null);
       setStackDetailOpen(false);
+      await maybeCompleteTutorialAction(actionType, payload);
       return;
     }
 
@@ -7705,6 +8345,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         }
       }
     }
+    await maybeCompleteTutorialAction(actionType, payload);
     if (pendingRecapEvents.length > 0) {
       await Promise.all(pendingRecapEvents.map((event) => appendEvent(gameId, event)));
     }
@@ -8910,11 +9551,13 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         isMinimized={tutorialMinimized}
         hasOpenPanel={tutorialHasOpenPanel}
         onToggleMinimized={() => setTutorialMinimized((value) => !value)}
-        onNext={() => advanceTutorialStep({ markCompleted: true, finish: currentTutorialStep?.id === 'finish_foundation_test' })}
+        onNext={() => advanceTutorialStep({ markCompleted: true, finish: currentTutorialStep?.id === 'tutorial_complete' })}
         onBack={goBackTutorialStep}
-        onSkip={() => advanceTutorialStep({ markCompleted: false, finish: currentTutorialStep?.id === 'finish_foundation_test' })}
+        onSkip={() => advanceTutorialStep({ markCompleted: false, finish: currentTutorialStep?.id === 'tutorial_complete' })}
         onExit={exitTutorial}
         onFocusTarget={focusTutorialTarget}
+        onRestart={restartTutorial}
+        onExplore={continueExploringTutorial}
       />
       {/* 1. Header */}
       <div className="bg-slate-800 border-b border-slate-700 p-2 shrink-0 shadow-md top-action-scroll-wrap">
@@ -8936,9 +9579,10 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         >
         <button
           type="button"
-          onClick={(e) => { e.stopPropagation(); setTimeControlsOpen(true); }}
+          onClick={(e) => { e.stopPropagation(); setTimeControlsOpen(true); maybeCompleteTutorialStep('open_time_controls'); }}
           disabled={!canAct}
-          className={`flex items-center gap-2 rounded-lg border px-2 py-1.5 text-left transition-colors ${canAct ? 'border-slate-700 hover:border-purple-500/60 hover:bg-slate-900' : 'border-transparent cursor-default'}`}
+          data-tutorial-anchor="phase-indicator"
+          className={`flex items-center gap-2 rounded-lg border px-2 py-1.5 text-left transition-colors ${canAct ? 'border-slate-700 hover:border-purple-500/60 hover:bg-slate-900' : 'border-transparent cursor-default'}${getTutorialAnchorClass(currentTutorialAnchor, 'phase-indicator', tutorialPulseAnchor)}`}
           title={canAct ? 'Open Time Controls' : 'Phase'}
           aria-label="Open Time Controls"
         >
@@ -9021,8 +9665,9 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         <div className="flex items-center gap-3">
           <button
             type="button"
-            onClick={(e) => { e.stopPropagation(); setSelectedStackItemId(null); setStackDetailOpen(true); }}
-            className={`relative z-20 pointer-events-auto flex flex-col items-center px-3 py-1 rounded border transition-colors ${stackCards.length > 0 ? 'border-yellow-600/60 bg-yellow-950/40 hover:bg-yellow-900/50' : 'border-slate-700 bg-slate-900 hover:bg-slate-800'}`}
+            onClick={(e) => { e.stopPropagation(); setSelectedStackItemId(null); setStackDetailOpen(true); maybeCompleteTutorialStep('inspect_stack'); }}
+            data-tutorial-anchor="stack-button"
+            className={`relative z-20 pointer-events-auto flex flex-col items-center px-3 py-1 rounded border transition-colors ${stackCards.length > 0 ? 'border-yellow-600/60 bg-yellow-950/40 hover:bg-yellow-900/50' : 'border-slate-700 bg-slate-900 hover:bg-slate-800'}${getTutorialAnchorClass(currentTutorialAnchor, 'stack-button', tutorialPulseAnchor)}`}
             title="Inspect stack and priority"
             aria-label={`Inspect stack, ${stackCards.length} item${stackCards.length === 1 ? '' : 's'}`}
           >
@@ -9051,7 +9696,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           </button>
           <button
             onClick={() => setRevealsOpen(true)}
-            className="relative z-20 pointer-events-auto flex flex-col items-center justify-center px-2 py-1 rounded hover:bg-slate-700"
+            data-tutorial-anchor="reveal-tools"
+            className={`relative z-20 pointer-events-auto flex flex-col items-center justify-center px-2 py-1 rounded hover:bg-slate-700${getTutorialAnchorClass(currentTutorialAnchor, 'reveal-tools', tutorialPulseAnchor)}`}
             title="View reveals and reveal tools"
           >
             <span className="text-[10px] text-slate-400">REVEALS</span>
@@ -9071,7 +9717,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               {hasPriority ? (
                 <button
                   onClick={() => { recordPerfActionClick({ actionType: 'PASS_PRIORITY', buttonName: 'Pass', currentGame: game }); handleAction('PASS_PRIORITY'); }}
-                  className="relative z-20 pointer-events-auto bg-green-600 hover:bg-green-500 text-white px-4 py-1.5 rounded-full text-sm font-bold shadow-lg transform active:scale-95 transition-all flex items-center gap-2"
+                  data-tutorial-anchor="pass-button"
+                  className={`relative z-20 pointer-events-auto bg-green-600 hover:bg-green-500 text-white px-4 py-1.5 rounded-full text-sm font-bold shadow-lg transform active:scale-95 transition-all flex items-center gap-2${getTutorialAnchorClass(currentTutorialAnchor, 'pass-button', tutorialPulseAnchor)}`}
                 >
                   <ArrowRight size={14} /> Pass
                 </button>
@@ -9083,12 +9730,13 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               <div className="relative">
                 <button
                   ref={autoPassBtnRef}
+                  data-tutorial-anchor="autopass-button"
                   onClick={() => {
                     console.log('AutoPass tapped');
                     setAutoPassMenuOpen(prev => !prev);
                   }}
                   disabled={autoPassControlsDisabled}
-                  className={`relative z-20 pointer-events-auto px-3 py-1.5 rounded-full text-xs font-bold border flex items-center gap-1 ${isAutoPassEnabled ? 'bg-purple-700/60 border-purple-400 text-purple-100' : 'bg-slate-800 border-slate-600 text-slate-300 hover:text-white'} ${autoPassControlsDisabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  className={`relative z-20 pointer-events-auto px-3 py-1.5 rounded-full text-xs font-bold border flex items-center gap-1 ${isAutoPassEnabled ? 'bg-purple-700/60 border-purple-400 text-purple-100' : 'bg-slate-800 border-slate-600 text-slate-300 hover:text-white'} ${autoPassControlsDisabled ? 'opacity-50 cursor-not-allowed' : ''}${getTutorialAnchorClass(currentTutorialAnchor, 'autopass-button', tutorialPulseAnchor)}`}
                 >
                   AutoPass <ChevronDown size={12} />
                 </button>
@@ -9231,7 +9879,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                 <button
                   type="button"
                   onClick={() => openPrivateHandPeek(opponent.id)}
-                  className="min-h-9 rounded-lg border border-cyan-500/40 bg-cyan-950/40 px-3 py-1.5 text-xs font-bold text-cyan-100 hover:bg-cyan-900/60 flex items-center gap-1.5"
+                  data-tutorial-anchor="private-hand-peek-button"
+                  className={`min-h-9 rounded-lg border border-cyan-500/40 bg-cyan-950/40 px-3 py-1.5 text-xs font-bold text-cyan-100 hover:bg-cyan-900/60 flex items-center gap-1.5${getTutorialAnchorClass(currentTutorialAnchor, 'private-hand-peek-button', tutorialPulseAnchor)}`}
                   title="Open a private local view of the opponent's hand"
                 >
                   <Eye size={14} /> Private hand peek
@@ -9328,7 +9977,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               </div>
             ) : <div />}
 
-            <div className="bg-slate-900/90 border border-slate-700 rounded-lg p-3 text-xs space-y-2">
+            <div data-tutorial-anchor="combat-summary" className={`bg-slate-900/90 border border-slate-700 rounded-lg p-3 text-xs space-y-2${getTutorialAnchorClass(currentTutorialAnchor, 'combat-summary', tutorialPulseAnchor)}`}>
               <div className="font-bold text-slate-200 uppercase tracking-wider">Combat Summary</div>
               <div className="flex flex-wrap items-center gap-2">
                 <span className="font-semibold text-slate-300">Damage step:</span>
@@ -9491,9 +10140,9 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               </div>
             </div>
 
-            <div className="flex items-center gap-2 cursor-pointer p-1 rounded hover:bg-slate-800" onClick={(e) => {
+            <div data-tutorial-anchor="player-counters-button" className={`flex items-center gap-2 cursor-pointer p-1 rounded hover:bg-slate-800${getTutorialAnchorClass(currentTutorialAnchor, 'player-counters-button', tutorialPulseAnchor)}`} onClick={(e) => {
               if(targetingState) { e.stopPropagation(); toggleTargetPlayer(viewAsPlayerId); }
-              else { setPlayerStatsOpen(true); }
+              else { setPlayerStatsOpen(true); maybeCompleteTutorialStep('player_counters_statuses'); }
             }}>
               <span className="text-red-400 font-bold text-xl">{myPlayer?.life}</span>
               <div className="flex flex-col">
@@ -9570,7 +10219,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             <div className="relative">
               <button
                 ref={libraryButtonRef}
-                onClick={canAct ? () => { const willOpen = !libraryMenuOpen; setLibraryMenuOpen(willOpen); if (willOpen) maybeCompleteTutorialStep('library_button'); } : undefined}
+                onClick={canAct ? () => { const willOpen = !libraryMenuOpen; setLibraryMenuOpen(willOpen); if (willOpen) maybeCompleteTutorialStep('open_library_tools'); } : undefined}
                 data-tutorial-anchor="library-menu-button"
                 className={`p-2 rounded-full hover:bg-slate-700 ${libraryMenuOpen ? 'text-white bg-slate-700' : 'text-slate-400'} ${canAct ? '' : 'opacity-40 cursor-not-allowed'}${getTutorialAnchorClass(currentTutorialAnchor, 'library-menu-button', tutorialPulseAnchor)}`}
               >
@@ -9591,7 +10240,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                 setUndoConfirmOpen(true);
               }}
               disabled={undoButtonDisabled}
-              className={`min-h-9 rounded-full border px-3 py-1.5 text-xs font-extrabold transition-all flex items-center gap-1.5 ${undoButtonDisabled ? 'border-slate-700 bg-slate-800/50 text-slate-500 cursor-not-allowed opacity-60' : 'border-amber-500/60 bg-amber-900/40 text-amber-100 hover:bg-amber-800/60 active:scale-95'}`}
+              data-tutorial-anchor="undo-button"
+              className={`min-h-9 rounded-full border px-3 py-1.5 text-xs font-extrabold transition-all flex items-center gap-1.5 ${undoButtonDisabled ? 'border-slate-700 bg-slate-800/50 text-slate-500 cursor-not-allowed opacity-60' : 'border-amber-500/60 bg-amber-900/40 text-amber-100 hover:bg-amber-800/60 active:scale-95'}${getTutorialAnchorClass(currentTutorialAnchor, 'undo-button', tutorialPulseAnchor)}`}
               title={latestUndoEntry ? (undoPendingSync ? undoPendingLabel : `Undo ${latestUndoEntry.actionLabel || 'last action'}`) : 'Nothing to undo'}
               aria-label="Undo last game action"
             >
@@ -9741,7 +10391,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             <button onClick={() => startReorderTop()} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-700 flex items-center gap-2 text-indigo-300">
               <Layers size={12} /> Reorder Top...
             </button>
-            <button onClick={() => { setLibraryBatchOpen(true); setLibraryMenuOpen(false); }} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-700 flex items-center gap-2 text-cyan-300">
+            <button onClick={() => { setLibraryBatchOpen(true); setLibraryMenuOpen(false); maybeCompleteTutorialStep('batch_library_actions'); }} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-700 flex items-center gap-2 text-cyan-300">
               <LayoutGrid size={12} /> Batch Actions
             </button>
             <button onClick={() => handleAction('SHUFFLE_LIBRARY')} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-700 flex items-center gap-2 text-yellow-300">
@@ -9908,7 +10558,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       {/* TIME CONTROLS PANEL */}
       {timeControlsOpen && (
         <div className="fixed inset-0 z-[149] bg-black/70 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={() => setTimeControlsOpen(false)}>
-          <div className="w-full sm:max-w-lg max-h-[90vh] bg-slate-900 border border-slate-700 shadow-2xl rounded-t-2xl sm:rounded-2xl overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
+          <div data-tutorial-anchor="phase-controls" className={`w-full sm:max-w-lg max-h-[90vh] bg-slate-900 border border-slate-700 shadow-2xl rounded-t-2xl sm:rounded-2xl overflow-hidden flex flex-col${getTutorialAnchorClass(currentTutorialAnchor, 'phase-controls', tutorialPulseAnchor)}`} onClick={(e) => e.stopPropagation()}>
             <div className="flex items-start justify-between gap-3 border-b border-slate-700 bg-slate-800/90 p-4">
               <div>
                 <h2 className="text-xl font-black text-white flex items-center gap-2"><Clock size={20} className="text-purple-300" /> Time Controls</h2>
@@ -10043,7 +10693,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       {/* TARGETING BANNER */}
       {targetingState && (
         <div className="fixed bottom-40 left-0 right-0 z-[90] flex justify-center pointer-events-none px-4">
-          <div className="bg-blue-600 text-white p-3 rounded-lg shadow-xl text-center font-bold animate-in fade-in slide-in-from-bottom-4 border-2 border-blue-400 flex flex-col gap-2 pointer-events-auto max-w-md w-full">
+          <div data-tutorial-anchor="target-tools" className={`bg-blue-600 text-white p-3 rounded-lg shadow-xl text-center font-bold animate-in fade-in slide-in-from-bottom-4 border-2 border-blue-400 flex flex-col gap-2 pointer-events-auto max-w-md w-full${getTutorialAnchorClass(currentTutorialAnchor, 'target-tools', tutorialPulseAnchor)}`}>
             <div className="flex justify-center items-center gap-2">
               <span>Select targets for: {getCardDisplayName(targetingState.source)}</span>
               <span className="bg-white text-blue-600 px-2 rounded-full text-xs">{targetingState.selectedIds.length}</span>
@@ -10099,7 +10749,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       {/* STACK DETAIL MODAL */}
       {stackDetailOpen && (
         <div className="fixed inset-0 z-[148] pointer-events-none flex items-end sm:items-center justify-center p-3 sm:p-4">
-          <div className="pointer-events-auto w-full sm:max-w-lg max-h-[82vh] bg-slate-900 border border-slate-700 shadow-2xl flex flex-col rounded-t-2xl sm:rounded-2xl overflow-hidden">
+          <div data-tutorial-anchor="stack-panel" className={`pointer-events-auto w-full sm:max-w-lg max-h-[82vh] bg-slate-900 border border-slate-700 shadow-2xl flex flex-col rounded-t-2xl sm:rounded-2xl overflow-hidden${getTutorialAnchorClass(currentTutorialAnchor, 'stack-panel', tutorialPulseAnchor)}`}>
             <div className="flex items-start justify-between gap-3 p-4 border-b border-slate-700 bg-slate-800">
               <div className="min-w-0">
                 <h3 className="font-bold text-white text-lg flex items-center gap-2"><Layers size={18} className="text-yellow-400"/> Stack</h3>
@@ -10571,7 +11221,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       {/* Token Tools Panel */}
       {tokenModal && (
         <div className="fixed inset-0 bg-black/80 z-[70] flex items-end justify-center p-2 sm:items-center sm:p-4" onClick={() => setTokenModal(null)}>
-          <div className="max-h-[88vh] w-full max-w-md overflow-y-auto rounded-t-2xl border border-slate-600 bg-slate-800 shadow-2xl sm:rounded-2xl" onClick={e => e.stopPropagation()}>
+          <div data-tutorial-anchor="token-tools" className={`max-h-[88vh] w-full max-w-md overflow-y-auto rounded-t-2xl border border-slate-600 bg-slate-800 shadow-2xl sm:rounded-2xl${getTutorialAnchorClass(currentTutorialAnchor, 'token-tools', tutorialPulseAnchor)}`} onClick={e => e.stopPropagation()}>
             <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-700 bg-slate-800/95 px-4 py-3 backdrop-blur">
               <div>
                 <h3 className="text-lg font-extrabold text-white">Token Tools</h3>
@@ -10741,10 +11391,10 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       {/* Player Stats Modal */}
       {playerStatsOpen && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={() => setPlayerStatsOpen(false)}>
-          <div className="max-h-[88vh] w-full max-w-sm overflow-y-auto rounded-xl border border-slate-600 bg-slate-800 p-5" onClick={e => e.stopPropagation()}>
+          <div data-tutorial-anchor="player-counters-panel" className={`max-h-[88vh] w-full max-w-sm overflow-y-auto rounded-xl border border-slate-600 bg-slate-800 p-5${getTutorialAnchorClass(currentTutorialAnchor, 'player-counters-panel', tutorialPulseAnchor)}`} onClick={e => e.stopPropagation()}>
             <h3 className="text-xl font-bold mb-4 text-white">Player Counters & Statuses</h3>
             <div className="space-y-4">
-              <div className="rounded-lg border border-blue-500/30 bg-blue-950/20 p-3">
+              <div data-tutorial-anchor="mana-pool-panel" className={`rounded-lg border border-blue-500/30 bg-blue-950/20 p-3${getTutorialAnchorClass(currentTutorialAnchor, 'mana-pool-panel', tutorialPulseAnchor)}`}>
                 <div className="mb-2 flex items-center justify-between gap-2">
                   <div>
                     <div className="text-[11px] font-bold uppercase tracking-wider text-blue-200">Mana Pool</div>
@@ -10820,7 +11470,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                 <ReminderTool label="Add Player Reminder" onAdd={(reminder) => addPlayerReminder(viewAsPlayerId, reminder)} disabled={!canAct} />
               </div>
 
-              <div className="rounded-lg border border-amber-500/30 bg-slate-900/60 p-3">
+              <div data-tutorial-anchor="status-panel" className={`rounded-lg border border-amber-500/30 bg-slate-900/60 p-3${getTutorialAnchorClass(currentTutorialAnchor, 'status-panel', tutorialPulseAnchor)}`}>
                 <div className="mb-2 flex items-center justify-between gap-2">
                   <div>
                     <div className="text-[11px] font-bold uppercase tracking-wider text-amber-200">Player Status Badges</div>
@@ -11186,7 +11836,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
       {selectedCard && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-3 sm:p-4 animate-in fade-in duration-200" onClick={() => setSelectedCard(null)}>
-          <div className="bg-slate-800 w-full max-w-sm rounded-xl p-4 shadow-2xl border border-slate-600 max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+          <div data-tutorial-anchor="card-detail" className={`bg-slate-800 w-full max-w-sm rounded-xl p-4 shadow-2xl border border-slate-600 max-h-[85vh] overflow-y-auto${getTutorialAnchorClass(currentTutorialAnchor, 'card-detail', tutorialPulseAnchor)}`} onClick={e => e.stopPropagation()}>
             <div className="flex justify-between items-center border-b border-slate-700 pb-2 mb-3">
               <span className="font-bold text-lg text-white truncate pr-2">{getDisplayCardName(selectedCard)}</span>
               <button onClick={() => setSelectedCard(null)}><X className="text-slate-400" /></button>

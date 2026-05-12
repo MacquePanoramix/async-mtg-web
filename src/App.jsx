@@ -9390,8 +9390,13 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         )}
         {libraryMenuOpen && libraryMenuPos && createPortal(
           <div
-            className="fixed z-[100] w-40 bg-slate-800 rounded shadow-xl border border-slate-600 overflow-hidden"
-            style={{ top: libraryMenuPos.top - 8, left: libraryMenuPos.right, transform: 'translate(-100%, -100%)' }}
+            className="fixed z-[100] w-40 bg-slate-800 rounded shadow-xl border border-slate-600 overflow-y-auto"
+            style={{
+              top: libraryMenuPos.top - 8,
+              left: libraryMenuPos.right,
+              maxHeight: `max(7rem, calc(${libraryMenuPos.top}px - 1rem))`,
+              transform: 'translate(-100%, -100%)'
+            }}
           >
             <button onClick={() => { recordPerfActionClick({ actionType: 'DRAW_CARD', buttonName: 'Draw', currentGame: game }); handleAction('DRAW_CARD'); setLibraryMenuOpen(false); }} disabled={!canDrawFromLibrary} className={`w-full text-left px-3 py-2 text-sm flex items-center gap-2 ${canDrawFromLibrary ? 'hover:bg-slate-700 text-blue-300' : 'text-slate-500 cursor-not-allowed'}`}>
               <Plus size={12} /> Draw

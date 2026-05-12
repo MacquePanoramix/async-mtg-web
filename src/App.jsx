@@ -33,15 +33,15 @@ const GAME_MODES = {
   COMMANDER: 'commander'
 };
 
-const TUTORIAL_SCRIPT_VERSION = 1;
+const TUTORIAL_SCRIPT_VERSION = 2;
 const TUTORIAL_SCRIPT_STEPS = [
   {
     id: 'intro',
     chapter: 'The Bolas Protocol',
     title: 'Nicol Bolas and the Infinite Priority Stack',
-    dialogue: 'Little planeswalker. You have opened a battlefield without understanding its teeth. Good. Fear is an excellent teacher.',
+    dialogue: 'Little planeswalker, you have stepped into my practice apocalypse. Excellent. I shall teach you the interface by threatening it dramatically.',
     objective: 'Begin the tutorial battle.',
-    hint: 'Tap Next to enter the battlefield.',
+    hint: 'Tap Next. Bolas will introduce only the core controls for now.',
     anchor: null,
     completion: 'manual'
   },
@@ -49,7 +49,7 @@ const TUTORIAL_SCRIPT_STEPS = [
     id: 'lobby_code',
     chapter: 'Lobby Basics',
     title: 'The Room Code',
-    dialogue: 'Every duel needs a doorway. This code is how another mind finds yours.',
+    dialogue: 'Behold the sigil of entry. With these few runes, lesser beings may find the arena where I will almost certainly monologue at them.',
     objective: 'Look at the room code near the top of the screen.',
     hint: 'This is the code you send to a friend so they can join or watch.',
     anchor: 'room-code',
@@ -59,7 +59,7 @@ const TUTORIAL_SCRIPT_STEPS = [
     id: 'battlefield_overview',
     chapter: 'Battlefield Basics',
     title: 'The Two Battlefields',
-    dialogue: 'Above: your enemy’s domain. Below: your own. Between them, all mistakes become history.',
+    dialogue: 'Above broods my dominion. Below trembles yours. The distance between them is where bold plans go to become cautionary tales.',
     objective: 'Find your battlefield and Nicol Bolas’s battlefield.',
     hint: 'Your battlefield is labeled with your name. The opponent battlefield is labeled Nicol Bolas.',
     anchor: 'battlefields',
@@ -69,9 +69,9 @@ const TUTORIAL_SCRIPT_STEPS = [
     id: 'library_button',
     chapter: 'First Tools',
     title: 'The Library Gate',
-    dialogue: 'No spell begins in the hand. Everything begins in the library, waiting to be drawn like a blade.',
+    dialogue: 'Your library is a sealed vault of possible futures. Open it, and try not to look impressed when fate obeys you.',
     objective: 'Open the Library tools menu.',
-    hint: 'Tap the library/book icon in the bottom control area.',
+    hint: 'Swipe the bottom toolbar sideways until you see the book/library icon, then tap it.',
     anchor: 'library-menu-button',
     completion: 'detect-or-manual'
   },
@@ -79,9 +79,9 @@ const TUTORIAL_SCRIPT_STEPS = [
     id: 'draw_card',
     chapter: 'First Tools',
     title: 'Draw the First Thread',
-    dialogue: 'Draw. The smallest action in Magic, and the first step toward catastrophe.',
+    dialogue: 'Your first thread waits in the library. Pull it free; every card you draw is another future I must graciously allow you to misunderstand.',
     objective: 'Draw one card.',
-    hint: 'Tap the blue Draw button.',
+    hint: 'Use the blue Draw button in the bottom control bar. If it is not visible, swipe the bottom bar sideways.',
     anchor: 'draw-button',
     completion: 'detect-or-manual'
   },
@@ -89,9 +89,9 @@ const TUTORIAL_SCRIPT_STEPS = [
     id: 'finish_foundation_test',
     chapter: 'Tutorial Foundation Test',
     title: 'The First Lesson Ends',
-    dialogue: 'You have survived the first door. Do not celebrate. Doors are mostly a way for monsters to enter.',
-    objective: 'Finish this tiny test tutorial.',
-    hint: 'The full tutorial battle will be added next.',
+    dialogue: 'You survived the smallest hinge of my grand design. Do not celebrate; this was merely the tutorial sharpening its claws.',
+    objective: 'Finish this foundation tutorial.',
+    hint: 'Tap Finish. The full scripted Bolas battle will arrive in a later pass.',
     anchor: null,
     completion: 'finish'
   }
@@ -102,11 +102,13 @@ const getTutorialStepIndex = (stepId) => Math.max(0, TUTORIAL_STEP_IDS.indexOf(s
 const getNextTutorialStepId = (stepId) => TUTORIAL_SCRIPT_STEPS[Math.min(getTutorialStepIndex(stepId) + 1, TUTORIAL_SCRIPT_STEPS.length - 1)]?.id || stepId;
 const getPreviousTutorialStepId = (stepId) => TUTORIAL_SCRIPT_STEPS[Math.max(getTutorialStepIndex(stepId) - 1, 0)]?.id || stepId;
 const capTutorialCompletedStepIds = (stepIds = []) => [...new Set(stepIds.filter(Boolean))].slice(-24);
-const getTutorialAnchorClass = (activeAnchor, anchor) => {
+const getTutorialAnchorClass = (activeAnchor, anchor, pulseAnchor = null) => {
   if (!activeAnchor || !anchor) return '';
   const anchors = Array.isArray(anchor) ? anchor : [anchor];
-  return anchors.includes(activeAnchor) || (activeAnchor === 'battlefields' && (anchors.includes('own-battlefield') || anchors.includes('opponent-battlefield')))
-    ? ' ring-2 ring-amber-300/80 shadow-[0_0_18px_rgba(252,211,77,0.45)]'
+  const isActive = anchors.includes(activeAnchor) || (activeAnchor === 'battlefields' && (anchors.includes('own-battlefield') || anchors.includes('opponent-battlefield')));
+  const isPulsing = Boolean(pulseAnchor && (anchors.includes(pulseAnchor) || (pulseAnchor === 'battlefields' && (anchors.includes('own-battlefield') || anchors.includes('opponent-battlefield')))));
+  return isActive
+    ? ` ring-2 ring-amber-300/80 shadow-[0_0_18px_rgba(252,211,77,0.45)] transition-shadow ${isPulsing ? ' tutorial-target-pulse' : ''}`
     : '';
 };
 
@@ -380,6 +382,40 @@ const ZONES = {
   EXILE: 'exile',
   COMMAND: 'command'
 };
+
+const TUTORIAL_STARTER_CARD_SEED = [
+  { name: 'Lightning Bolt', mana_cost: '{R}', type_line: 'Instant', oracle_text: 'Lightning Bolt deals 3 damage to any target.', colors: ['R'], color_identity: ['R'] },
+  { name: 'Mountain', type_line: 'Basic Land — Mountain', oracle_text: '({T}: Add {R}.)', color_identity: ['R'] },
+  { name: 'Llanowar Elves', mana_cost: '{G}', type_line: 'Creature — Elf Druid', oracle_text: '{T}: Add {G}.', colors: ['G'], color_identity: ['G'], power: '1', toughness: '1' },
+  { name: 'Delver of Secrets', mana_cost: '{U}', type_line: 'Creature — Human Wizard', oracle_text: 'At the beginning of your upkeep, look at the top card of your library. You may reveal that card. If an instant or sorcery card is revealed this way, transform Delver of Secrets.', colors: ['U'], color_identity: ['U'], power: '1', toughness: '1' },
+  { name: 'Nicol Bolas, Planeswalker', mana_cost: '{4}{U}{B}{B}{R}', type_line: 'Legendary Planeswalker — Bolas', oracle_text: '+3: Destroy target noncreature permanent. −2: Gain control of target creature. −9: Nicol Bolas, Planeswalker deals 7 damage to target player. That player discards seven cards, then sacrifices seven permanents.', colors: ['U', 'B', 'R'], color_identity: ['U', 'B', 'R'], loyalty: '5' },
+  { name: 'Dragon Fodder', mana_cost: '{1}{R}', type_line: 'Sorcery', oracle_text: 'Create two 1/1 red Goblin creature tokens.', colors: ['R'], color_identity: ['R'] },
+  { name: 'Cancel', mana_cost: '{1}{U}{U}', type_line: 'Instant', oracle_text: 'Counter target spell.', colors: ['U'], color_identity: ['U'] },
+  { name: 'Forest', type_line: 'Basic Land — Forest', oracle_text: '({T}: Add {G}.)', color_identity: ['G'] }
+];
+
+const buildTutorialStarterCards = (playerId) => TUTORIAL_STARTER_CARD_SEED.map((card, index) => sanitizeScryfallCardForGame(card, {
+  id: `tutorial-seed-${card.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
+  instanceId: generateCardId(),
+  ownerId: playerId,
+  controllerId: playerId,
+  zone: index === 0 ? ZONES.HAND : ZONES.LIBRARY,
+  tapped: false,
+  counters: {},
+  tempDamage: 0,
+  faceDown: false,
+  x: 5 + (index * 5),
+  y: 5
+}));
+
+const shouldSeedTutorialCardsForPlayer = (cards = [], playerId) => !cards.some((card) => card?.ownerId === playerId && [
+  ZONES.LIBRARY,
+  ZONES.HAND,
+  ZONES.BATTLEFIELD,
+  ZONES.GRAVEYARD,
+  ZONES.EXILE,
+  ZONES.COMMAND
+].includes(card?.zone));
 
 
 
@@ -4349,21 +4385,59 @@ class GameBoardErrorBoundary extends React.Component {
   }
 }
 
-const TutorialOverlay = ({ game, currentStep, canGoBack, isMinimized, onToggleMinimized, onNext, onBack, onSkip, onExit }) => {
+const TutorialOverlay = ({ game, currentStep, canGoBack, isMinimized, hasOpenPanel, onToggleMinimized, onNext, onBack, onSkip, onExit, onFocusTarget }) => {
+  const [dock, setDock] = useState('bottom');
+  const forcedCompact = Boolean(hasOpenPanel);
+
+  useEffect(() => {
+    if (!currentStep?.anchor || typeof window === 'undefined') {
+      return undefined;
+    }
+
+    const updateDock = () => {
+      const anchor = Array.isArray(currentStep.anchor) ? currentStep.anchor[0] : currentStep.anchor;
+      const element = document.querySelector(`[data-tutorial-anchor="${anchor}"]`);
+      if (!element) {
+        setDock('bottom');
+        return;
+      }
+      const rect = element.getBoundingClientRect();
+      const viewportMid = window.innerHeight / 2;
+      setDock(rect.top > viewportMid ? 'top' : 'bottom');
+    };
+
+    const rafId = window.requestAnimationFrame(updateDock);
+    window.addEventListener('resize', updateDock);
+    window.addEventListener('scroll', updateDock, true);
+    return () => {
+      window.cancelAnimationFrame(rafId);
+      window.removeEventListener('resize', updateDock);
+      window.removeEventListener('scroll', updateDock, true);
+    };
+  }, [currentStep?.anchor]);
+
   if (!game?.isTutorial || !currentStep || game.tutorial?.inactive) return null;
   const isFinishedStep = currentStep.id === 'finish_foundation_test';
   const stepNumber = getTutorialStepIndex(currentStep.id) + 1;
+
+  const collapsed = isMinimized || forcedCompact;
+  const effectiveDock = currentStep.anchor ? dock : 'bottom';
+  const positionClass = effectiveDock === 'top' ? 'top-16 sm:top-4' : 'bottom-20 sm:bottom-4';
   return (
-    <div className="pointer-events-none fixed inset-x-0 bottom-20 z-[90] px-3 sm:bottom-4 sm:px-4">
-      <div className="pointer-events-auto mx-auto max-w-md overflow-hidden rounded-2xl border border-amber-400/40 bg-slate-950/95 shadow-2xl shadow-black/60 backdrop-blur">
+    <div className={`pointer-events-none fixed inset-x-0 ${positionClass} z-[90] px-3 sm:px-4`}>
+      <div className={`pointer-events-auto mx-auto overflow-hidden rounded-2xl border border-amber-400/40 bg-slate-950/95 shadow-2xl shadow-black/60 backdrop-blur ${collapsed ? 'max-w-sm' : 'max-w-md'}`}>
         <div className="flex items-center justify-between gap-3 border-b border-amber-500/20 bg-gradient-to-r from-amber-950/80 to-purple-950/80 px-4 py-3">
-          <div className="min-w-0">
+          <button type="button" onClick={collapsed ? onToggleMinimized : undefined} className="min-w-0 flex-1 text-left" aria-label={collapsed ? 'Expand tutorial' : undefined}>
             <div className="text-[10px] font-black uppercase tracking-[0.2em] text-amber-200">Tutorial · {stepNumber}/{TUTORIAL_SCRIPT_STEPS.length}</div>
             <div className="truncate text-sm font-extrabold text-white">{currentStep.chapter}</div>
-          </div>
+            {forcedCompact && <div className="mt-0.5 truncate text-[11px] font-bold text-amber-100/80">Compact while a menu is open. Tap the chevron to expand when ready.</div>}
+          </button>
           <div className="flex items-center gap-2">
+            <button type="button" onClick={onFocusTarget} disabled={!currentStep.anchor} className="rounded-full border border-amber-300/40 px-3 py-1.5 text-xs font-black text-amber-100 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40" aria-label="Show tutorial target">
+              Show me
+            </button>
             <button type="button" onClick={onToggleMinimized} className="rounded-full p-2 text-amber-100 hover:bg-white/10" aria-label={isMinimized ? 'Expand tutorial' : 'Minimize tutorial'}>
-              {isMinimized ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+              {collapsed ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
             </button>
             <button type="button" onClick={onExit} className="rounded-full p-2 text-slate-300 hover:bg-red-950/60 hover:text-red-100" aria-label="Exit tutorial">
               <X size={16} />
@@ -4371,7 +4445,7 @@ const TutorialOverlay = ({ game, currentStep, canGoBack, isMinimized, onToggleMi
           </div>
         </div>
 
-        {!isMinimized && (
+        {!collapsed && (
           <div className="space-y-3 px-4 py-4">
             <div>
               <h2 className="text-lg font-black leading-tight text-amber-50">{currentStep.title}</h2>
@@ -4392,6 +4466,9 @@ const TutorialOverlay = ({ game, currentStep, canGoBack, isMinimized, onToggleMi
                 Back
               </button>
               <div className="ml-auto flex gap-2">
+                <button type="button" onClick={onFocusTarget} disabled={!currentStep.anchor} className="min-h-10 rounded-lg border border-amber-500/40 px-3 text-sm font-black text-amber-100 hover:bg-amber-950/40 disabled:cursor-not-allowed disabled:opacity-40">
+                  Show me
+                </button>
                 <button type="button" onClick={onSkip} className="min-h-10 rounded-lg border border-slate-700 px-3 text-sm font-bold text-slate-300 hover:bg-slate-800">
                   Skip step
                 </button>
@@ -4451,8 +4528,10 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const myBattlefieldRef = useRef(null);
   const opponentBattlefieldRef = useRef(null);
   const libraryButtonRef = useRef(null);
+  const bottomToolbarRef = useRef(null);
   const battlefieldScrollRef = useRef(null);
   const opponentSectionRef = useRef(null);
+  const [tutorialPulseAnchor, setTutorialPulseAnchor] = useState(null);
   const [draggingCard, setDraggingCard] = useState(null);
   const [optimisticAutoBattlefieldIds, setOptimisticAutoBattlefieldIds] = useState(() => new Set());
   const [myBattlefieldSizePx, setMyBattlefieldSizePx] = useState({
@@ -4541,6 +4620,27 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const currentTutorialAnchor = currentTutorialStep?.anchor || null;
   const tutorialCompletedStepIds = capTutorialCompletedStepIds(game?.tutorial?.completedStepIds || []);
   const canGoBackTutorial = isTutorialGame && getTutorialStepIndex(currentTutorialStep?.id) > 0;
+
+  const focusTutorialTarget = useCallback(() => {
+    const anchor = Array.isArray(currentTutorialAnchor) ? currentTutorialAnchor[0] : currentTutorialAnchor;
+    if (!anchor || typeof document === 'undefined') return;
+    const targetAnchor = anchor === 'battlefields' ? 'own-battlefield' : anchor;
+    const target = document.querySelector(`[data-tutorial-anchor="${targetAnchor}"]`);
+
+    if (targetAnchor === 'library-menu-button' || targetAnchor === 'draw-button') {
+      bottomToolbarRef.current?.scrollTo?.({ left: bottomToolbarRef.current.scrollWidth, behavior: 'smooth' });
+      target?.scrollIntoView?.({ behavior: 'smooth', block: 'center', inline: 'center' });
+    } else {
+      target?.scrollIntoView?.({ behavior: 'smooth', block: 'center', inline: 'center' });
+    }
+
+    if (targetAnchor === 'library-menu-button' && libraryButtonRef.current) {
+      setTimeout(() => libraryButtonRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'nearest', inline: 'center' }), 250);
+    }
+
+    setTutorialPulseAnchor(anchor);
+    window.setTimeout(() => setTutorialPulseAnchor((current) => current === anchor ? null : current), 2800);
+  }, [currentTutorialAnchor]);
 
   const updateTutorialState = async (updates) => {
     if (!gameId || !game?.isTutorial) return;
@@ -8564,6 +8664,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const myCommandCount = getZoneCount(viewAsPlayerId, ZONES.COMMAND);
   const myLibraryCount = isPlayer ? getZoneCount(userId, ZONES.LIBRARY) : 0;
   const canDrawFromLibrary = canAct && myLibraryCount > 0;
+  const tutorialHasOpenPanel = Boolean(libraryMenuOpen || diceMenuOpen || libraryBatchOpen || selectedCard || zoomedCard || viewZone || searchLibraryOwner || deckInput || deleteDeckConfirmOpen || scryCard || peekCard || privateHandPeek || playerStatsOpen || commanderDamageSummaryPlayerId || stackDetailOpen || undoConfirmOpen);
   const latestUndoEntry = latestDisplayedUndoEntry;
   const undoButtonDisabled = !canOpenUndoModal;
   const undoConfirmDisabled = !canUndoLatestAction;
@@ -8807,11 +8908,13 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         currentStep={currentTutorialStep}
         canGoBack={canGoBackTutorial}
         isMinimized={tutorialMinimized}
+        hasOpenPanel={tutorialHasOpenPanel}
         onToggleMinimized={() => setTutorialMinimized((value) => !value)}
         onNext={() => advanceTutorialStep({ markCompleted: true, finish: currentTutorialStep?.id === 'finish_foundation_test' })}
         onBack={goBackTutorialStep}
         onSkip={() => advanceTutorialStep({ markCompleted: false, finish: currentTutorialStep?.id === 'finish_foundation_test' })}
         onExit={exitTutorial}
+        onFocusTarget={focusTutorialTarget}
       />
       {/* 1. Header */}
       <div className="bg-slate-800 border-b border-slate-700 p-2 shrink-0 shadow-md top-action-scroll-wrap">
@@ -8860,7 +8963,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
         <div
           data-tutorial-anchor="room-code"
-          className={`flex flex-col items-center justify-center bg-slate-900 px-3 py-1 rounded border border-slate-700 cursor-pointer hover:bg-slate-800${getTutorialAnchorClass(currentTutorialAnchor, 'room-code')}`}
+          className={`flex flex-col items-center justify-center bg-slate-900 px-3 py-1 rounded border border-slate-700 cursor-pointer hover:bg-slate-800${getTutorialAnchorClass(currentTutorialAnchor, 'room-code', tutorialPulseAnchor)}`}
           onClick={() => copyToClipboard(gameId)}
           title="Click to Copy Game ID"
         >
@@ -9073,7 +9176,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           <section
             ref={opponentSectionRef}
             data-tutorial-anchor="opponent-battlefield"
-            className={`rounded-xl border p-3 mb-3 min-h-[280px] transition-all duration-300 ${opponentSectionHighlighted ? 'border-blue-400 bg-blue-900/20 ring-2 ring-blue-400/60' : 'border-slate-700 bg-slate-800/30'}${getTutorialAnchorClass(currentTutorialAnchor, 'opponent-battlefield')}`}
+            className={`rounded-xl border p-3 mb-3 min-h-[280px] transition-all duration-300 ${opponentSectionHighlighted ? 'border-blue-400 bg-blue-900/20 ring-2 ring-blue-400/60' : 'border-slate-700 bg-slate-800/30'}${getTutorialAnchorClass(currentTutorialAnchor, 'opponent-battlefield', tutorialPulseAnchor)}`}
           >
             <div className="flex justify-between items-start mb-2">
               <div className="flex items-center gap-2">
@@ -9254,7 +9357,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             </div>
           </div>
 
-          <section data-tutorial-anchor="own-battlefield" className={`rounded-xl border border-slate-700 bg-slate-900/30 p-3${getTutorialAnchorClass(currentTutorialAnchor, 'own-battlefield')}`}>
+          <section data-tutorial-anchor="own-battlefield" className={`rounded-xl border border-slate-700 bg-slate-900/30 p-3${getTutorialAnchorClass(currentTutorialAnchor, 'own-battlefield', tutorialPulseAnchor)}`}>
             <div className="flex items-center justify-between mb-3 gap-2">
               <div className="flex items-center gap-2">
                 <User size={16} className="text-green-400"/>
@@ -9354,7 +9457,12 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       {/* 3. Footer */}
       <div className="bg-slate-800 border-t border-slate-700 shadow-[0_-5px_15px_rgba(0,0,0,0.5)] z-30">
         <div className="px-4 py-2 bg-slate-900/80 border-b border-slate-700/50">
-          <div className="overflow-x-auto sm:overflow-visible hide-scrollbar snap-x snap-proximity scroll-smooth">
+          {isTutorialGame && currentTutorialAnchor === 'library-menu-button' && (
+            <div className="mb-2 rounded-lg border border-amber-400/40 bg-amber-950/40 px-3 py-2 text-xs font-bold text-amber-100 sm:hidden">
+              Swipe this lower toolbar sideways → until the book/library icon appears.
+            </div>
+          )}
+          <div ref={bottomToolbarRef} data-tutorial-anchor="bottom-toolbar" className={`overflow-x-auto sm:overflow-visible hide-scrollbar snap-x snap-proximity scroll-smooth${getTutorialAnchorClass(currentTutorialAnchor, 'bottom-toolbar', tutorialPulseAnchor)}`}>
             <div className="flex items-center gap-6 flex-nowrap min-w-max whitespace-nowrap sm:min-w-0 sm:justify-between sm:w-full">
             <div className="flex items-center gap-4 snap-start">
             {/* IDENTITY BADGE */}
@@ -9424,7 +9532,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                 onClick={handleDrawCard}
                 disabled={!canDrawFromLibrary}
                 data-tutorial-anchor="draw-button"
-                className={`min-h-9 px-3 py-1.5 rounded-full text-xs font-extrabold transition-all flex items-center gap-1.5 active:scale-95 ${canDrawFromLibrary ? 'bg-blue-600 hover:bg-blue-500 text-white border border-blue-400/60 shadow-md shadow-blue-950/30' : 'bg-slate-700/50 text-slate-400 border border-slate-600 cursor-not-allowed opacity-60'}${getTutorialAnchorClass(currentTutorialAnchor, 'draw-button')}`}
+                className={`min-h-9 px-3 py-1.5 rounded-full text-xs font-extrabold transition-all flex items-center gap-1.5 active:scale-95 ${canDrawFromLibrary ? 'bg-blue-600 hover:bg-blue-500 text-white border border-blue-400/60 shadow-md shadow-blue-950/30' : 'bg-slate-700/50 text-slate-400 border border-slate-600 cursor-not-allowed opacity-60'}${getTutorialAnchorClass(canDrawFromLibrary ? currentTutorialAnchor : null, 'draw-button', tutorialPulseAnchor)}`}
                 title={canDrawFromLibrary ? 'Draw one card' : 'No cards left in library'}
                 aria-label="Draw one card from bottom panel"
               >
@@ -9464,7 +9572,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                 ref={libraryButtonRef}
                 onClick={canAct ? () => { const willOpen = !libraryMenuOpen; setLibraryMenuOpen(willOpen); if (willOpen) maybeCompleteTutorialStep('library_button'); } : undefined}
                 data-tutorial-anchor="library-menu-button"
-                className={`p-2 rounded-full hover:bg-slate-700 ${libraryMenuOpen ? 'text-white bg-slate-700' : 'text-slate-400'} ${canAct ? '' : 'opacity-40 cursor-not-allowed'}${getTutorialAnchorClass(currentTutorialAnchor, 'library-menu-button')}`}
+                className={`p-2 rounded-full hover:bg-slate-700 ${libraryMenuOpen ? 'text-white bg-slate-700' : 'text-slate-400'} ${canAct ? '' : 'opacity-40 cursor-not-allowed'}${getTutorialAnchorClass(currentTutorialAnchor, 'library-menu-button', tutorialPulseAnchor)}`}
               >
                 <BookOpen size={18} />
               </button>
@@ -9618,7 +9726,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               transform: 'translate(-100%, -100%)'
             }}
           >
-            <button data-tutorial-anchor="draw-button" onClick={async () => { recordPerfActionClick({ actionType: 'DRAW_CARD', buttonName: 'Draw', currentGame: game }); await handleAction('DRAW_CARD'); setLibraryMenuOpen(false); await maybeCompleteTutorialStep('draw_card'); }} disabled={!canDrawFromLibrary} className={`w-full text-left px-3 py-2 text-sm flex items-center gap-2 ${canDrawFromLibrary ? 'hover:bg-slate-700 text-blue-300' : 'text-slate-500 cursor-not-allowed'}${getTutorialAnchorClass(currentTutorialAnchor, 'draw-button')}`}>
+            <button data-tutorial-anchor="draw-button" onClick={async () => { recordPerfActionClick({ actionType: 'DRAW_CARD', buttonName: 'Draw', currentGame: game }); await handleAction('DRAW_CARD'); setLibraryMenuOpen(false); await maybeCompleteTutorialStep('draw_card'); }} disabled={!canDrawFromLibrary} className={`w-full text-left px-3 py-2 text-sm flex items-center gap-2 ${canDrawFromLibrary ? 'hover:bg-slate-700 text-blue-300' : 'text-slate-500 cursor-not-allowed'}${getTutorialAnchorClass(canDrawFromLibrary ? currentTutorialAnchor : null, 'draw-button', tutorialPulseAnchor)}`}>
               <Plus size={12} /> Draw
             </button>
             <button onClick={() => { handleAction('MULLIGAN'); setLibraryMenuOpen(false); }} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-700 flex items-center gap-2 text-amber-300" >
@@ -9667,11 +9775,12 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           document.body
         )}
 
-        <div className="p-2 overflow-x-auto whitespace-nowrap hide-scrollbar flex gap-2 min-h-[140px] items-center px-4">
+        <div data-tutorial-anchor="hand-area" className={`p-2 overflow-x-auto whitespace-nowrap hide-scrollbar flex gap-2 min-h-[140px] items-center px-4${getTutorialAnchorClass(currentTutorialAnchor, 'hand-area', tutorialPulseAnchor)}`}>
           {canAct && noDeckLoaded && (
             <button
+              data-tutorial-anchor="import-deck-button"
               onClick={() => setDeckInput(commanderModeEnabled ? "Commander\n1 Atraxa, Praetors' Voice\n\nDeck\n1 Sol Ring\n1 Command Tower" : '20 Mountain\n20 Lightning Bolt\n20 Llanowar Elves')}
-              className="mx-auto text-sm text-slate-500 border border-slate-600 border-dashed rounded px-4 py-2 hover:text-white hover:border-slate-400"
+              className={`mx-auto text-sm text-slate-500 border border-slate-600 border-dashed rounded px-4 py-2 hover:text-white hover:border-slate-400${getTutorialAnchorClass(currentTutorialAnchor, 'import-deck-button', tutorialPulseAnchor)}`}
             >
               Import Deck
             </button>
@@ -12059,6 +12168,7 @@ export default function App() {
         const candidateSnap = await getDoc(doc(db, 'games_v3', candidateId));
         if (candidateSnap.exists() && candidateSnap.data()?.isTutorial) {
           const candidateData = candidateSnap.data() || {};
+          const shouldSeedExistingTutorial = shouldSeedTutorialCardsForPlayer(candidateData.cards || [], user.uid);
           await updateDoc(doc(db, 'games_v3', candidateId), {
             tutorial: {
               scriptVersion: candidateData.tutorial?.scriptVersion || TUTORIAL_SCRIPT_VERSION,
@@ -12070,6 +12180,7 @@ export default function App() {
               finished: false,
               inactive: false
             },
+            ...(shouldSeedExistingTutorial ? { cards: buildTutorialStarterCards(user.uid) } : {}),
             updatedAt: serverTimestamp()
           });
           setActiveGameId(candidateId);
@@ -12138,7 +12249,7 @@ export default function App() {
         turnNumber: 1,
         consecutivePasses: 0,
         stack: [],
-        cards: [],
+        cards: buildTutorialStarterCards(user.uid),
         targets: [],
         reveals: [],
         autopass: {},

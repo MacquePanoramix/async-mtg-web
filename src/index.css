@@ -55,3 +55,16 @@ body {
     overflow-x: visible;
   }
 }
+
+@keyframes tutorial-target-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(251, 191, 36, 0.75), 0 0 18px rgba(252, 211, 77, 0.45);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(251, 191, 36, 0.08), 0 0 26px rgba(252, 211, 77, 0.75);
+  }
+}
+
+.tutorial-target-pulse {
+  animation: tutorial-target-pulse 0.9s ease-in-out 3;
+}

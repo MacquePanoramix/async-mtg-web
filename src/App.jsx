@@ -33,6 +33,83 @@ const GAME_MODES = {
   COMMANDER: 'commander'
 };
 
+const TUTORIAL_SCRIPT_VERSION = 1;
+const TUTORIAL_SCRIPT_STEPS = [
+  {
+    id: 'intro',
+    chapter: 'The Bolas Protocol',
+    title: 'Nicol Bolas and the Infinite Priority Stack',
+    dialogue: 'Little planeswalker. You have opened a battlefield without understanding its teeth. Good. Fear is an excellent teacher.',
+    objective: 'Begin the tutorial battle.',
+    hint: 'Tap Next to enter the battlefield.',
+    anchor: null,
+    completion: 'manual'
+  },
+  {
+    id: 'lobby_code',
+    chapter: 'Lobby Basics',
+    title: 'The Room Code',
+    dialogue: 'Every duel needs a doorway. This code is how another mind finds yours.',
+    objective: 'Look at the room code near the top of the screen.',
+    hint: 'This is the code you send to a friend so they can join or watch.',
+    anchor: 'room-code',
+    completion: 'manual'
+  },
+  {
+    id: 'battlefield_overview',
+    chapter: 'Battlefield Basics',
+    title: 'The Two Battlefields',
+    dialogue: 'Above: your enemy’s domain. Below: your own. Between them, all mistakes become history.',
+    objective: 'Find your battlefield and Nicol Bolas’s battlefield.',
+    hint: 'Your battlefield is labeled with your name. The opponent battlefield is labeled Nicol Bolas.',
+    anchor: 'battlefields',
+    completion: 'manual'
+  },
+  {
+    id: 'library_button',
+    chapter: 'First Tools',
+    title: 'The Library Gate',
+    dialogue: 'No spell begins in the hand. Everything begins in the library, waiting to be drawn like a blade.',
+    objective: 'Open the Library tools menu.',
+    hint: 'Tap the library/book icon in the bottom control area.',
+    anchor: 'library-menu-button',
+    completion: 'detect-or-manual'
+  },
+  {
+    id: 'draw_card',
+    chapter: 'First Tools',
+    title: 'Draw the First Thread',
+    dialogue: 'Draw. The smallest action in Magic, and the first step toward catastrophe.',
+    objective: 'Draw one card.',
+    hint: 'Tap the blue Draw button.',
+    anchor: 'draw-button',
+    completion: 'detect-or-manual'
+  },
+  {
+    id: 'finish_foundation_test',
+    chapter: 'Tutorial Foundation Test',
+    title: 'The First Lesson Ends',
+    dialogue: 'You have survived the first door. Do not celebrate. Doors are mostly a way for monsters to enter.',
+    objective: 'Finish this tiny test tutorial.',
+    hint: 'The full tutorial battle will be added next.',
+    anchor: null,
+    completion: 'finish'
+  }
+];
+const TUTORIAL_STEP_IDS = TUTORIAL_SCRIPT_STEPS.map((step) => step.id);
+const getTutorialStepById = (stepId) => TUTORIAL_SCRIPT_STEPS.find((step) => step.id === stepId) || TUTORIAL_SCRIPT_STEPS[0];
+const getTutorialStepIndex = (stepId) => Math.max(0, TUTORIAL_STEP_IDS.indexOf(stepId));
+const getNextTutorialStepId = (stepId) => TUTORIAL_SCRIPT_STEPS[Math.min(getTutorialStepIndex(stepId) + 1, TUTORIAL_SCRIPT_STEPS.length - 1)]?.id || stepId;
+const getPreviousTutorialStepId = (stepId) => TUTORIAL_SCRIPT_STEPS[Math.max(getTutorialStepIndex(stepId) - 1, 0)]?.id || stepId;
+const capTutorialCompletedStepIds = (stepIds = []) => [...new Set(stepIds.filter(Boolean))].slice(-24);
+const getTutorialAnchorClass = (activeAnchor, anchor) => {
+  if (!activeAnchor || !anchor) return '';
+  const anchors = Array.isArray(anchor) ? anchor : [anchor];
+  return anchors.includes(activeAnchor) || (activeAnchor === 'battlefields' && (anchors.includes('own-battlefield') || anchors.includes('opponent-battlefield')))
+    ? ' ring-2 ring-amber-300/80 shadow-[0_0_18px_rgba(252,211,77,0.45)]'
+    : '';
+};
+
 const getGameMode = (game) => game?.gameMode || GAME_MODES.REGULAR;
 const isCommanderGame = (game) => getGameMode(game) === GAME_MODES.COMMANDER;
 const getStartingLifeForMode = (gameMode) => gameMode === GAME_MODES.COMMANDER ? 40 : 20;
@@ -3160,6 +3237,7 @@ const Lobby = ({
   onCreate,
   onJoin,
   onWatch,
+  onStartTutorial,
   onDeleteGame,
   onLoadCleanupGames,
   onDeleteCleanupGames,
@@ -3366,6 +3444,20 @@ const Lobby = ({
                 className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-wait text-white p-3 rounded-lg font-bold transition-colors flex justify-center items-center gap-2"
               >
                 {isInitLoading ? <Loader2 className="animate-spin" size={18}/> : 'Watch Game'}
+              </button>
+              <button
+                type="button"
+                onClick={() => onStartTutorial(effectiveName)}
+                disabled={!effectiveName.trim() || isInitLoading || isActionLoading}
+                className="w-full rounded-lg border border-amber-500/40 bg-gradient-to-r from-amber-950/80 to-purple-950/70 p-3 text-left text-amber-50 transition-colors hover:border-amber-300/70 hover:from-amber-900/80 hover:to-purple-900/80 disabled:cursor-wait disabled:opacity-50"
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="font-extrabold">Start Tutorial Battle</div>
+                    <div className="mt-0.5 text-xs font-medium text-amber-100/80">Learn the app in a scripted duel against Nicol Bolas.</div>
+                  </div>
+                  {isActionLoading ? <Loader2 className="shrink-0 animate-spin" size={18}/> : <ArrowRight className="shrink-0 text-amber-200" size={18}/>} 
+                </div>
               </button>
             </div>
           )}
@@ -4257,6 +4349,64 @@ class GameBoardErrorBoundary extends React.Component {
   }
 }
 
+const TutorialOverlay = ({ game, currentStep, canGoBack, isMinimized, onToggleMinimized, onNext, onBack, onSkip, onExit }) => {
+  if (!game?.isTutorial || !currentStep || game.tutorial?.inactive) return null;
+  const isFinishedStep = currentStep.id === 'finish_foundation_test';
+  const stepNumber = getTutorialStepIndex(currentStep.id) + 1;
+  return (
+    <div className="pointer-events-none fixed inset-x-0 bottom-20 z-[90] px-3 sm:bottom-4 sm:px-4">
+      <div className="pointer-events-auto mx-auto max-w-md overflow-hidden rounded-2xl border border-amber-400/40 bg-slate-950/95 shadow-2xl shadow-black/60 backdrop-blur">
+        <div className="flex items-center justify-between gap-3 border-b border-amber-500/20 bg-gradient-to-r from-amber-950/80 to-purple-950/80 px-4 py-3">
+          <div className="min-w-0">
+            <div className="text-[10px] font-black uppercase tracking-[0.2em] text-amber-200">Tutorial · {stepNumber}/{TUTORIAL_SCRIPT_STEPS.length}</div>
+            <div className="truncate text-sm font-extrabold text-white">{currentStep.chapter}</div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={onToggleMinimized} className="rounded-full p-2 text-amber-100 hover:bg-white/10" aria-label={isMinimized ? 'Expand tutorial' : 'Minimize tutorial'}>
+              {isMinimized ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+            </button>
+            <button type="button" onClick={onExit} className="rounded-full p-2 text-slate-300 hover:bg-red-950/60 hover:text-red-100" aria-label="Exit tutorial">
+              <X size={16} />
+            </button>
+          </div>
+        </div>
+
+        {!isMinimized && (
+          <div className="space-y-3 px-4 py-4">
+            <div>
+              <h2 className="text-lg font-black leading-tight text-amber-50">{currentStep.title}</h2>
+              <p className="mt-2 rounded-xl border border-purple-500/20 bg-purple-950/30 p-3 text-sm italic leading-relaxed text-purple-100">“{currentStep.dialogue}”</p>
+            </div>
+            <div className="grid gap-2 text-sm">
+              <div className="rounded-xl border border-slate-700 bg-slate-900/80 p-3">
+                <div className="text-[10px] font-black uppercase tracking-widest text-emerald-300">Objective</div>
+                <div className="mt-1 text-slate-100">{currentStep.objective}</div>
+              </div>
+              <div className="rounded-xl border border-slate-700 bg-slate-900/70 p-3">
+                <div className="text-[10px] font-black uppercase tracking-widest text-sky-300">Hint</div>
+                <div className="mt-1 text-slate-300">{currentStep.hint}</div>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+              <button type="button" onClick={onBack} disabled={!canGoBack} className="min-h-10 rounded-lg border border-slate-700 px-3 text-sm font-bold text-slate-300 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40">
+                Back
+              </button>
+              <div className="ml-auto flex gap-2">
+                <button type="button" onClick={onSkip} className="min-h-10 rounded-lg border border-slate-700 px-3 text-sm font-bold text-slate-300 hover:bg-slate-800">
+                  Skip step
+                </button>
+                <button type="button" onClick={onNext} className="min-h-10 rounded-lg bg-amber-500 px-4 text-sm font-black text-slate-950 hover:bg-amber-400">
+                  {isFinishedStep ? 'Finish' : 'Next'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const [firestoreGame, setFirestoreGame] = useState(null);
   const [optimisticGame, setOptimisticGame] = useState(null);
@@ -4349,6 +4499,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const [timeControlsOpen, setTimeControlsOpen] = useState(false);
   const [undoConfirmOpen, setUndoConfirmOpen] = useState(false);
   const [repairGameSizeBusy, setRepairGameSizeBusy] = useState(false);
+  const [tutorialMinimized, setTutorialMinimized] = useState(false);
 
   // Chat State
   const [chatOpen, setChatOpen] = useState(false);
@@ -4384,6 +4535,60 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const gameDocumentSizeEstimate = useMemo(() => (showGameSizeDebug && game ? getGameDocumentSizeEstimate(game) : null), [showGameSizeDebug, game]);
   const undoSource = optimisticGame ? 'optimistic' : 'firestore';
   const undoPendingSync = Boolean(optimisticGame && pendingOptimisticActionId);
+
+  const isTutorialGame = Boolean(game?.isTutorial && !game?.tutorial?.inactive);
+  const currentTutorialStep = isTutorialGame ? getTutorialStepById(game?.tutorial?.stepId || 'intro') : null;
+  const currentTutorialAnchor = currentTutorialStep?.anchor || null;
+  const tutorialCompletedStepIds = capTutorialCompletedStepIds(game?.tutorial?.completedStepIds || []);
+  const canGoBackTutorial = isTutorialGame && getTutorialStepIndex(currentTutorialStep?.id) > 0;
+
+  const updateTutorialState = async (updates) => {
+    if (!gameId || !game?.isTutorial) return;
+    await updateDoc(doc(db, 'games_v3', gameId), {
+      tutorial: {
+        scriptVersion: game.tutorial?.scriptVersion || TUTORIAL_SCRIPT_VERSION,
+        stepId: updates.stepId ?? game.tutorial?.stepId ?? 'intro',
+        completedStepIds: capTutorialCompletedStepIds(updates.completedStepIds ?? game.tutorial?.completedStepIds ?? []),
+        playerId: game.tutorial?.playerId || userId,
+        opponentName: game.tutorial?.opponentName || 'Nicol Bolas',
+        opponentIsScripted: game.tutorial?.opponentIsScripted !== false,
+        finished: Boolean(updates.finished ?? game.tutorial?.finished),
+        inactive: Boolean(updates.inactive ?? game.tutorial?.inactive)
+      },
+      updatedAt: serverTimestamp()
+    });
+  };
+
+  const advanceTutorialStep = async ({ markCompleted = true, finish = false } = {}) => {
+    if (!isTutorialGame || !currentTutorialStep) return;
+    const completedStepIds = markCompleted
+      ? capTutorialCompletedStepIds([...tutorialCompletedStepIds, currentTutorialStep.id])
+      : tutorialCompletedStepIds;
+    await updateTutorialState({
+      stepId: finish ? currentTutorialStep.id : getNextTutorialStepId(currentTutorialStep.id),
+      completedStepIds,
+      finished: finish || game?.tutorial?.finished,
+      inactive: finish ? true : game?.tutorial?.inactive
+    });
+    if (finish) onExit?.();
+  };
+
+  const goBackTutorialStep = async () => {
+    if (!canGoBackTutorial || !currentTutorialStep) return;
+    await updateTutorialState({ stepId: getPreviousTutorialStepId(currentTutorialStep.id) });
+  };
+
+  const exitTutorial = async () => {
+    if (game?.isTutorial) {
+      await updateTutorialState({ inactive: true });
+    }
+    onExit?.();
+  };
+
+  const maybeCompleteTutorialStep = async (stepId) => {
+    if (!isTutorialGame || game?.tutorial?.stepId !== stepId) return;
+    await advanceTutorialStep({ markCompleted: true });
+  };
 
   const handleRepairGameSize = async () => {
     if (!gameId || !userId || (!isHost && !isPlayer)) {
@@ -8363,7 +8568,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const undoButtonDisabled = !canOpenUndoModal;
   const undoConfirmDisabled = !canUndoLatestAction;
   const undoPendingLabel = 'Undo available after sync…';
-  const handleDrawCard = () => { recordPerfActionClick({ actionType: 'DRAW_CARD', buttonName: 'Draw', currentGame: game }); handleAction('DRAW_CARD'); };
+  const handleDrawCard = async () => { recordPerfActionClick({ actionType: 'DRAW_CARD', buttonName: 'Draw', currentGame: game }); await handleAction('DRAW_CARD'); await maybeCompleteTutorialStep('draw_card'); };
   const addCardReminder = (cardId, reminder) => handleAction('ADD_CARD_REMINDER', { cardId, ...reminder });
   const addPlayerReminder = (playerId, reminder) => handleAction('ADD_PLAYER_REMINDER', { targetPlayerId: playerId, ...reminder });
   const clearCleanupReminders = () => handleAction('CLEAR_CLEANUP_REMINDERS');
@@ -8597,6 +8802,17 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     >
       <PerfDebugIndicator />
       <PerformanceDebugPanel game={game} onRepairGameSize={handleRepairGameSize} canRepairGameSize={isPlayer || isHost} repairGameSizeBusy={repairGameSizeBusy} />
+      <TutorialOverlay
+        game={game}
+        currentStep={currentTutorialStep}
+        canGoBack={canGoBackTutorial}
+        isMinimized={tutorialMinimized}
+        onToggleMinimized={() => setTutorialMinimized((value) => !value)}
+        onNext={() => advanceTutorialStep({ markCompleted: true, finish: currentTutorialStep?.id === 'finish_foundation_test' })}
+        onBack={goBackTutorialStep}
+        onSkip={() => advanceTutorialStep({ markCompleted: false, finish: currentTutorialStep?.id === 'finish_foundation_test' })}
+        onExit={exitTutorial}
+      />
       {/* 1. Header */}
       <div className="bg-slate-800 border-b border-slate-700 p-2 shrink-0 shadow-md top-action-scroll-wrap">
         <div
@@ -8643,7 +8859,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         </button>
 
         <div
-          className="flex flex-col items-center justify-center bg-slate-900 px-3 py-1 rounded border border-slate-700 cursor-pointer hover:bg-slate-800"
+          data-tutorial-anchor="room-code"
+          className={`flex flex-col items-center justify-center bg-slate-900 px-3 py-1 rounded border border-slate-700 cursor-pointer hover:bg-slate-800${getTutorialAnchorClass(currentTutorialAnchor, 'room-code')}`}
           onClick={() => copyToClipboard(gameId)}
           title="Click to Copy Game ID"
         >
@@ -8855,7 +9072,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         <div ref={battlefieldScrollRef} className="h-full overflow-y-auto overflow-x-hidden px-3 pb-4 pt-2 sm:px-4">
           <section
             ref={opponentSectionRef}
-            className={`rounded-xl border p-3 mb-3 min-h-[280px] transition-all duration-300 ${opponentSectionHighlighted ? 'border-blue-400 bg-blue-900/20 ring-2 ring-blue-400/60' : 'border-slate-700 bg-slate-800/30'}`}
+            data-tutorial-anchor="opponent-battlefield"
+            className={`rounded-xl border p-3 mb-3 min-h-[280px] transition-all duration-300 ${opponentSectionHighlighted ? 'border-blue-400 bg-blue-900/20 ring-2 ring-blue-400/60' : 'border-slate-700 bg-slate-800/30'}${getTutorialAnchorClass(currentTutorialAnchor, 'opponent-battlefield')}`}
           >
             <div className="flex justify-between items-start mb-2">
               <div className="flex items-center gap-2">
@@ -9036,7 +9254,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             </div>
           </div>
 
-          <section className="rounded-xl border border-slate-700 bg-slate-900/30 p-3">
+          <section data-tutorial-anchor="own-battlefield" className={`rounded-xl border border-slate-700 bg-slate-900/30 p-3${getTutorialAnchorClass(currentTutorialAnchor, 'own-battlefield')}`}>
             <div className="flex items-center justify-between mb-3 gap-2">
               <div className="flex items-center gap-2">
                 <User size={16} className="text-green-400"/>
@@ -9205,7 +9423,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                 type="button"
                 onClick={handleDrawCard}
                 disabled={!canDrawFromLibrary}
-                className={`min-h-9 px-3 py-1.5 rounded-full text-xs font-extrabold transition-all flex items-center gap-1.5 active:scale-95 ${canDrawFromLibrary ? 'bg-blue-600 hover:bg-blue-500 text-white border border-blue-400/60 shadow-md shadow-blue-950/30' : 'bg-slate-700/50 text-slate-400 border border-slate-600 cursor-not-allowed opacity-60'}`}
+                data-tutorial-anchor="draw-button"
+                className={`min-h-9 px-3 py-1.5 rounded-full text-xs font-extrabold transition-all flex items-center gap-1.5 active:scale-95 ${canDrawFromLibrary ? 'bg-blue-600 hover:bg-blue-500 text-white border border-blue-400/60 shadow-md shadow-blue-950/30' : 'bg-slate-700/50 text-slate-400 border border-slate-600 cursor-not-allowed opacity-60'}${getTutorialAnchorClass(currentTutorialAnchor, 'draw-button')}`}
                 title={canDrawFromLibrary ? 'Draw one card' : 'No cards left in library'}
                 aria-label="Draw one card from bottom panel"
               >
@@ -9243,8 +9462,9 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             <div className="relative">
               <button
                 ref={libraryButtonRef}
-                onClick={canAct ? () => setLibraryMenuOpen(!libraryMenuOpen) : undefined}
-                className={`p-2 rounded-full hover:bg-slate-700 ${libraryMenuOpen ? 'text-white bg-slate-700' : 'text-slate-400'} ${canAct ? '' : 'opacity-40 cursor-not-allowed'}`}
+                onClick={canAct ? () => { const willOpen = !libraryMenuOpen; setLibraryMenuOpen(willOpen); if (willOpen) maybeCompleteTutorialStep('library_button'); } : undefined}
+                data-tutorial-anchor="library-menu-button"
+                className={`p-2 rounded-full hover:bg-slate-700 ${libraryMenuOpen ? 'text-white bg-slate-700' : 'text-slate-400'} ${canAct ? '' : 'opacity-40 cursor-not-allowed'}${getTutorialAnchorClass(currentTutorialAnchor, 'library-menu-button')}`}
               >
                 <BookOpen size={18} />
               </button>
@@ -9398,7 +9618,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               transform: 'translate(-100%, -100%)'
             }}
           >
-            <button onClick={() => { recordPerfActionClick({ actionType: 'DRAW_CARD', buttonName: 'Draw', currentGame: game }); handleAction('DRAW_CARD'); setLibraryMenuOpen(false); }} disabled={!canDrawFromLibrary} className={`w-full text-left px-3 py-2 text-sm flex items-center gap-2 ${canDrawFromLibrary ? 'hover:bg-slate-700 text-blue-300' : 'text-slate-500 cursor-not-allowed'}`}>
+            <button data-tutorial-anchor="draw-button" onClick={async () => { recordPerfActionClick({ actionType: 'DRAW_CARD', buttonName: 'Draw', currentGame: game }); await handleAction('DRAW_CARD'); setLibraryMenuOpen(false); await maybeCompleteTutorialStep('draw_card'); }} disabled={!canDrawFromLibrary} className={`w-full text-left px-3 py-2 text-sm flex items-center gap-2 ${canDrawFromLibrary ? 'hover:bg-slate-700 text-blue-300' : 'text-slate-500 cursor-not-allowed'}${getTutorialAnchorClass(currentTutorialAnchor, 'draw-button')}`}>
               <Plus size={12} /> Draw
             </button>
             <button onClick={() => { handleAction('MULLIGAN'); setLibraryMenuOpen(false); }} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-700 flex items-center gap-2 text-amber-300" >
@@ -11560,6 +11780,7 @@ export default function App() {
       gameId: roomCode,
       ...(trimmedName ? { myName: trimmedName } : {}),
       ...(trimmedTitle ? { title: trimmedTitle } : {}),
+      ...(extraFields.isTutorial ? { isTutorial: true } : {}),
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp()
     }, { merge: true });
@@ -11815,6 +12036,126 @@ export default function App() {
       const shortCode = generateGameId();
       await setDoc(doc(db, 'games_v3', shortCode), { ...initialData, id: shortCode });
       await upsertUserGameMembership(user.uid, shortCode, 'player', { myName: safeName, title: safeTitle });
+      setActiveGameId(shortCode);
+    } catch (e) {
+      console.error(e);
+      setInitError(e.message);
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
+
+  const startTutorialGame = async (playerNameInput) => {
+    if (!user) return;
+    setIsActionLoading(true);
+    setInitError(null);
+    const safeName = (playerNameInput || '').trim() || suggestedName || 'Planeswalker';
+    setPlayerName(safeName);
+    try {
+      const existingTutorialRefs = await getDocs(query(collection(db, 'users', user.uid, 'games'), where('isTutorial', '==', true), limit(1)));
+      for (const membershipDoc of existingTutorialRefs.docs) {
+        const candidateId = membershipDoc.data()?.roomCode || membershipDoc.id;
+        if (!candidateId) continue;
+        const candidateSnap = await getDoc(doc(db, 'games_v3', candidateId));
+        if (candidateSnap.exists() && candidateSnap.data()?.isTutorial) {
+          const candidateData = candidateSnap.data() || {};
+          await updateDoc(doc(db, 'games_v3', candidateId), {
+            tutorial: {
+              scriptVersion: candidateData.tutorial?.scriptVersion || TUTORIAL_SCRIPT_VERSION,
+              stepId: candidateData.tutorial?.finished ? 'intro' : (candidateData.tutorial?.stepId || 'intro'),
+              completedStepIds: candidateData.tutorial?.finished ? [] : capTutorialCompletedStepIds(candidateData.tutorial?.completedStepIds || []),
+              playerId: candidateData.tutorial?.playerId || user.uid,
+              opponentName: 'Nicol Bolas',
+              opponentIsScripted: true,
+              finished: false,
+              inactive: false
+            },
+            updatedAt: serverTimestamp()
+          });
+          setActiveGameId(candidateId);
+          return;
+        }
+      }
+
+      const shortCode = generateGameId();
+      const bolasId = `tutorial-bolas-${shortCode}`;
+      const startingLife = getStartingLifeForMode(GAME_MODES.REGULAR);
+      const initialData = {
+        id: shortCode,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        hostId: user.uid,
+        gameMode: GAME_MODES.REGULAR,
+        title: 'Tutorial Battle: Nicol Bolas',
+        allowSpectators: false,
+        spectatorIds: [],
+        isTutorial: true,
+        tutorial: {
+          scriptVersion: TUTORIAL_SCRIPT_VERSION,
+          stepId: 'intro',
+          completedStepIds: [],
+          playerId: user.uid,
+          opponentName: 'Nicol Bolas',
+          opponentIsScripted: true,
+          finished: false,
+          inactive: false
+        },
+        players: [
+          {
+            id: user.uid,
+            name: safeName,
+            life: startingLife,
+            turnOrder: 0,
+            counters: { poison: 0, energy: 0, experience: 0 },
+            manaPool: clearManaPool(),
+            statuses: { monarch: false, initiative: false, citysBlessing: false, ringBearerLevel: 0, custom: [] },
+            emblems: [],
+            deckExtras: getEmptyDeckExtras(),
+            handRevealed: false,
+            lastSeenChatAt: Date.now()
+          },
+          {
+            id: bolasId,
+            name: 'Nicol Bolas',
+            life: startingLife,
+            turnOrder: 1,
+            isScriptedOpponent: true,
+            counters: { poison: 0, energy: 0, experience: 0 },
+            manaPool: clearManaPool(),
+            statuses: { monarch: false, initiative: false, citysBlessing: false, ringBearerLevel: 0, custom: [] },
+            emblems: [],
+            deckExtras: getEmptyDeckExtras(),
+            handRevealed: false,
+            lastSeenChatAt: Date.now()
+          }
+        ],
+        phase: 'main1',
+        dayNight: null,
+        activePlayerIndex: 0,
+        priorityIndex: 0,
+        priorityPlayerId: user.uid,
+        turnPlayerId: user.uid,
+        turnNumber: 1,
+        consecutivePasses: 0,
+        stack: [],
+        cards: [],
+        targets: [],
+        reveals: [],
+        autopass: {},
+        undoStack: [],
+        combat: getEmptyCombatState(),
+        log: [buildGameLogEntry({
+          currentGame: { turnNumber: 1, turnPlayerId: user.uid, phase: 'main1' },
+          playerId: user.uid,
+          playerName: safeName || 'Unknown',
+          type: 'TUTORIAL_CREATE',
+          category: 'setup',
+          message: `${safeName || 'Unknown'} began the tutorial battle against Nicol Bolas.`
+        })]
+      };
+
+      await setDoc(doc(db, 'games_v3', shortCode), initialData);
+      await upsertUserGameMembership(user.uid, shortCode, 'player', { myName: safeName, title: initialData.title, isTutorial: true });
       setActiveGameId(shortCode);
     } catch (e) {
       console.error(e);
@@ -12174,6 +12515,7 @@ export default function App() {
       onCreate={createGame}
       onJoin={joinGame}
       onWatch={watchGame}
+      onStartTutorial={startTutorialGame}
       onDeleteGame={deleteLobbyGame}
       onLoadCleanupGames={loadCleanupGames}
       onDeleteCleanupGames={deleteCleanupGames}

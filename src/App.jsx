@@ -4857,6 +4857,15 @@ const TutorialOverlay = ({ game, currentStep, canGoBack, isMinimized, hasOpenPan
                   <span>Local step</span><span className="truncate text-right font-mono">{debugInfo.localStep || '—'}</span>
                   <span>Server step</span><span className="truncate text-right font-mono">{debugInfo.serverStep || '—'}</span>
                   <span>Pending sync</span><span className="text-right font-mono">{debugInfo.pendingSync ? 'yes' : 'no'}</span>
+                  <span>Entered at</span><span className="truncate text-right font-mono">{debugInfo.stepEnteredAt || '—'}</span>
+                  <span>Activation</span><span className="text-right font-mono">{debugInfo.activationId || '—'}</span>
+                  <span>Completion mode</span><span className="truncate text-right font-mono">{debugInfo.completionMode || '—'}</span>
+                  <span>Required action</span><span className="truncate text-right font-mono">{debugInfo.requiredAction || '—'}</span>
+                </div>
+                <div className="mt-2 rounded-lg bg-slate-950/40 p-2 font-mono text-[10px] text-cyan-50">
+                  <div>Last completion: {debugInfo.lastCompletionEvent ? `${debugInfo.lastCompletionEvent.source}:${debugInfo.lastCompletionEvent.detail || debugInfo.lastCompletionEvent.stepId}` : '—'}</div>
+                  <div>Ignored: {debugInfo.ignoredCompletion ? `${debugInfo.ignoredCompletion.reason} (${debugInfo.ignoredCompletion.detail || debugInfo.ignoredCompletion.source})` : '—'}</div>
+                  <div className="break-words">Baseline: {debugInfo.baselineSummary ? JSON.stringify(debugInfo.baselineSummary) : '—'}</div>
                 </div>
               </div>
             )}
@@ -5017,9 +5026,13 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const [tutorialOverlayError, setTutorialOverlayError] = useState(null);
   const [optimisticTutorialState, setOptimisticTutorialState] = useState(null);
   const [tutorialSyncPending, setTutorialSyncPending] = useState(false);
-  const [tutorialDebugTiming, setTutorialDebugTiming] = useState({ lastAction: null, localAdvanceMs: null, firestoreWriteMs: null });
+  const [tutorialDebugTiming, setTutorialDebugTiming] = useState({ lastAction: null, localAdvanceMs: null, firestoreWriteMs: null, lastCompletionEvent: null, ignoredCompletion: null });
+  const [tutorialActivationDebug, setTutorialActivationDebug] = useState(null);
   const optimisticTutorialRef = useRef(null);
   const tutorialSyncWriteIdRef = useRef(0);
+  const tutorialStepActivationIdRef = useRef(0);
+  const tutorialStepActivationRef = useRef(null);
+  const tutorialAdvanceDelayTimerRef = useRef(null);
 
   // Chat State
   const [chatOpen, setChatOpen] = useState(false);
@@ -5066,10 +5079,83 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const canGoBackTutorial = isTutorialGame && getTutorialStepIndex(currentTutorialStep?.id) > 0;
   const tutorialDebugInfo = (isDebugActionsEnabled() || isPerfActionsEnabled()) && isTutorialGame ? {
     ...tutorialDebugTiming,
+    ...(tutorialActivationDebug || {}),
     localStep: optimisticTutorialState?.stepId || displayedTutorialState?.stepId || null,
     serverStep: serverTutorialState?.stepId || null,
     pendingSync: tutorialSyncPending
   } : null;
+
+  const getTutorialStepBaseline = useCallback((stepId) => {
+    const cards = game?.cards || [];
+    const stack = game?.stack || [];
+    const ownHand = cards.filter((card) => card.controllerId === userId && card.zone === ZONES.HAND);
+    const ownLibrary = cards.filter((card) => card.ownerId === userId && card.zone === ZONES.LIBRARY);
+    const mountain = cards.find((card) => card.name === 'Mountain' && card.ownerId === userId);
+    const delver = cards.find((card) => card.name === 'Delver of Secrets' || card.card_faces?.some((face) => face?.name === 'Delver of Secrets' || face?.name === 'Insectile Aberration'));
+    const counterCard = cards.find((card) => card.counters && Object.values(card.counters).some((value) => Number(value) > 0)) || cards.find((card) => card.controllerId === userId && card.zone === ZONES.BATTLEFIELD);
+    return {
+      stepId,
+      selectedCardId: selectedCard?.instanceId || null,
+      stackDetailOpen: Boolean(stackDetailOpen),
+      chatOpen: Boolean(chatOpen),
+      libraryMenuOpen: Boolean(libraryMenuOpen),
+      libraryBatchOpen: Boolean(libraryBatchOpen),
+      tokenModalOpen: Boolean(tokenModal),
+      playerStatsOpen: Boolean(playerStatsOpen),
+      revealsOpen: Boolean(revealsOpen),
+      phase: game?.phase || null,
+      stackCount: stack.length,
+      combatKey: JSON.stringify(normalizeCombatState(game?.combat || {})),
+      handCount: ownHand.length,
+      libraryCount: ownLibrary.length,
+      mountainZone: mountain?.zone || null,
+      delverFace: Number.isInteger(delver?.activeFaceIndex) ? delver.activeFaceIndex : null,
+      counterCardId: counterCard?.instanceId || null,
+      counterTotal: counterCard?.counters ? Object.values(counterCard.counters).reduce((sum, value) => sum + (Number(value) || 0), 0) : 0
+    };
+  }, [chatOpen, game?.cards, game?.combat, game?.phase, game?.stack, libraryBatchOpen, libraryMenuOpen, playerStatsOpen, revealsOpen, selectedCard?.instanceId, stackDetailOpen, tokenModal, userId]);
+
+  const summarizeTutorialBaseline = (baseline = {}) => ({
+    selectedCardId: baseline.selectedCardId || null,
+    stackDetailOpen: Boolean(baseline.stackDetailOpen),
+    phase: baseline.phase || null,
+    stackCount: baseline.stackCount || 0,
+    handCount: baseline.handCount || 0,
+    libraryCount: baseline.libraryCount || 0,
+    mountainZone: baseline.mountainZone || null,
+    delverFace: baseline.delverFace ?? null,
+    counterTotal: baseline.counterTotal || 0
+  });
+
+  useEffect(() => {
+    if (!isTutorialGame || !currentTutorialStep?.id) {
+      tutorialStepActivationRef.current = null;
+      setTutorialActivationDebug(null);
+      return undefined;
+    }
+    if (tutorialAdvanceDelayTimerRef.current) {
+      window.clearTimeout(tutorialAdvanceDelayTimerRef.current);
+      tutorialAdvanceDelayTimerRef.current = null;
+    }
+    const activation = {
+      id: ++tutorialStepActivationIdRef.current,
+      stepId: currentTutorialStep.id,
+      enteredAt: getActionPerfNow(),
+      wallEnteredAt: Date.now(),
+      baseline: getTutorialStepBaseline(currentTutorialStep.id),
+      completionMode: currentTutorialStep.completion || 'manual',
+      requiredAction: currentTutorialStep.rules?.requiredAction || currentTutorialStep.objective || ''
+    };
+    tutorialStepActivationRef.current = activation;
+    setTutorialActivationDebug({
+      activationId: activation.id,
+      stepEnteredAt: new Date(activation.wallEnteredAt).toISOString(),
+      baselineSummary: summarizeTutorialBaseline(activation.baseline),
+      completionMode: activation.completionMode,
+      requiredAction: activation.requiredAction
+    });
+    return undefined;
+  }, [currentTutorialStep?.id, getTutorialStepBaseline, isTutorialGame]);
 
   const focusTutorialTarget = useCallback(() => {
     const anchor = Array.isArray(currentTutorialAnchor) ? currentTutorialAnchor[0] : currentTutorialAnchor;
@@ -5111,6 +5197,13 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       setTutorialSyncPending(false);
     }
   }, [optimisticTutorialState, serverTutorialState]);
+
+  useEffect(() => () => {
+    if (tutorialAdvanceDelayTimerRef.current) {
+      window.clearTimeout(tutorialAdvanceDelayTimerRef.current);
+      tutorialAdvanceDelayTimerRef.current = null;
+    }
+  }, []);
 
   const updateTutorialState = (updates = {}, { actionLabel = 'manual' } = {}) => {
     if (!gameId || !game?.isTutorial) return Promise.resolve();
@@ -5160,21 +5253,37 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     return writePromise;
   };
 
-  const advanceTutorialStepFrom = (expectedStepId, { markCompleted = true, finish = false, actionLabel = 'advance' } = {}) => {
+  const advanceTutorialStepFrom = (expectedStepId, { markCompleted = true, finish = false, actionLabel = 'advance', bypassMinimumDelay = false } = {}) => {
     if (!isTutorialGame || !expectedStepId) return Promise.resolve(false);
     const liveStepId = (optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.stepId || 'intro';
     if (liveStepId !== expectedStepId) return Promise.resolve(false);
-    const baseCompletedStepIds = capTutorialCompletedStepIds((optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.completedStepIds || []);
-    const completedStepIds = markCompleted
-      ? capTutorialCompletedStepIds([...baseCompletedStepIds, expectedStepId])
-      : baseCompletedStepIds;
-    updateTutorialState({
-      stepId: finish ? expectedStepId : getNextTutorialStepId(expectedStepId),
-      completedStepIds,
-      finished: finish || Boolean((optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.finished),
-      inactive: finish ? false : Boolean((optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.inactive)
-    }, { actionLabel });
-    return Promise.resolve(true);
+    const performAdvance = () => {
+      const latestStepId = (optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.stepId || 'intro';
+      if (latestStepId !== expectedStepId) return false;
+      const baseCompletedStepIds = capTutorialCompletedStepIds((optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.completedStepIds || []);
+      const completedStepIds = markCompleted
+        ? capTutorialCompletedStepIds([...baseCompletedStepIds, expectedStepId])
+        : baseCompletedStepIds;
+      updateTutorialState({
+        stepId: finish ? expectedStepId : getNextTutorialStepId(expectedStepId),
+        completedStepIds,
+        finished: finish || Boolean((optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.finished),
+        inactive: finish ? false : Boolean((optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.inactive)
+      }, { actionLabel });
+      return true;
+    };
+    const activation = tutorialStepActivationRef.current;
+    const elapsedMs = activation?.stepId === expectedStepId ? getActionPerfNow() - activation.enteredAt : Infinity;
+    const minDisplayMs = 650;
+    if (!bypassMinimumDelay && elapsedMs < minDisplayMs) {
+      if (tutorialAdvanceDelayTimerRef.current) window.clearTimeout(tutorialAdvanceDelayTimerRef.current);
+      tutorialAdvanceDelayTimerRef.current = window.setTimeout(() => {
+        tutorialAdvanceDelayTimerRef.current = null;
+        performAdvance();
+      }, Math.max(0, minDisplayMs - elapsedMs));
+      return Promise.resolve(true);
+    }
+    return Promise.resolve(performAdvance());
   };
 
   const advanceTutorialStep = ({ markCompleted = true, finish = false, actionLabel = 'manual next' } = {}) => {
@@ -5218,10 +5327,31 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     return updateTutorialState({ inactive: true, finished: true }, { actionLabel: 'explore tutorial' });
   };
 
-  const maybeCompleteTutorialStep = (stepId) => {
+  const maybeCompleteTutorialStep = (stepId, { source = 'user-action', eventAt = getActionPerfNow(), detail = '' } = {}) => {
     const liveStepId = (optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.stepId || 'intro';
+    const activation = tutorialStepActivationRef.current;
+    const completionEvent = { stepId, source, detail, at: Math.round(eventAt), activationId: activation?.id || null };
     if (!isTutorialGame || liveStepId !== stepId) return Promise.resolve(false);
-    return advanceTutorialStepFrom(stepId, { markCompleted: true, actionLabel: `step:${stepId}` });
+    const ignore = (reason) => {
+      setTutorialDebugTiming((current) => ({ ...current, ignoredCompletion: { ...completionEvent, reason } }));
+      if (isDebugActionsEnabled() || isPerfActionsEnabled()) console.debug('[Tutorial completion ignored]', { ...completionEvent, reason, activation });
+      return Promise.resolve(false);
+    };
+    if (!activation || activation.stepId !== stepId) return ignore('step not armed after activation');
+    if (eventAt < activation.enteredAt) return ignore('event before step activation');
+    if (source === 'state-transition') {
+      const baseline = activation.baseline || {};
+      if (detail === 'selectedCard' && baseline.selectedCardId) return ignore('card detail was already open at step activation');
+      if (detail === 'stackDetailOpen' && baseline.stackDetailOpen) return ignore('stack panel was already open at step activation');
+      if (detail === 'chatOpen' && baseline.chatOpen) return ignore('chat was already open at step activation');
+      if (detail === 'libraryMenuOpen' && baseline.libraryMenuOpen) return ignore('library tools were already open at step activation');
+      if (detail === 'libraryBatchOpen' && baseline.libraryBatchOpen) return ignore('batch library panel was already open at step activation');
+      if (detail === 'tokenModalOpen' && baseline.tokenModalOpen) return ignore('token tools were already open at step activation');
+      if (detail === 'playerStatsOpen' && baseline.playerStatsOpen) return ignore('player panel was already open at step activation');
+      if (detail === 'revealsOpen' && baseline.revealsOpen) return ignore('reveal panel was already open at step activation');
+    }
+    setTutorialDebugTiming((current) => ({ ...current, lastCompletionEvent: completionEvent, ignoredCompletion: null }));
+    return advanceTutorialStepFrom(stepId, { markCompleted: true, actionLabel: source === 'user-action' ? `step:${stepId}` : `step:${stepId}:${detail || source}` });
   };
 
 
@@ -5229,6 +5359,16 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     const liveStepId = (optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.stepId || 'intro';
     if (!isTutorialGame || !liveStepId) return Promise.resolve(false);
     const stepId = liveStepId;
+    const eventAt = getActionPerfNow();
+    const activation = tutorialStepActivationRef.current;
+    const completionEvent = { stepId, source: 'game-action', detail: actionType, at: Math.round(eventAt), activationId: activation?.id || null };
+    const ignoreActionCompletion = (reason) => {
+      setTutorialDebugTiming((current) => ({ ...current, ignoredCompletion: { ...completionEvent, reason } }));
+      if (isDebugActionsEnabled() || isPerfActionsEnabled()) console.debug('[Tutorial action completion ignored]', { ...completionEvent, reason, activation, payload });
+      return Promise.resolve(false);
+    };
+    if (!activation || activation.stepId !== stepId) return ignoreActionCompletion('step not armed after activation');
+    if (eventAt < activation.enteredAt) return ignoreActionCompletion('action before step activation');
     const actionStepMap = {
       DRAW_CARD: ['beginning_phase_draw'],
       PLAY_LAND: ['play_land'],
@@ -5280,15 +5420,30 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       SET_COMMANDER: ['commander_note']
     };
     if ((actionStepMap[actionType] || []).includes(stepId)) {
+      setTutorialDebugTiming((current) => ({ ...current, lastCompletionEvent: completionEvent, ignoredCompletion: null }));
       if (stepId === 'final_trial' && actionType === 'PASS_PRIORITY') {
-        const baseCompletedStepIds = capTutorialCompletedStepIds((optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.completedStepIds || []);
-        updateTutorialState({
-          stepId: 'tutorial_complete',
-          completedStepIds: capTutorialCompletedStepIds([...baseCompletedStepIds, stepId]),
-          finished: true,
-          inactive: false
-        }, { actionLabel: actionType });
-        return Promise.resolve(true);
+        const finishTutorial = () => {
+          const latestStepId = (optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.stepId || 'intro';
+          if (latestStepId !== stepId) return false;
+          const baseCompletedStepIds = capTutorialCompletedStepIds((optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.completedStepIds || []);
+          updateTutorialState({
+            stepId: 'tutorial_complete',
+            completedStepIds: capTutorialCompletedStepIds([...baseCompletedStepIds, stepId]),
+            finished: true,
+            inactive: false
+          }, { actionLabel: actionType });
+          return true;
+        };
+        const elapsedMs = getActionPerfNow() - activation.enteredAt;
+        if (elapsedMs < 650) {
+          if (tutorialAdvanceDelayTimerRef.current) window.clearTimeout(tutorialAdvanceDelayTimerRef.current);
+          tutorialAdvanceDelayTimerRef.current = window.setTimeout(() => {
+            tutorialAdvanceDelayTimerRef.current = null;
+            finishTutorial();
+          }, 650 - elapsedMs);
+          return Promise.resolve(true);
+        }
+        return Promise.resolve(finishTutorial());
       }
       return advanceTutorialStepFrom(stepId, { markCompleted: true, actionLabel: actionType });
     }
@@ -5302,20 +5457,20 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     if (!isTutorialGame || !selectedCard) return;
     const liveStepId = (optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.stepId || 'intro';
     if (['hand_area'].includes(liveStepId)) {
-      maybeCompleteTutorialStep(liveStepId);
+      maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'selectedCard' });
     }
   }, [isTutorialGame, selectedCard?.instanceId]);
 
   useEffect(() => {
     if (!isTutorialGame) return;
     const liveStepId = (optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.stepId || 'intro';
-    if (stackDetailOpen && ['inspect_stack', 'bolas_negate', 'bolas_removal', 'final_bolas_response'].includes(liveStepId)) maybeCompleteTutorialStep(liveStepId);
-    if (chatOpen && ['game_log', 'async_oath', 'manual_toolbox_note'].includes(liveStepId)) maybeCompleteTutorialStep(liveStepId);
-    if (libraryMenuOpen && ['open_library_tools', 'opponent_library_tools'].includes(liveStepId)) maybeCompleteTutorialStep(liveStepId);
-    if (libraryBatchOpen && liveStepId === 'batch_library_actions') maybeCompleteTutorialStep(liveStepId);
-    if (tokenModal && ['deck_tokens_note', 'custom_token_note'].includes(liveStepId)) maybeCompleteTutorialStep(liveStepId);
-    if (playerStatsOpen && ['player_panel', 'dungeons_note', 'commander_note'].includes(liveStepId)) maybeCompleteTutorialStep(liveStepId);
-    if (revealsOpen && liveStepId === 'reveal_hand_note') maybeCompleteTutorialStep(liveStepId);
+    if (stackDetailOpen && ['inspect_stack', 'bolas_negate', 'bolas_removal', 'final_bolas_response'].includes(liveStepId)) maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'stackDetailOpen' });
+    if (chatOpen && ['game_log', 'async_oath', 'manual_toolbox_note'].includes(liveStepId)) maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'chatOpen' });
+    if (libraryMenuOpen && ['open_library_tools', 'opponent_library_tools'].includes(liveStepId)) maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'libraryMenuOpen' });
+    if (libraryBatchOpen && liveStepId === 'batch_library_actions') maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'libraryBatchOpen' });
+    if (tokenModal && ['deck_tokens_note', 'custom_token_note'].includes(liveStepId)) maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'tokenModalOpen' });
+    if (playerStatsOpen && ['player_panel', 'dungeons_note', 'commander_note'].includes(liveStepId)) maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'playerStatsOpen' });
+    if (revealsOpen && liveStepId === 'reveal_hand_note') maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'revealsOpen' });
   }, [isTutorialGame, stackDetailOpen, chatOpen, libraryMenuOpen, libraryBatchOpen, Boolean(tokenModal), playerStatsOpen, revealsOpen]);
 
   const buildTutorialCardInstance = useCallback((cardName, ownerId, zone = ZONES.HAND, controllerId = ownerId) => {
@@ -9301,6 +9456,9 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     if (!item) return;
     setSelectedStackItemId(item.id || item.sourceId || null);
     setStackDetailOpen(true);
+    maybeCompleteTutorialStep('bolas_negate', { detail: 'stackItemInspect' });
+    maybeCompleteTutorialStep('bolas_removal', { detail: 'stackItemInspect' });
+    maybeCompleteTutorialStep('final_bolas_response', { detail: 'stackItemInspect' });
   };
 
   const closeStackDetail = () => {

@@ -2446,13 +2446,19 @@ const normalizeCombatDamageStep = (step) => (
   step === COMBAT_DAMAGE_STEPS.FIRST_STRIKE || step === COMBAT_DAMAGE_STEPS.REGULAR ? step : null
 );
 const getCombatDamageStepLabel = (step) => COMBAT_DAMAGE_STEP_LABELS[normalizeCombatDamageStep(step)] || null;
-const getCombatDamageStep = (combatState = {}) => normalizeCombatDamageStep(combatState?.combatDamageStep);
+const isPlainObject = (value) => Boolean(value && typeof value === 'object' && !Array.isArray(value));
+const getCombatDamageStep = (combatState = {}) => normalizeCombatDamageStep(isPlainObject(combatState) ? combatState.combatDamageStep : null);
 const getEmptyCombatState = () => ({ attackers: {}, blockers: {}, combatDamageStep: null });
-const normalizeCombatState = (combatState = getEmptyCombatState()) => ({
-  attackers: combatState?.attackers || {},
-  blockers: combatState?.blockers || {},
-  combatDamageStep: getCombatDamageStep(combatState)
-});
+const normalizeCombatAssignmentMap = (assignments) => (isPlainObject(assignments) ? assignments : {});
+const normalizeCombatState = (combatState = getEmptyCombatState()) => {
+  const safeCombatState = isPlainObject(combatState) ? combatState : {};
+  return {
+    ...safeCombatState,
+    attackers: normalizeCombatAssignmentMap(safeCombatState.attackers),
+    blockers: normalizeCombatAssignmentMap(safeCombatState.blockers),
+    combatDamageStep: getCombatDamageStep(safeCombatState)
+  };
+};
 const withCombatDamageStep = (combatState = getEmptyCombatState(), step = null) => ({
   ...normalizeCombatState(combatState),
   combatDamageStep: normalizeCombatDamageStep(step)
@@ -2463,14 +2469,15 @@ const shouldClearCombatState = (fromPhase, toPhase) => fromPhase?.startsWith('co
 const resetTemporaryDamage = (cards = []) => cards.map((card) => (card.tempDamage ? { ...card, tempDamage: 0 } : card));
 const shouldResetTemporaryDamageForPhase = (phase) => phase === 'cleanup' || phase === 'untap';
 const clearCombatAssignmentsForCard = (combatState = getEmptyCombatState(), instanceId) => {
-  if (!instanceId) return combatState;
+  const normalizedCombatState = normalizeCombatState(combatState);
+  if (!instanceId) return normalizedCombatState;
 
-  const nextAttackers = { ...(combatState.attackers || {}) };
+  const nextAttackers = { ...(normalizedCombatState.attackers || {}) };
   const nextBlockers = {};
 
   delete nextAttackers[instanceId];
 
-  Object.entries(combatState.blockers || {}).forEach(([blockerId, attackerIds]) => {
+  Object.entries(normalizedCombatState.blockers || {}).forEach(([blockerId, attackerIds]) => {
     if (blockerId === instanceId) return;
     const filteredAttackers = (attackerIds || []).filter((attackerId) => attackerId !== instanceId);
     if (filteredAttackers.length > 0) {
@@ -2478,7 +2485,7 @@ const clearCombatAssignmentsForCard = (combatState = getEmptyCombatState(), inst
     }
   });
 
-  return { ...normalizeCombatState(combatState), attackers: nextAttackers, blockers: nextBlockers };
+  return { ...normalizedCombatState, attackers: nextAttackers, blockers: nextBlockers };
 };
 
 
@@ -2700,7 +2707,7 @@ const getCombatAttackTargetName = (attackTarget, currentGame, displayNameMap = n
 };
 
 const getCardCombatInfo = (card, currentGame, displayNameMapOverride = null) => {
-  const combat = currentGame?.combat || getEmptyCombatState();
+  const combat = normalizeCombatState(currentGame?.combat);
   const attackers = combat.attackers || {};
   const blockers = combat.blockers || {};
   const instanceId = card?.instanceId || null;
@@ -4028,6 +4035,45 @@ const PerformanceDebugPanel = ({ game = null, onRepairGameSize = null, canRepair
   );
 };
 
+class GameBoardErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+
+  componentDidCatch(error, info) {
+    console.error('Game board render failed', error, info);
+  }
+
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center p-4">
+        <div className="w-full max-w-md rounded-2xl border border-red-500/40 bg-slate-900 p-5 shadow-2xl space-y-4">
+          <div className="flex items-center gap-2 text-red-200 font-black text-lg">
+            <AlertTriangle size={22} /> Something went wrong
+          </div>
+          <p className="text-sm text-slate-300">
+            The game board hit a display error. Reload the page, or exit back to the lobby and reopen the game.
+          </p>
+          <div className="flex flex-col sm:flex-row gap-2">
+            <button type="button" onClick={() => window.location.reload()} className="min-h-11 rounded-xl bg-red-700 px-4 py-2 font-bold text-white hover:bg-red-600">
+              Reload
+            </button>
+            <button type="button" onClick={this.props.onExit} className="min-h-11 rounded-xl bg-slate-800 px-4 py-2 font-bold text-slate-100 hover:bg-slate-700">
+              Exit game
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+}
+
 const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const [firestoreGame, setFirestoreGame] = useState(null);
   const [optimisticGame, setOptimisticGame] = useState(null);
@@ -4209,7 +4255,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     const nextOptimisticGame = {
       ...game,
       ...patch,
-      combat: patch.combat || game.combat || getEmptyCombatState(),
+      combat: normalizeCombatState(patch.combat || game.combat),
       __optimisticActionId: perfActionId || payload.clientActionId || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
     };
     const actionId = nextOptimisticGame.__optimisticActionId;
@@ -4434,7 +4480,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               reflectionDebug: lastActionReflection?.debug || null
             });
           }
-          const nextFirestoreGame = { ...data, combat: data.combat || getEmptyCombatState() };
+          const nextFirestoreGame = { ...data, combat: normalizeCombatState(data.combat) };
           latestFirestoreGameRef.current = nextFirestoreGame;
           setFirestoreGame(nextFirestoreGame);
           const pendingOptimistic = pendingOptimisticActionRef.current;
@@ -8171,6 +8217,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     : priorityHolderName;
   const activeTurnPlayer = (game.players || []).find((player) => player.id === game.turnPlayerId) || game.players?.[game.activePlayerIndex] || null;
   const currentPhase = PHASES.find((phase) => phase.id === game.phase) || { id: game.phase, label: getPhaseLabel(game.phase) };
+  const combat = normalizeCombatState(game.combat);
   const currentCombatDamageStep = getCombatDamageStep(combat);
   const currentCombatDamageStepLabel = getCombatDamageStepLabel(currentCombatDamageStep);
   const confirmTimeControl = (message) => (typeof window === 'undefined' ? true : window.confirm(message));
@@ -8203,7 +8250,6 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     return card?.instanceId ? (cardsMap.get(card.instanceId) || card) : card;
   };
   const getCardMarkedDamage = (cardOrId) => Math.max(0, getLiveCard(cardOrId)?.tempDamage || 0);
-  const combat = game.combat || getEmptyCombatState();
   const combatAttackers = combat.attackers || {};
   const combatBlockers = combat.blockers || {};
   const attackingCards = Object.keys(combatAttackers)
@@ -11790,7 +11836,11 @@ export default function App() {
   };
 
   if (activeGameId && user) {
-    return <GameBoard gameId={activeGameId} realUserId={user.uid} displayName={playerName} onExit={handleExitGame} />;
+    return (
+      <GameBoardErrorBoundary key={activeGameId} onExit={handleExitGame}>
+        <GameBoard gameId={activeGameId} realUserId={user.uid} displayName={playerName} onExit={handleExitGame} />
+      </GameBoardErrorBoundary>
+    );
   }
 
   return (

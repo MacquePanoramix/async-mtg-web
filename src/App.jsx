@@ -503,6 +503,21 @@ const buildTutorialStarterCards = (playerId) => TUTORIAL_STARTER_CARD_SEED.map((
   y: 5
 }));
 
+const hydrateTutorialCardPreviewData = (card = {}) => {
+  const seed = TUTORIAL_STARTER_CARD_SEED.find((candidate) => candidate.name === card.name || candidate.card_faces?.some((face) => face?.name === card.name || card.card_faces?.some((cardFace) => cardFace?.name === face?.name)));
+  if (!seed) return card;
+  const hydrated = sanitizeScryfallCardForGame({ ...seed, ...card, card_faces: seed.card_faces || card.card_faces }, card);
+  return {
+    ...card,
+    ...hydrated,
+    instanceId: card.instanceId,
+    ownerId: card.ownerId,
+    controllerId: card.controllerId,
+    zone: card.zone,
+    activeFaceIndex: Number.isInteger(card.activeFaceIndex) ? card.activeFaceIndex : hydrated.activeFaceIndex
+  };
+};
+
 const shouldSeedTutorialCardsForPlayer = (cards = [], playerId) => !cards.some((card) => card?.ownerId === playerId && [
   ZONES.LIBRARY,
   ZONES.HAND,
@@ -4640,7 +4655,7 @@ class GameBoardErrorBoundary extends React.Component {
   }
 }
 
-const TutorialOverlay = ({ game, currentStep, canGoBack, isMinimized, hasOpenPanel, onToggleMinimized, onNext, onBack, onSkip, onExit, onFocusTarget, onRestart, onExplore, errorMessage = '', debugInfo = null }) => {
+const TutorialOverlay = ({ game, currentStep, canGoBack, isMinimized, hasOpenPanel, onToggleMinimized, onResume, onNext, onBack, onSkip, onExit, onFocusTarget, onRestart, onExplore, errorMessage = '', debugInfo = null }) => {
   const [dock, setDock] = useState('bottom');
   const forcedCompact = Boolean(hasOpenPanel);
   const safeCurrentStep = normalizeTutorialStep(currentStep, game?.tutorial?.stepId || 'intro');
@@ -4688,17 +4703,23 @@ const TutorialOverlay = ({ game, currentStep, canGoBack, isMinimized, hasOpenPan
   return (
     <div className={`pointer-events-none fixed inset-x-0 ${positionClass} z-[90] px-3 sm:px-4`}>
       <div className={`pointer-events-auto mx-auto overflow-hidden rounded-2xl border border-amber-400/40 bg-slate-950/95 shadow-2xl shadow-black/60 backdrop-blur ${collapsed ? 'max-w-sm' : 'max-w-md'}`}>
-        <div className="flex items-center justify-between gap-3 border-b border-amber-500/20 bg-gradient-to-r from-amber-950/80 to-purple-950/80 px-4 py-3">
-          <button type="button" onClick={collapsed ? onToggleMinimized : undefined} className="min-w-0 flex-1 text-left" aria-label={collapsed ? 'Expand tutorial' : undefined}>
+        <div className={`flex items-center justify-between gap-3 border-b border-amber-500/20 bg-gradient-to-r from-amber-950/80 to-purple-950/80 ${collapsed ? 'px-3 py-2' : 'px-4 py-3'}`}>
+          <button type="button" onClick={collapsed ? onResume : undefined} className="min-w-0 flex-1 text-left" aria-label={collapsed ? 'Resume tutorial' : undefined}>
             <div className="text-[10px] font-black uppercase tracking-[0.2em] text-amber-200">Tutorial · {stepNumber}/{TUTORIAL_SCRIPT_STEPS.length}</div>
-            <div className="truncate text-sm font-extrabold text-white">{safeCurrentStep.chapter}</div>
-            {forcedCompact && <div className="mt-0.5 truncate text-[11px] font-bold text-amber-100/80">Compact while a menu is open. Tap the chevron to expand when ready.</div>}
+            <div className="truncate text-sm font-extrabold text-white">{collapsed ? `Resume tutorial: ${safeCurrentStep.title}` : safeCurrentStep.chapter}</div>
+            {forcedCompact && <div className="mt-0.5 truncate text-[11px] font-bold text-amber-100/80">Card/menu open — tutorial is paused, not closed.</div>}
           </button>
           <div className="flex items-center gap-2">
-            <button type="button" onClick={onFocusTarget} disabled={!safeCurrentStep.anchor} className="rounded-full border border-amber-300/40 px-3 py-1.5 text-xs font-black text-amber-100 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40" aria-label="Show tutorial target">
-              Show me
-            </button>
-            <button type="button" onClick={onToggleMinimized} className="rounded-full p-2 text-amber-100 hover:bg-white/10" aria-label={isMinimized ? 'Expand tutorial' : 'Minimize tutorial'}>
+            {collapsed ? (
+              <button type="button" onClick={onResume} className="rounded-full bg-amber-400 px-3 py-1.5 text-xs font-black text-slate-950 shadow-lg hover:bg-amber-300" aria-label="Resume tutorial">
+                Resume
+              </button>
+            ) : (
+              <button type="button" onClick={onFocusTarget} disabled={!safeCurrentStep.anchor} className="rounded-full border border-amber-300/40 px-3 py-1.5 text-xs font-black text-amber-100 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40" aria-label="Show tutorial target">
+                Show me
+              </button>
+            )}
+            <button type="button" onClick={collapsed ? onResume : onToggleMinimized} className="rounded-full p-2 text-amber-100 hover:bg-white/10" aria-label={collapsed ? 'Resume tutorial' : 'Minimize tutorial'}>
               {collapsed ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
             </button>
             <button type="button" onClick={onExit} className="rounded-full p-2 text-slate-300 hover:bg-red-950/60 hover:text-red-100" aria-label="Exit tutorial">
@@ -4780,6 +4801,24 @@ const TutorialOverlay = ({ game, currentStep, canGoBack, isMinimized, hasOpenPan
           </div>
         )}
       </div>
+    </div>
+  );
+};
+
+const TutorialResumePill = ({ show, currentStep, hasOpenPanel, onResume }) => {
+  if (!show) return null;
+  const title = currentStep?.title || 'current step';
+  return (
+    <div className="pointer-events-none fixed bottom-3 left-3 right-3 z-[95] flex justify-center sm:bottom-5 sm:left-auto sm:right-5 sm:justify-end">
+      <button
+        type="button"
+        onClick={onResume}
+        className="pointer-events-auto min-h-12 rounded-full border border-amber-200/70 bg-amber-400 px-5 py-2 text-sm font-black text-slate-950 shadow-2xl shadow-black/50 hover:bg-amber-300 focus:outline-none focus:ring-4 focus:ring-amber-200/50"
+        aria-label="Resume tutorial"
+      >
+        Resume tutorial{hasOpenPanel ? ' · panel open' : ''}
+        <span className="ml-2 hidden max-w-[12rem] truncate align-bottom text-xs font-bold text-slate-800/80 sm:inline-block">{title}</span>
+      </button>
     </div>
   );
 };
@@ -4879,6 +4918,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const [undoConfirmOpen, setUndoConfirmOpen] = useState(false);
   const [repairGameSizeBusy, setRepairGameSizeBusy] = useState(false);
   const [tutorialMinimized, setTutorialMinimized] = useState(false);
+  const [tutorialExitConfirmOpen, setTutorialExitConfirmOpen] = useState(false);
   const [tutorialOverlayError, setTutorialOverlayError] = useState(null);
   const [optimisticTutorialState, setOptimisticTutorialState] = useState(null);
   const [tutorialSyncPending, setTutorialSyncPending] = useState(false);
@@ -5052,7 +5092,21 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     return updateTutorialState({ stepId: getPreviousTutorialStepId(currentTutorialStep.id) }, { actionLabel: 'manual back' });
   };
 
-  const exitTutorial = () => {
+  const resumeTutorialOverlay = () => {
+    setTutorialMinimized(false);
+    setTutorialExitConfirmOpen(false);
+  };
+
+  const requestExitTutorial = () => {
+    if (game?.isTutorial) {
+      setTutorialExitConfirmOpen(true);
+      return;
+    }
+    onExit?.();
+  };
+
+  const confirmExitTutorial = () => {
+    setTutorialExitConfirmOpen(false);
     if (game?.isTutorial) {
       updateTutorialState({ inactive: true }, { actionLabel: 'exit tutorial' });
     }
@@ -5265,6 +5319,13 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         card = buildTutorialCardInstance(need.name, need.ownerId || userId, need.zone, need.controllerId || need.ownerId || userId);
         nextCards.push(card);
         changed = true;
+      } else {
+        const hydratedCard = hydrateTutorialCardPreviewData(card);
+        if (JSON.stringify(hydratedCard.card_faces || null) !== JSON.stringify(card.card_faces || null) || hydratedCard.image_uri !== card.image_uri) {
+          nextCards = nextCards.map((candidate) => candidate.instanceId === card.instanceId ? hydratedCard : candidate);
+          card = hydratedCard;
+          changed = true;
+        }
       }
       if (card.zone !== need.zone || card.controllerId !== need.controllerId || (Number.isInteger(need.activeFaceIndex) && card.activeFaceIndex !== need.activeFaceIndex) || (need.zone === ZONES.BATTLEFIELD && card.tapped)) {
         nextCards = nextCards.map((candidate) => candidate.instanceId === card.instanceId ? { ...candidate, zone: need.zone, controllerId: need.controllerId, ...(Number.isInteger(need.activeFaceIndex) ? { activeFaceIndex: need.activeFaceIndex } : {}), tapped: false, phasedOut: false } : candidate);
@@ -9292,7 +9353,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const myCommandCount = getZoneCount(viewAsPlayerId, ZONES.COMMAND);
   const myLibraryCount = isPlayer ? getZoneCount(userId, ZONES.LIBRARY) : 0;
   const canDrawFromLibrary = canAct && myLibraryCount > 0;
-  const tutorialHasOpenPanel = Boolean(libraryMenuOpen || diceMenuOpen || libraryBatchOpen || selectedCard || zoomedCard || viewZone || searchLibraryOwner || deckInput || deleteDeckConfirmOpen || scryCard || peekCard || privateHandPeek || playerStatsOpen || commanderDamageSummaryPlayerId || stackDetailOpen || undoConfirmOpen);
+  const tutorialHasOpenPanel = Boolean(libraryMenuOpen || diceMenuOpen || libraryBatchOpen || selectedCard || zoomedCard || viewZone || searchLibraryOwner || deckInput || deleteDeckConfirmOpen || scryCard || peekCard || privateHandPeek || privatePeekInspectCard || tokenModal || playerStatsOpen || commanderDamageSummaryPlayerId || stackDetailOpen || timeControlsOpen || undoConfirmOpen || repairGameSizeBusy || customCounterModal || damageModal || revealsOpen);
   const latestUndoEntry = latestDisplayedUndoEntry;
   const undoButtonDisabled = !canOpenUndoModal;
   const undoConfirmDisabled = !canUndoLatestAction;
@@ -9538,16 +9599,35 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         isMinimized={tutorialMinimized}
         hasOpenPanel={tutorialHasOpenPanel}
         onToggleMinimized={() => setTutorialMinimized((value) => !value)}
+        onResume={resumeTutorialOverlay}
         onNext={() => advanceTutorialStep({ markCompleted: true, finish: currentTutorialStep?.id === 'tutorial_complete', actionLabel: 'manual next' })}
         onBack={goBackTutorialStep}
         onSkip={() => advanceTutorialStep({ markCompleted: false, finish: currentTutorialStep?.id === 'tutorial_complete', actionLabel: 'manual skip' })}
-        onExit={exitTutorial}
+        onExit={requestExitTutorial}
         onFocusTarget={focusTutorialTarget}
         onRestart={restartTutorial}
         onExplore={continueExploringTutorial}
         errorMessage={tutorialOverlayError || ''}
         debugInfo={tutorialDebugInfo}
       />
+      <TutorialResumePill
+        show={isTutorialGame && (tutorialMinimized || tutorialHasOpenPanel)}
+        currentStep={currentTutorialStep}
+        hasOpenPanel={tutorialHasOpenPanel}
+        onResume={resumeTutorialOverlay}
+      />
+      {tutorialExitConfirmOpen && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/70 p-4" onClick={() => setTutorialExitConfirmOpen(false)}>
+          <div className="w-full max-w-sm rounded-2xl border border-amber-400/50 bg-slate-950 p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+            <h2 className="text-lg font-black text-amber-100">Exit tutorial?</h2>
+            <p className="mt-2 text-sm text-slate-300">Your current tutorial step is saved. Cancel to keep the overlay open, or exit to leave tutorial guidance.</p>
+            <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <button type="button" onClick={() => setTutorialExitConfirmOpen(false)} className="min-h-11 rounded-xl border border-slate-600 px-4 py-2 font-bold text-slate-100 hover:bg-slate-800">Cancel</button>
+              <button type="button" onClick={confirmExitTutorial} className="min-h-11 rounded-xl bg-red-600 px-4 py-2 font-black text-white hover:bg-red-500">Exit tutorial</button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* 1. Header */}
       <div className="bg-slate-800 border-b border-slate-700 p-2 shrink-0 shadow-md top-action-scroll-wrap">
         <div
@@ -11893,7 +11973,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                 const activeFace = faces[activeIndex];
                 const otherIndex = (activeIndex + 1) % faces.length;
                 const otherFace = getCardFaceAt(liveSelectedCard, otherIndex);
-                const otherImage = otherFace?.image_uris?.normal || otherFace?.image_uris?.large || null;
+                const otherImage = getBestImageUriFromImageUris(otherFace?.image_uris) || otherFace?.image_uri || null;
                 return (
                   <section className="space-y-2 rounded-lg border border-cyan-500/40 bg-cyan-950/20 p-3">
                     <div className="flex items-center justify-between gap-2">
@@ -11901,7 +11981,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                       <span className="rounded-full border border-cyan-400/40 bg-cyan-900/40 px-2 py-0.5 text-[10px] font-bold text-cyan-100">Face {activeIndex + 1}/{faces.length}</span>
                     </div>
                     <div className="text-sm text-slate-100">Current face: <span className="font-bold">{activeFace?.name || getCardDisplayName(liveSelectedCard)}</span></div>
-                    <div className="rounded-lg border border-slate-700 bg-slate-950/40 p-2">
+                    <div className="rounded-lg border border-slate-700 bg-slate-950/40 p-2" aria-label="Other face preview only; use the Transform button to switch faces">
                       <div className="flex gap-2">
                         {otherImage && <img src={otherImage} alt={otherFace?.name || 'Other face'} className="h-24 w-16 rounded object-cover border border-slate-700" />}
                         <div className="min-w-0 flex-1 space-y-1">

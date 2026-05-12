@@ -4796,19 +4796,21 @@ class GameBoardErrorBoundary extends React.Component {
   }
 }
 
-const TutorialOverlay = ({ game, currentStep, canGoBack, isMinimized, hasOpenPanel, onToggleMinimized, onResume, onNext, onBack, onSkip, onExit, onFocusTarget, onRestart, onExplore, errorMessage = '', debugInfo = null }) => {
+const TutorialOverlay = ({ game, currentStep, activeAnchor = null, canGoBack, isMinimized, hasOpenPanel, onToggleMinimized, onResume, onNext, onBack, onSkip, onExit, onFocusTarget, onRestart, onExplore, errorMessage = '', debugInfo = null }) => {
   const [dock, setDock] = useState('bottom');
   const forcedCompact = Boolean(hasOpenPanel);
   const safeCurrentStep = normalizeTutorialStep(currentStep, game?.tutorial?.stepId || 'intro');
   const stepUnavailable = !currentStep || Boolean(errorMessage);
 
+  const tutorialAnchor = activeAnchor || safeCurrentStep?.anchor || null;
+
   useEffect(() => {
-    if (!safeCurrentStep?.anchor || typeof window === 'undefined') {
+    if (!tutorialAnchor || typeof window === 'undefined') {
       return undefined;
     }
 
     const updateDock = () => {
-      const anchor = Array.isArray(safeCurrentStep.anchor) ? safeCurrentStep.anchor[0] : safeCurrentStep.anchor;
+      const anchor = Array.isArray(tutorialAnchor) ? tutorialAnchor[0] : tutorialAnchor;
       if (!anchor) {
         setDock('bottom');
         return;
@@ -4831,7 +4833,7 @@ const TutorialOverlay = ({ game, currentStep, canGoBack, isMinimized, hasOpenPan
       window.removeEventListener('resize', updateDock);
       window.removeEventListener('scroll', updateDock, true);
     };
-  }, [safeCurrentStep?.anchor]);
+  }, [tutorialAnchor]);
 
   if (!game?.isTutorial || game?.tutorial?.inactive) return null;
   const isFinishedStep = safeCurrentStep.id === 'tutorial_complete';
@@ -4839,7 +4841,7 @@ const TutorialOverlay = ({ game, currentStep, canGoBack, isMinimized, hasOpenPan
   const isActionStep = ['detect', 'detect-or-manual'].includes(safeCurrentStep.completion);
 
   const collapsed = isMinimized || forcedCompact;
-  const effectiveDock = safeCurrentStep.anchor ? dock : 'bottom';
+  const effectiveDock = tutorialAnchor ? dock : 'bottom';
   const positionClass = effectiveDock === 'top' ? 'top-16 sm:top-4' : 'bottom-20 sm:bottom-4';
   return (
     <div className={`pointer-events-none fixed inset-x-0 ${positionClass} z-[90] px-3 sm:px-4`}>
@@ -4856,7 +4858,7 @@ const TutorialOverlay = ({ game, currentStep, canGoBack, isMinimized, hasOpenPan
                 Resume
               </button>
             ) : (
-              <button type="button" onClick={onFocusTarget} disabled={!safeCurrentStep.anchor} className="rounded-full border border-amber-300/40 px-3 py-1.5 text-xs font-black text-amber-100 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40" aria-label="Show tutorial target">
+              <button type="button" onClick={onFocusTarget} disabled={!tutorialAnchor} className="rounded-full border border-amber-300/40 px-3 py-1.5 text-xs font-black text-amber-100 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40" aria-label="Show tutorial target">
                 Show me
               </button>
             )}
@@ -4930,7 +4932,7 @@ const TutorialOverlay = ({ game, currentStep, canGoBack, isMinimized, hasOpenPan
                   Back
                 </button>
                 <div className="ml-auto flex gap-2">
-                  <button type="button" onClick={onFocusTarget} disabled={!safeCurrentStep.anchor} className="min-h-10 rounded-lg border border-amber-500/40 px-3 text-sm font-black text-amber-100 hover:bg-amber-950/40 disabled:cursor-not-allowed disabled:opacity-40">
+                  <button type="button" onClick={onFocusTarget} disabled={!tutorialAnchor} className="min-h-10 rounded-lg border border-amber-500/40 px-3 text-sm font-black text-amber-100 hover:bg-amber-950/40 disabled:cursor-not-allowed disabled:opacity-40">
                     Show me
                   </button>
                   <button type="button" onClick={onSkip} className="min-h-10 rounded-lg border border-slate-700 px-3 text-sm font-bold text-slate-300 hover:bg-slate-800">
@@ -5122,7 +5124,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const isTutorialGame = Boolean(game?.isTutorial && !displayedTutorialState?.inactive);
   const currentTutorialStep = isTutorialGame ? getTutorialStepById(displayedTutorialState?.stepId || 'intro') : null;
   const currentTutorialAnchor = (() => {
-    if (targetingState && ['cast_spell_to_stack', 'final_spell'].includes(currentTutorialStep?.id)) return 'target-tools';
+    if (targetingState && ['cast_spell_to_stack', 'final_spell'].includes(currentTutorialStep?.id)) return 'opponent-player-target';
     if (targetingState && currentTutorialStep?.id === 'target_system') return 'target-tools';
     return currentTutorialStep?.anchor || null;
   })();
@@ -9403,6 +9405,18 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     if (isSpectator || !targetingState || !game) return;
     const { source, mode, selectedIds } = targetingState;
 
+    const sourceName = getCardDisplayName(source, '');
+    const requiresTutorialTarget = Boolean(
+      isTutorialGame
+      && ['cast_spell_to_stack', 'final_spell'].includes(currentTutorialStep?.id)
+      && /Lightning Bolt/i.test(sourceName)
+    );
+    if (requiresTutorialTarget && selectedIds.length === 0) {
+      setNotification('Choose Nicol Bolas as the target first.');
+      setTimeout(() => setNotification(null), 2200);
+      return;
+    }
+
     const cardTargets = selectedIds.filter(id => !id.startsWith('player:'));
     const playerTargets = selectedIds.filter(id => id.startsWith('player:')).map(id => id.replace('player:', ''));
 
@@ -10080,6 +10094,16 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   });
 
   const isSelfTargeted = targetingState?.selectedIds.includes(getPlayerTargetId(viewAsPlayerId)) || stackPlayerTargets.has(viewAsPlayerId);
+  const opponentTargetId = opponent?.id ? getPlayerTargetId(opponent.id) : null;
+  const isOpponentTargetSelected = Boolean(opponent?.id && (targetingState?.selectedIds.includes(opponentTargetId) || stackPlayerTargets.has(opponent.id)));
+  const isTutorialLightningBoltTargeting = Boolean(
+    targetingState
+    && isTutorialGame
+    && ['cast_spell_to_stack', 'final_spell'].includes(currentTutorialStep?.id)
+    && /Lightning Bolt/i.test(getCardDisplayName(targetingState.source, ''))
+  );
+  const targetingRequiresSelection = Boolean(targetingState && isTutorialLightningBoltTargeting);
+  const canFinishTargeting = Boolean(targetingState && (!targetingRequiresSelection || targetingState.selectedIds.length > 0));
 
   const scrollToOpponentBattlefield = () => {
     const container = battlefieldScrollRef.current;
@@ -10106,6 +10130,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     }
   };
 
+
   return (
     <div
       className="flex flex-col h-screen bg-slate-900 text-slate-100 overflow-hidden font-sans"
@@ -10119,6 +10144,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       <TutorialOverlay
         game={{ ...game, tutorial: displayedTutorialState || game?.tutorial }}
         currentStep={currentTutorialStep}
+        activeAnchor={currentTutorialAnchor}
         canGoBack={canGoBackTutorial}
         isMinimized={tutorialMinimized}
         hasOpenPanel={tutorialHasOpenPanel}
@@ -10418,14 +10444,32 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           <section
             ref={opponentSectionRef}
             data-tutorial-anchor="opponent-battlefield"
-            className={`rounded-xl border p-3 mb-3 min-h-[280px] transition-all duration-300 ${opponentSectionHighlighted ? 'border-blue-400 bg-blue-900/20 ring-2 ring-blue-400/60' : 'border-slate-700 bg-slate-800/30'}${getTutorialAnchorClass(currentTutorialAnchor, 'opponent-battlefield', tutorialPulseAnchor)}`}
+            className={`rounded-xl border p-3 mb-3 min-h-[280px] transition-all duration-300 ${opponentSectionHighlighted ? 'border-blue-400 bg-blue-900/20 ring-2 ring-blue-400/60' : 'border-slate-700 bg-slate-800/30'}${isOpponentTargetSelected ? ' ring-2 ring-blue-400 bg-blue-900/20 border-blue-400' : ''}${getTutorialAnchorClass(currentTutorialAnchor, 'opponent-battlefield', tutorialPulseAnchor)}`}
           >
-            <div className="flex justify-between items-start mb-2">
+            <div
+              data-tutorial-anchor="opponent-player-target"
+              role={targetingState && opponent ? 'button' : undefined}
+              tabIndex={targetingState && opponent ? 0 : undefined}
+              aria-label={targetingState && opponent ? `Target ${opponent.name || 'opponent player'}` : undefined}
+              onClick={(event) => {
+                if (!targetingState || !opponent?.id) return;
+                event.stopPropagation();
+                toggleTargetPlayer(opponent.id);
+              }}
+              onKeyDown={(event) => {
+                if (!targetingState || !opponent?.id || !['Enter', ' '].includes(event.key)) return;
+                event.preventDefault();
+                toggleTargetPlayer(opponent.id);
+              }}
+              className={`flex min-h-16 justify-between items-start mb-2 rounded-lg p-2 transition-all ${targetingState && opponent ? 'cursor-crosshair border border-blue-400/60 bg-blue-950/30 hover:bg-blue-900/40 active:scale-[0.99]' : 'border border-transparent'}${isOpponentTargetSelected ? ' ring-2 ring-blue-300 bg-blue-800/30' : ''}${getTutorialAnchorClass(currentTutorialAnchor, 'opponent-player-target', tutorialPulseAnchor)}`}>
               <div className="flex items-center gap-2">
                 <Shield size={16} className="text-red-400"/>
                 <div>
                   <div className="text-[10px] uppercase tracking-widest text-slate-400 font-bold">Opponent Battlefield</div>
-                  <div className="font-bold text-slate-100">{opponent?.name || 'Waiting...'}</div>
+                  <div className="flex items-center gap-2 font-bold text-slate-100">
+                    <span>{opponent?.name || 'Waiting...'}</span>
+                    {isOpponentTargetSelected && <span className="rounded-full bg-blue-500 px-2 py-0.5 text-xs font-black text-white shadow">🎯 Targeted</span>}
+                  </div>
                 </div>
                 {isOppTurn && (
                   <span className="text-[10px] font-extrabold uppercase tracking-widest px-2 py-0.5 rounded-full bg-amber-600/30 text-amber-200 border border-amber-500/40">
@@ -10440,7 +10484,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               </div>
               {opponent && (
                 <div className="flex max-w-[55%] flex-wrap justify-end gap-1 text-xs">
-                  <span className="bg-slate-700 px-2 py-0.5 rounded h-fit">Life: {opponent?.life}</span>
+                  <span className={`px-2 py-0.5 rounded h-fit ${targetingState ? 'bg-blue-700 text-white ring-1 ring-blue-300' : 'bg-slate-700'}`}>Life: {opponent?.life}</span>
                   {getVisiblePlayerCounters(opponent).map((counter) => (
                     <span key={counter.key} className="rounded bg-slate-700 px-2 py-0.5 text-slate-100" title={counter.label}>{counter.label}: {counter.value}</span>
                   ))}
@@ -11295,8 +11339,16 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               <span>Select targets for: {getCardDisplayName(targetingState.source)}</span>
               <span className="bg-white text-blue-600 px-2 rounded-full text-xs">{targetingState.selectedIds.length}</span>
             </div>
+            {targetingRequiresSelection && targetingState.selectedIds.length === 0 && (
+              <div className="rounded-md border border-white/25 bg-blue-900/40 px-2 py-1 text-xs text-blue-50">Choose Nicol Bolas as the target first.</div>
+            )}
             <div className="flex justify-center gap-4 text-xs mt-1">
-              <button onClick={finishTargeting} className="bg-white text-blue-600 px-4 py-1.5 rounded-full font-bold shadow hover:bg-blue-50 flex items-center gap-1"><Check size={14}/> Done</button>
+              <button
+                onClick={finishTargeting}
+                disabled={!canFinishTargeting}
+                className={`bg-white text-blue-600 px-4 py-1.5 rounded-full font-bold shadow hover:bg-blue-50 flex items-center gap-1 disabled:cursor-not-allowed disabled:opacity-50 ${!canFinishTargeting ? 'ring-2 ring-white/30' : ''}`}
+                title={!canFinishTargeting ? 'Choose Nicol Bolas as the target first.' : 'Confirm selected targets'}
+              ><Check size={14}/> Done</button>
               <button onClick={() => setTargetingState(null)} className="text-blue-200 underline hover:text-white">Cancel</button>
             </div>
           </div>
@@ -12624,7 +12676,15 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                       actionType: 'SET_TARGETING_STATE_CAST',
                       payload: { sourceId: selectedCard.instanceId, mode: 'CAST', selectedIds: [] },
                       className: "col-span-2 min-h-10 bg-purple-900/50 hover:bg-purple-800 text-purple-100 p-2 rounded-lg text-sm font-medium border border-purple-800 flex items-center justify-center gap-2",
-                      onClick: () => { if (!canAct) return; setTargetingState({ source: selectedCard, mode: 'CAST', selectedIds: [] }); setSelectedCard(null); },
+                      onClick: () => {
+                        if (!canAct) return;
+                        const shouldFocusOpponentTarget = isTutorialGame
+                          && ['cast_spell_to_stack', 'final_spell'].includes(currentTutorialStep?.id)
+                          && /Lightning Bolt/i.test(getCardDisplayName(selectedCard, ''));
+                        setTargetingState({ source: selectedCard, mode: 'CAST', selectedIds: [] });
+                        setSelectedCard(null);
+                        if (shouldFocusOpponentTarget) window.setTimeout(scrollToOpponentBattlefield, 50);
+                      },
                       children: 'Cast + Target 🎯'
                     })}
                     <button onClick={() => { handleAction('MOVE_ZONE', { cardId: selectedCard.instanceId, targetZone: ZONES.BATTLEFIELD }); handleAction('TOGGLE_FACE', { cardId: selectedCard.instanceId }); setSelectedCard(null); }} className="col-span-2 min-h-10 bg-slate-700 text-slate-300 p-2 rounded-lg text-sm">Play Face Down (Morph)</button>

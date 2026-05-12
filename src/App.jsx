@@ -56,6 +56,16 @@ const PLAYER_COUNTER_BADGE_LABELS = {
 const COMMANDER_SECTION_HEADERS = new Set(['commander', 'commanders']);
 const DECK_SECTION_HEADERS = new Set(['deck', 'main deck', 'mainboard']);
 
+const MANA_COLORS = ['W', 'U', 'B', 'R', 'G', 'C'];
+const DEFAULT_MANA_POOL = Object.freeze({ W: 0, U: 0, B: 0, R: 0, G: 0, C: 0 });
+const MANA_COLOR_LABELS = {
+  W: 'White',
+  U: 'Blue',
+  B: 'Black',
+  R: 'Red',
+  G: 'Green',
+  C: 'Colorless'
+};
 
 const PLAYER_STATUS_LABELS = {
   monarch: 'Monarch',
@@ -83,6 +93,20 @@ const PLAYER_EMBLEM_PRESETS = [
 ];
 
 const clampRingTemptationLevel = (value) => clamp(Number.parseInt(value, 10) || 0, 0, 4);
+const normalizeManaAmount = (value) => Math.max(0, Number.parseInt(value, 10) || 0);
+const getPlayerManaPool = (player = {}) => {
+  const manaPool = player?.manaPool && typeof player.manaPool === 'object' ? player.manaPool : {};
+  return MANA_COLORS.reduce((pool, color) => ({ ...pool, [color]: normalizeManaAmount(manaPool[color]) }), {});
+};
+const clearManaPool = () => ({ ...DEFAULT_MANA_POOL });
+const hasFloatingMana = (player = {}) => Object.values(getPlayerManaPool(player)).some((amount) => amount > 0);
+const getManaPoolSummary = (player = {}, { includeZeroes = false } = {}) => {
+  const manaPool = getPlayerManaPool(player);
+  const entries = MANA_COLORS
+    .filter((color) => includeZeroes || manaPool[color] > 0)
+    .map((color) => `${color}${manaPool[color]}`);
+  return entries.length > 0 ? entries.join(' ') : 'Empty';
+};
 
 const sanitizeCustomPlayerStatusText = (text) => String(text || '').replace(/\s+/g, ' ').trim().slice(0, MAX_CUSTOM_PLAYER_STATUS_LENGTH);
 const sanitizeEmblemName = (name) => String(name || '').replace(/\s+/g, ' ').trim().slice(0, MAX_PLAYER_EMBLEM_NAME_LENGTH);
@@ -1558,6 +1582,8 @@ const UNDO_FIELDS_BY_ACTION_TYPE = {
   RING_TEMPTATION: PLAYERS_ONLY_UNDO_STATE_FIELDS,
   PLAYER_STATUS_ADD_CUSTOM: PLAYERS_ONLY_UNDO_STATE_FIELDS,
   PLAYER_STATUS_REMOVE_CUSTOM: PLAYERS_ONLY_UNDO_STATE_FIELDS,
+  MANA_POOL_ADJUST: PLAYERS_ONLY_UNDO_STATE_FIELDS,
+  MANA_POOL_CLEAR: PLAYERS_ONLY_UNDO_STATE_FIELDS,
   SET_DAY_NIGHT: DAY_NIGHT_ONLY_UNDO_STATE_FIELDS,
   CLEAR_CLEANUP_REMINDERS: ({ updates } = {}) => ['cards', 'players'].filter((field) => updates && Object.prototype.hasOwnProperty.call(updates, field)),
   SET_ATTACK_TARGET: COMBAT_ONLY_UNDO_STATE_FIELDS,
@@ -1635,6 +1661,8 @@ const UNDOABLE_ACTION_TYPES = new Set([
   'RING_TEMPTATION',
   'PLAYER_STATUS_ADD_CUSTOM',
   'PLAYER_STATUS_REMOVE_CUSTOM',
+  'MANA_POOL_ADJUST',
+  'MANA_POOL_CLEAR',
   'SET_DAY_NIGHT',
   'CLEAR_CLEANUP_REMINDERS'
 ]);
@@ -4590,6 +4618,21 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const getVisiblePlayerCounters = (player) => Object.entries(player?.counters || {})
     .filter(([key, value]) => (commanderModeEnabled || key !== 'commanderTax') && Number(value) > 0)
     .map(([key, value]) => ({ key, label: PLAYER_COUNTER_BADGE_LABELS[key] || PLAYER_COUNTER_LABELS[key] || key, value }));
+  const renderManaPoolBadge = (player, size = 'compact', { always = false } = {}) => {
+    if (!player || (!always && !hasFloatingMana(player))) return null;
+    return (
+      <button
+        type="button"
+        onClick={(event) => { event.stopPropagation(); if (player.id === viewAsPlayerId) setPlayerStatsOpen(true); }}
+        className={`${size === 'tiny' ? 'max-w-[10rem] px-1.5 py-0.5 text-[10px]' : 'max-w-[12rem] px-2 py-0.5 text-xs'} truncate rounded border border-blue-500/50 bg-blue-950/60 font-bold text-blue-100`}
+        title={`Mana pool: ${getManaPoolSummary(player, { includeZeroes: true })}`}
+      >
+        Mana: {getManaPoolSummary(player)}
+      </button>
+    );
+  };
+  const adjustManaPool = (color, amount) => handleAction('MANA_POOL_ADJUST', { color, amount });
+  const handleClearManaPool = () => handleAction('MANA_POOL_CLEAR');
   const getPlayerReminders = (playerId) => getEntityReminders((game?.players || []).find((player) => player.id === playerId));
   const renderPlayerEmblemBadges = (player, size = 'compact') => {
     const label = getPlayerEmblemBadgeLabel(player);
@@ -5981,6 +6024,34 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       const targetName = targetPlayer.name || 'Player';
       updates.log = arrayUnion(makeActionLog('REMOVE_PLAYER_EMBLEM', `${actorName} removed an emblem: ${removedEmblem.name}.`, { category: 'emblem', targetPlayerId, targetPlayerName: targetName, emblemId: removedEmblem.id, emblemName: removedEmblem.name }));
 
+    } else if (actionType === 'MANA_POOL_ADJUST') {
+      const color = MANA_COLORS.includes(payload.color) ? payload.color : null;
+      const amount = Number.parseInt(payload.amount, 10) || 0;
+      if (!color || amount === 0) return;
+      const targetPlayerId = userId;
+      const targetPlayer = game.players.find(p => p.id === targetPlayerId);
+      if (!targetPlayer) return;
+      const currentPool = getPlayerManaPool(targetPlayer);
+      const nextAmount = Math.max(0, currentPool[color] + amount);
+      if (nextAmount === currentPool[color]) return;
+      const nextPool = { ...currentPool, [color]: nextAmount };
+      const nextPlayers = game.players.map((player) => player.id === targetPlayerId ? { ...player, manaPool: nextPool } : player);
+      updates.players = nextPlayers;
+      optimisticPatch = { players: nextPlayers };
+      const verb = amount > 0 ? 'added' : 'removed';
+      updates.log = arrayUnion(makeActionLog('MANA_POOL_ADJUST', `${actorName} ${verb} {${color}}.`, { category: 'mana', color, amount: amount > 0 ? 1 : -1, targetPlayerId }));
+
+    } else if (actionType === 'MANA_POOL_CLEAR') {
+      const targetPlayerId = userId;
+      const targetPlayer = game.players.find(p => p.id === targetPlayerId);
+      if (!targetPlayer) return;
+      const currentPool = getPlayerManaPool(targetPlayer);
+      if (!Object.values(currentPool).some((amount) => amount > 0)) return;
+      const nextPlayers = game.players.map((player) => player.id === targetPlayerId ? { ...player, manaPool: clearManaPool() } : player);
+      updates.players = nextPlayers;
+      optimisticPatch = { players: nextPlayers };
+      updates.log = arrayUnion(makeActionLog('MANA_POOL_CLEAR', `${actorName} cleared their mana pool.`, { category: 'mana', targetPlayerId }));
+
     } else if (actionType === 'SET_DAY_NIGHT') {
       const nextDayNight = payload.value === 'day' || payload.value === 'night' ? payload.value : null;
       const currentDayNight = getDayNightValue(game);
@@ -6912,6 +6983,36 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             previousNewestUndoActionType: getPerfLatestUndoEntry(currentGame)?.actionType || null,
             previousNewestUndoCardId: getPerfLatestUndoEntry(currentGame)?.cardId || null
           }, perfActionId);
+        }
+        if (actionType === 'MANA_POOL_ADJUST') {
+          const color = MANA_COLORS.includes(payload.color) ? payload.color : null;
+          const amount = Number.parseInt(payload.amount, 10) || 0;
+          const currentTargetPlayer = currentPlayers.find((player) => player.id === userId);
+          if (!color || amount === 0 || !currentTargetPlayer) return;
+          const currentPool = getPlayerManaPool(currentTargetPlayer);
+          const nextAmount = Math.max(0, currentPool[color] + amount);
+          if (nextAmount === currentPool[color]) return;
+          const nextPool = { ...currentPool, [color]: nextAmount };
+          const nextPlayers = currentPlayers.map((player) => player.id === userId ? { ...player, manaPool: nextPool } : player);
+          transactionActionLabel = normalizeUndoActionLabel(`${transactionActorName} ${amount > 0 ? 'added' : 'removed'} {${color}}.`, transactionActorName);
+          transactionUpdates = {
+            ...updates,
+            players: nextPlayers,
+            log: arrayUnion(makeActionLog('MANA_POOL_ADJUST', `${transactionActorName} ${amount > 0 ? 'added' : 'removed'} {${color}}.`, { category: 'mana', color, amount: amount > 0 ? 1 : -1, targetPlayerId: userId }))
+          };
+        }
+        if (actionType === 'MANA_POOL_CLEAR') {
+          const currentTargetPlayer = currentPlayers.find((player) => player.id === userId);
+          if (!currentTargetPlayer) return;
+          const currentPool = getPlayerManaPool(currentTargetPlayer);
+          if (!Object.values(currentPool).some((amount) => amount > 0)) return;
+          const nextPlayers = currentPlayers.map((player) => player.id === userId ? { ...player, manaPool: clearManaPool() } : player);
+          transactionActionLabel = normalizeUndoActionLabel(`${transactionActorName} cleared their mana pool.`, transactionActorName);
+          transactionUpdates = {
+            ...updates,
+            players: nextPlayers,
+            log: arrayUnion(makeActionLog('MANA_POOL_CLEAR', `${transactionActorName} cleared their mana pool.`, { category: 'mana', targetPlayerId: userId }))
+          };
         }
         const undoEntry = buildUndoEntry({
           currentGame: undoBaseGame,
@@ -8390,6 +8491,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                   {getVisiblePlayerCounters(opponent).map((counter) => (
                     <span key={counter.key} className="rounded bg-slate-700 px-2 py-0.5 text-slate-100" title={counter.label}>{counter.label}: {counter.value}</span>
                   ))}
+                  {renderManaPoolBadge(opponent)}
                   {renderPlayerStatusBadges(opponent)}
                   {renderPlayerEmblemBadges(opponent)}
                   {commanderModeEnabled && getTotalCommanderDamageToPlayer(opponent.id) > 0 && (
@@ -8678,6 +8780,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                 {getVisiblePlayerCounters(myPlayer).map((counter) => (
                   <span key={counter.key} className="rounded bg-slate-700 px-1.5 py-0.5 text-[10px] text-slate-100" title={counter.label}>{counter.label}: {counter.value}</span>
                 ))}
+                {renderManaPoolBadge(myPlayer, 'tiny', { always: true })}
                 {renderPlayerStatusBadges(myPlayer, 'tiny')}
                 {renderPlayerEmblemBadges(myPlayer, 'tiny')}
                 {commanderModeEnabled && getTotalCommanderDamageToPlayer(viewAsPlayerId) > 0 && (
@@ -9847,6 +9950,40 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           <div className="max-h-[88vh] w-full max-w-sm overflow-y-auto rounded-xl border border-slate-600 bg-slate-800 p-5" onClick={e => e.stopPropagation()}>
             <h3 className="text-xl font-bold mb-4 text-white">Player Counters & Statuses</h3>
             <div className="space-y-4">
+              <div className="rounded-lg border border-blue-500/30 bg-blue-950/20 p-3">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <div>
+                    <div className="text-[11px] font-bold uppercase tracking-wider text-blue-200">Mana Pool</div>
+                    <div className="text-[11px] text-slate-400">Manual floating mana tracker. No payment automation.</div>
+                  </div>
+                  <span className="rounded-full border border-blue-500/40 bg-blue-950/60 px-2 py-0.5 text-[10px] font-bold text-blue-100">{getManaPoolSummary(myPlayer)}</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  {MANA_COLORS.map((color) => {
+                    const amount = getPlayerManaPool(myPlayer)[color];
+                    return (
+                      <div key={color} className="flex items-center justify-between rounded bg-slate-900/80 p-2">
+                        <div>
+                          <div className="text-sm font-black text-white">{color} <span className="text-blue-200">{amount}</span></div>
+                          <div className="text-[10px] text-slate-500">{MANA_COLOR_LABELS[color]}</div>
+                        </div>
+                        <div className="flex gap-1.5">
+                          <button type="button" disabled={!canAct || amount <= 0} onClick={() => adjustManaPool(color, -1)} className="h-8 w-8 rounded bg-slate-800 text-lg font-black text-red-300 disabled:opacity-40">-</button>
+                          <button type="button" disabled={!canAct} onClick={() => adjustManaPool(color, 1)} className="h-8 w-8 rounded bg-slate-800 text-lg font-black text-green-300 disabled:opacity-40">+</button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <button
+                  type="button"
+                  disabled={!canAct || !hasFloatingMana(myPlayer)}
+                  onClick={handleClearManaPool}
+                  className="mt-3 w-full rounded-lg border border-blue-500/40 bg-blue-900/40 px-3 py-2 text-sm font-bold text-blue-100 disabled:opacity-40"
+                >
+                  Clear mana pool
+                </button>
+              </div>
               {[...defaultPlayerCounters, ...Object.keys(myPlayer?.counters || {}).filter(type => !defaultPlayerCounters.includes(type) && (commanderModeEnabled || type !== 'commanderTax'))].map(type => (
                 <div key={type} className="flex justify-between items-center bg-slate-700 p-3 rounded">
                   <span className="capitalize text-slate-300 font-medium">{PLAYER_COUNTER_LABELS[type] || type}</span>
@@ -11120,6 +11257,7 @@ export default function App() {
           life: startingLife,
           turnOrder: 0,
           counters: { poison: 0, energy: 0, experience: 0 },
+          manaPool: clearManaPool(),
           statuses: { monarch: false, initiative: false, citysBlessing: false, ringBearerLevel: 0, custom: [] },
           emblems: [],
           handRevealed: false,
@@ -11198,6 +11336,7 @@ export default function App() {
             life: getStartingLifeForMode(getGameMode(gameData)),
             turnOrder: players.length,
             counters: { poison: 0, energy: 0, experience: 0 },
+            manaPool: clearManaPool(),
             statuses: { monarch: false, initiative: false, citysBlessing: false, ringBearerLevel: 0, custom: [] },
             emblems: [],
             handRevealed: false,

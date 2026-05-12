@@ -586,12 +586,44 @@ const TUTORIAL_SCRIPT_STEPS = [
     completion: 'finish'
   },
 ];
-const TUTORIAL_STEP_IDS = TUTORIAL_SCRIPT_STEPS.map((step) => step.id);
-const getTutorialStepById = (stepId) => TUTORIAL_SCRIPT_STEPS.find((step) => step.id === stepId) || TUTORIAL_SCRIPT_STEPS[0];
-const getTutorialStepIndex = (stepId) => Math.max(0, TUTORIAL_STEP_IDS.indexOf(stepId));
-const getNextTutorialStepId = (stepId) => TUTORIAL_SCRIPT_STEPS[Math.min(getTutorialStepIndex(stepId) + 1, TUTORIAL_SCRIPT_STEPS.length - 1)]?.id || stepId;
-const getPreviousTutorialStepId = (stepId) => TUTORIAL_SCRIPT_STEPS[Math.max(getTutorialStepIndex(stepId) - 1, 0)]?.id || stepId;
-const capTutorialCompletedStepIds = (stepIds = []) => [...new Set(stepIds.filter(Boolean))].slice(-80);
+const TUTORIAL_FALLBACK_STEP = {
+  id: 'intro',
+  chapter: 'Tutorial',
+  title: 'Tutorial step unavailable',
+  dialogue: 'Tutorial step unavailable. Skip or restart tutorial.',
+  objective: 'Tutorial step unavailable. Skip or restart tutorial.',
+  hint: 'Tutorial step unavailable. Skip or restart tutorial.',
+  anchor: null,
+  completion: 'manual'
+};
+const normalizeTutorialStep = (step, fallbackId = 'intro') => {
+  const safeStep = step && typeof step === 'object' ? step : {};
+  return {
+    ...TUTORIAL_FALLBACK_STEP,
+    ...safeStep,
+    id: typeof safeStep.id === 'string' && safeStep.id ? safeStep.id : fallbackId,
+    chapter: typeof safeStep.chapter === 'string' && safeStep.chapter ? safeStep.chapter : TUTORIAL_FALLBACK_STEP.chapter,
+    title: typeof safeStep.title === 'string' && safeStep.title ? safeStep.title : TUTORIAL_FALLBACK_STEP.title,
+    dialogue: typeof safeStep.dialogue === 'string' && safeStep.dialogue ? safeStep.dialogue : TUTORIAL_FALLBACK_STEP.dialogue,
+    objective: typeof safeStep.objective === 'string' && safeStep.objective ? safeStep.objective : TUTORIAL_FALLBACK_STEP.objective,
+    hint: typeof safeStep.hint === 'string' && safeStep.hint ? safeStep.hint : TUTORIAL_FALLBACK_STEP.hint,
+    anchor: typeof safeStep.anchor === 'string' || Array.isArray(safeStep.anchor) ? safeStep.anchor : null,
+    completion: ['manual', 'detect', 'detect-or-manual', 'finish'].includes(safeStep.completion) ? safeStep.completion : 'manual'
+  };
+};
+const TUTORIAL_STEP_IDS = TUTORIAL_SCRIPT_STEPS.map((step) => step?.id).filter(Boolean);
+const getTutorialStepById = (stepId) => {
+  const requestedId = typeof stepId === 'string' && stepId ? stepId : 'intro';
+  const foundStep = TUTORIAL_SCRIPT_STEPS.find((step) => step?.id === requestedId) || TUTORIAL_SCRIPT_STEPS.find((step) => step?.id === 'intro') || TUTORIAL_SCRIPT_STEPS[0];
+  return normalizeTutorialStep(foundStep, requestedId);
+};
+const getTutorialStepIndex = (stepId) => {
+  const index = TUTORIAL_STEP_IDS.indexOf(stepId);
+  return Math.min(Math.max(index >= 0 ? index : 0, 0), Math.max(TUTORIAL_STEP_IDS.length - 1, 0));
+};
+const getNextTutorialStepId = (stepId) => TUTORIAL_SCRIPT_STEPS[Math.min(getTutorialStepIndex(stepId) + 1, TUTORIAL_SCRIPT_STEPS.length - 1)]?.id || 'intro';
+const getPreviousTutorialStepId = (stepId) => TUTORIAL_SCRIPT_STEPS[Math.max(getTutorialStepIndex(stepId) - 1, 0)]?.id || 'intro';
+const capTutorialCompletedStepIds = (stepIds = []) => [...new Set((Array.isArray(stepIds) ? stepIds : []).filter(Boolean))].slice(-80);
 const getTutorialAnchorClass = (activeAnchor, anchor, pulseAnchor = null) => {
   if (!activeAnchor || !anchor) return '';
   const anchors = Array.isArray(anchor) ? anchor : [anchor];
@@ -4875,17 +4907,23 @@ class GameBoardErrorBoundary extends React.Component {
   }
 }
 
-const TutorialOverlay = ({ game, currentStep, canGoBack, isMinimized, hasOpenPanel, onToggleMinimized, onNext, onBack, onSkip, onExit, onFocusTarget, onRestart, onExplore }) => {
+const TutorialOverlay = ({ game, currentStep, canGoBack, isMinimized, hasOpenPanel, onToggleMinimized, onNext, onBack, onSkip, onExit, onFocusTarget, onRestart, onExplore, errorMessage = '' }) => {
   const [dock, setDock] = useState('bottom');
   const forcedCompact = Boolean(hasOpenPanel);
+  const safeCurrentStep = normalizeTutorialStep(currentStep, game?.tutorial?.stepId || 'intro');
+  const stepUnavailable = !currentStep || Boolean(errorMessage);
 
   useEffect(() => {
-    if (!currentStep?.anchor || typeof window === 'undefined') {
+    if (!safeCurrentStep?.anchor || typeof window === 'undefined') {
       return undefined;
     }
 
     const updateDock = () => {
-      const anchor = Array.isArray(currentStep.anchor) ? currentStep.anchor[0] : currentStep.anchor;
+      const anchor = Array.isArray(safeCurrentStep.anchor) ? safeCurrentStep.anchor[0] : safeCurrentStep.anchor;
+      if (!anchor) {
+        setDock('bottom');
+        return;
+      }
       const element = document.querySelector(`[data-tutorial-anchor="${anchor}"]`);
       if (!element) {
         setDock('bottom');
@@ -4904,14 +4942,14 @@ const TutorialOverlay = ({ game, currentStep, canGoBack, isMinimized, hasOpenPan
       window.removeEventListener('resize', updateDock);
       window.removeEventListener('scroll', updateDock, true);
     };
-  }, [currentStep?.anchor]);
+  }, [safeCurrentStep?.anchor]);
 
-  if (!game?.isTutorial || !currentStep || game.tutorial?.inactive) return null;
-  const isFinishedStep = currentStep.id === 'tutorial_complete';
-  const stepNumber = getTutorialStepIndex(currentStep.id) + 1;
+  if (!game?.isTutorial || game?.tutorial?.inactive) return null;
+  const isFinishedStep = safeCurrentStep.id === 'tutorial_complete';
+  const stepNumber = getTutorialStepIndex(safeCurrentStep.id) + 1;
 
   const collapsed = isMinimized || forcedCompact;
-  const effectiveDock = currentStep.anchor ? dock : 'bottom';
+  const effectiveDock = safeCurrentStep.anchor ? dock : 'bottom';
   const positionClass = effectiveDock === 'top' ? 'top-16 sm:top-4' : 'bottom-20 sm:bottom-4';
   return (
     <div className={`pointer-events-none fixed inset-x-0 ${positionClass} z-[90] px-3 sm:px-4`}>
@@ -4919,11 +4957,11 @@ const TutorialOverlay = ({ game, currentStep, canGoBack, isMinimized, hasOpenPan
         <div className="flex items-center justify-between gap-3 border-b border-amber-500/20 bg-gradient-to-r from-amber-950/80 to-purple-950/80 px-4 py-3">
           <button type="button" onClick={collapsed ? onToggleMinimized : undefined} className="min-w-0 flex-1 text-left" aria-label={collapsed ? 'Expand tutorial' : undefined}>
             <div className="text-[10px] font-black uppercase tracking-[0.2em] text-amber-200">Tutorial · {stepNumber}/{TUTORIAL_SCRIPT_STEPS.length}</div>
-            <div className="truncate text-sm font-extrabold text-white">{currentStep.chapter}</div>
+            <div className="truncate text-sm font-extrabold text-white">{safeCurrentStep.chapter}</div>
             {forcedCompact && <div className="mt-0.5 truncate text-[11px] font-bold text-amber-100/80">Compact while a menu is open. Tap the chevron to expand when ready.</div>}
           </button>
           <div className="flex items-center gap-2">
-            <button type="button" onClick={onFocusTarget} disabled={!currentStep.anchor} className="rounded-full border border-amber-300/40 px-3 py-1.5 text-xs font-black text-amber-100 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40" aria-label="Show tutorial target">
+            <button type="button" onClick={onFocusTarget} disabled={!safeCurrentStep.anchor} className="rounded-full border border-amber-300/40 px-3 py-1.5 text-xs font-black text-amber-100 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40" aria-label="Show tutorial target">
               Show me
             </button>
             <button type="button" onClick={onToggleMinimized} className="rounded-full p-2 text-amber-100 hover:bg-white/10" aria-label={isMinimized ? 'Expand tutorial' : 'Minimize tutorial'}>
@@ -4938,17 +4976,22 @@ const TutorialOverlay = ({ game, currentStep, canGoBack, isMinimized, hasOpenPan
         {!collapsed && (
           <div className="space-y-3 px-4 py-4">
             <div>
-              <h2 className="text-lg font-black leading-tight text-amber-50">{currentStep.title}</h2>
-              <p className="mt-2 rounded-xl border border-purple-500/20 bg-purple-950/30 p-3 text-sm italic leading-relaxed text-purple-100">“{currentStep.dialogue}”</p>
+              <h2 className="text-lg font-black leading-tight text-amber-50">{safeCurrentStep.title}</h2>
+              <p className="mt-2 rounded-xl border border-purple-500/20 bg-purple-950/30 p-3 text-sm italic leading-relaxed text-purple-100">“{safeCurrentStep.dialogue}”</p>
             </div>
+            {stepUnavailable && (
+              <div className="rounded-xl border border-red-400/40 bg-red-950/30 p-3 text-sm font-bold text-red-100">
+                {errorMessage || 'Tutorial step unavailable. Skip or restart tutorial.'}
+              </div>
+            )}
             <div className="grid gap-2 text-sm">
               <div className="rounded-xl border border-slate-700 bg-slate-900/80 p-3">
                 <div className="text-[10px] font-black uppercase tracking-widest text-emerald-300">Objective</div>
-                <div className="mt-1 text-slate-100">{currentStep.objective}</div>
+                <div className="mt-1 text-slate-100">{safeCurrentStep.objective}</div>
               </div>
               <div className="rounded-xl border border-slate-700 bg-slate-900/70 p-3">
                 <div className="text-[10px] font-black uppercase tracking-widest text-sky-300">Hint</div>
-                <div className="mt-1 text-slate-300">{currentStep.hint}</div>
+                <div className="mt-1 text-slate-300">{safeCurrentStep.hint}</div>
               </div>
             </div>
             {isFinishedStep && game.tutorial?.finished ? (
@@ -4966,7 +5009,7 @@ const TutorialOverlay = ({ game, currentStep, canGoBack, isMinimized, hasOpenPan
                   Back
                 </button>
                 <div className="ml-auto flex gap-2">
-                  <button type="button" onClick={onFocusTarget} disabled={!currentStep.anchor} className="min-h-10 rounded-lg border border-amber-500/40 px-3 text-sm font-black text-amber-100 hover:bg-amber-950/40 disabled:cursor-not-allowed disabled:opacity-40">
+                  <button type="button" onClick={onFocusTarget} disabled={!safeCurrentStep.anchor} className="min-h-10 rounded-lg border border-amber-500/40 px-3 text-sm font-black text-amber-100 hover:bg-amber-950/40 disabled:cursor-not-allowed disabled:opacity-40">
                     Show me
                   </button>
                   <button type="button" onClick={onSkip} className="min-h-10 rounded-lg border border-slate-700 px-3 text-sm font-bold text-slate-300 hover:bg-slate-800">
@@ -5080,6 +5123,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const [undoConfirmOpen, setUndoConfirmOpen] = useState(false);
   const [repairGameSizeBusy, setRepairGameSizeBusy] = useState(false);
   const [tutorialMinimized, setTutorialMinimized] = useState(false);
+  const [tutorialOverlayError, setTutorialOverlayError] = useState(null);
 
   // Chat State
   const [chatOpen, setChatOpen] = useState(false);
@@ -5089,16 +5133,17 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
   // Use the viewAsId to determine which player is "Active" on this screen
   const userId = realUserId;
-  const isPlayer = (game?.players || []).some(p => p.id === userId);
+  const players = useMemo(() => (Array.isArray(game?.players) ? game.players : []), [game?.players]);
+  const isPlayer = players.some(p => p?.id === userId);
   const isHost = Boolean(game?.hostId && game.hostId === userId);
-  const isSpectator = !isPlayer && (game?.spectatorIds || []).includes(userId);
+  const isSpectator = !isPlayer && (Array.isArray(game?.spectatorIds) ? game.spectatorIds : []).includes(userId);
 
   useEffect(() => {
     if (!game || !isSpectator) return;
-    const players = game.players || [];
-    if (players.length === 0) return;
-    if (!viewAsId || !players.some(p => p.id === viewAsId)) {
-      setViewAsId(players[0].id);
+    const effectPlayers = Array.isArray(game.players) ? game.players : [];
+    if (effectPlayers.length === 0) return;
+    if (!viewAsId || !effectPlayers.some(p => p.id === viewAsId)) {
+      setViewAsId(effectPlayers[0].id);
     }
   }, [game, isSpectator, viewAsId]);
 
@@ -5109,7 +5154,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   }, [isSpectator, boardUnlocked]);
 
   const viewAsPlayerId = isSpectator ? viewAsId : userId;
-  const viewAsPlayer = (game?.players || []).find(p => p.id === viewAsPlayerId);
+  const viewAsPlayer = players.find(p => p?.id === viewAsPlayerId);
+  const opponent = players.find(p => p?.id !== viewAsPlayerId);
   const canAct = !isSpectator;
   const showGameSizeDebug = isDebugActionsEnabled() || isPerfActionsEnabled();
   const gameDocumentSizeEstimate = useMemo(() => (showGameSizeDebug && game ? getGameDocumentSizeEstimate(game) : null), [showGameSizeDebug, game]);
@@ -5143,9 +5189,10 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     window.setTimeout(() => setTutorialPulseAnchor((current) => current === anchor ? null : current), 2800);
   }, [currentTutorialAnchor]);
 
-  const updateTutorialState = async (updates) => {
+  const updateTutorialState = async (updates = {}) => {
     if (!gameId || !game?.isTutorial) return;
-    await updateDoc(doc(db, 'games_v3', gameId), {
+    try {
+      await updateDoc(doc(db, 'games_v3', gameId), {
       tutorial: {
         scriptVersion: game.tutorial?.scriptVersion || TUTORIAL_SCRIPT_VERSION,
         stepId: updates.stepId ?? game.tutorial?.stepId ?? 'intro',
@@ -5157,7 +5204,12 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         inactive: Boolean(updates.inactive ?? game.tutorial?.inactive)
       },
       updatedAt: serverTimestamp()
-    });
+      });
+      setTutorialOverlayError(null);
+    } catch (error) {
+      console.error('Tutorial state update failed', error);
+      setTutorialOverlayError('Tutorial step unavailable. Skip or restart tutorial.');
+    }
   };
 
   const advanceTutorialStep = async ({ markCompleted = true, finish = false } = {}) => {
@@ -5239,12 +5291,14 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
 
   const buildTutorialCardInstance = useCallback((cardName, ownerId, zone = ZONES.HAND, controllerId = ownerId) => {
-    const seed = TUTORIAL_STARTER_CARD_SEED.find((card) => card.name === cardName) || { name: cardName, type_line: 'Card', oracle_text: '' };
-    return sanitizeScryfallCardForGame(seed, {
-      id: `tutorial-${cardName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
+    const safeName = String(cardName || 'Tutorial Card');
+    const safeOwnerId = ownerId || userId || 'tutorial-player';
+    const seed = TUTORIAL_STARTER_CARD_SEED.find((card) => card.name === safeName) || { name: safeName, type_line: 'Card', oracle_text: '', layout: 'normal' };
+    return sanitizeScryfallCardForGame({ layout: 'normal', ...seed }, {
+      id: `tutorial-${safeName.toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'card'}`,
       instanceId: generateCardId(),
-      ownerId,
-      controllerId,
+      ownerId: safeOwnerId,
+      controllerId: controllerId || safeOwnerId,
       zone,
       tapped: false,
       counters: {},
@@ -5253,10 +5307,11 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       x: 8,
       y: 8
     });
-  }, []);
+  }, [userId]);
 
   const ensureTutorialStepSetup = useCallback(async (stepId) => {
-    if (!gameId || !game?.isTutorial || game.tutorial?.inactive || !userId) return;
+    if (!gameId || !game?.isTutorial || game?.tutorial?.inactive || !userId) return;
+    if (!game || typeof game !== 'object') return;
     const needs = {
       play_land: [{ name: 'Mountain', zone: ZONES.HAND, ownerId: userId, controllerId: userId }],
       undo_play_land: [{ name: 'Mountain', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId }],
@@ -5280,15 +5335,16 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     }[stepId];
     if (!needs) return;
 
-    let nextCards = [...(game.cards || [])];
-    let nextStack = [...(game.stack || [])];
+    let nextCards = Array.isArray(game.cards) ? [...game.cards] : [];
+    let nextStack = Array.isArray(game.stack) ? [...game.stack] : [];
     let changed = false;
 
+    try {
     needs.forEach((need) => {
       const matching = nextCards.find((card) => card.name === need.name && card.ownerId === need.ownerId) || nextCards.find((card) => card.name === need.name);
       let card = matching;
       if (!card) {
-        card = buildTutorialCardInstance(need.name, need.ownerId, need.zone, need.controllerId);
+        card = buildTutorialCardInstance(need.name, need.ownerId || userId, need.zone, need.controllerId || need.ownerId || userId);
         nextCards.push(card);
         changed = true;
       }
@@ -5314,17 +5370,24 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
     if (['declare_attacker_player', 'first_strike_step', 'regular_damage_step'].includes(stepId) && game.phase !== 'combat_attackers') {
       await updateDoc(doc(db, 'games_v3', gameId), { phase: 'combat_attackers', combat: normalizeCombatState(game.combat), cards: nextCards, stack: nextStack, updatedAt: serverTimestamp() });
+      setTutorialOverlayError(null);
       return;
     }
 
     if (changed) {
       await updateDoc(doc(db, 'games_v3', gameId), { cards: nextCards, stack: nextStack, updatedAt: serverTimestamp() });
     }
+    setTutorialOverlayError(null);
+    } catch (error) {
+      console.error('Tutorial step setup failed', error);
+      setTutorialOverlayError('Tutorial step unavailable. Skip or restart tutorial.');
+    }
   }, [buildTutorialCardInstance, game, gameId, opponent?.id, userId]);
 
   useEffect(() => {
-    ensureTutorialStepSetup(currentTutorialStep?.id);
-  }, [currentTutorialStep?.id, ensureTutorialStepSetup]);
+    if (!isTutorialGame || !currentTutorialStep?.id) return;
+    ensureTutorialStepSetup(currentTutorialStep.id);
+  }, [isTutorialGame, currentTutorialStep?.id, ensureTutorialStepSetup]);
 
   const handleRepairGameSize = async () => {
     if (!gameId || !userId || (!isHost && !isPlayer)) {
@@ -5734,7 +5797,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       typeLine,
       currentUserId: userId,
       currentPlayerId: viewAsPlayerId,
-      activePlayerId: game?.turnPlayerId || game?.players?.[game?.activePlayerIndex]?.id || null,
+      activePlayerId: game?.turnPlayerId || players?.[game?.activePlayerIndex]?.id || null,
       priorityPlayerId: game?.priorityPlayerId || null,
       canAct,
       isLand,
@@ -5745,7 +5808,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       transformAvailable,
       ...extra
     };
-  }, [selectedCard, game?.cards, game?.turnPlayerId, game?.activePlayerIndex, game?.priorityPlayerId, game?.players, userId, viewAsPlayerId, canAct]);
+  }, [selectedCard, game?.cards, game?.turnPlayerId, game?.activePlayerIndex, game?.priorityPlayerId, players, userId, viewAsPlayerId, canAct]);
 
   const debugCardActionClick = (buttonName, actionType, payload, event, card = selectedCard) => {
     if (!isDebugActionsEnabled()) return;
@@ -6037,8 +6100,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const isMyTurn = game?.turnPlayerId === viewAsPlayerId;
   const hasPriority = game?.priorityPlayerId === viewAsPlayerId;
 
-  const opponent = game?.players.find(p => p.id !== viewAsPlayerId);
-  const privateHandPeekPlayer = privateHandPeek?.playerId ? (game?.players || []).find(p => p.id === privateHandPeek.playerId) : null;
+  const privateHandPeekPlayer = privateHandPeek?.playerId ? players.find(p => p?.id === privateHandPeek.playerId) : null;
   const isOppTurn = !!opponent && game?.turnPlayerId === opponent.id;
   const closePrivateHandPeek = () => {
     setPrivatePeekInspectCard(null);
@@ -6063,7 +6125,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     ...battlefieldBattles.map(c => ({ type: 'card', id: c.instanceId, targetId: c.instanceId, label: getCardDisplayName(c, 'Battle'), kind: 'battle' }))
   ].filter(Boolean);
 
-  const waitingForPlayers = game?.players.length < 2;
+  const waitingForPlayers = players.length < 2;
   const isAutoPassEnabled = autoPassConfig.mode !== AUTO_PASS_MODE.OFF;
   const autoPassControlsDisabled = !isPlayer || !game;
 
@@ -6415,7 +6477,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         cardCount: game?.cards?.length || 0,
         hasPlayers: Array.isArray(game?.players),
         playerCount: game?.players?.length || 0,
-        activePlayerId: game?.turnPlayerId || game?.players?.[game?.activePlayerIndex]?.id || null,
+        activePlayerId: game?.turnPlayerId || players?.[game?.activePlayerIndex]?.id || null,
         priorityPlayerId: game?.priorityPlayerId || null,
         payloadCard: payloadCard || null
       });
@@ -9297,7 +9359,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   if (loading) return <div className="text-white p-10 flex justify-center"><RotateCw className="animate-spin"/></div>;
   if (!game) return <div className="text-white p-10">Game not found</div>;
 
-  const opponentIsRevealing = (game.players || []).find(p => p.id !== viewAsPlayerId)?.handRevealed;
+  const opponentIsRevealing = players.find(p => p?.id !== viewAsPlayerId)?.handRevealed;
 
   const getZoneCount = (pid, zone) => (game.cards || []).filter(c => c.ownerId === pid && c.zone === zone).length;
   const myGYCount = getZoneCount(viewAsPlayerId, ZONES.GRAVEYARD);
@@ -9375,8 +9437,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const priorityPassCount = Math.max(0, Math.min(game.consecutivePasses || 0, (game.players || []).length));
   const passedPriorityPlayers = (game.players || []).length > 1 && priorityPassCount > 0
     ? Array.from({ length: priorityPassCount }, (_, offset) => {
-        const index = (((game.priorityIndex || 0) - offset - 1) % game.players.length + game.players.length) % game.players.length;
-        return game.players[index];
+        const index = (((game.priorityIndex || 0) - offset - 1) % players.length + players.length) % players.length;
+        return players[index];
       }).filter(Boolean)
     : [];
   const waitingPriorityPlayers = game.priorityPlayerId
@@ -9558,6 +9620,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         onFocusTarget={focusTutorialTarget}
         onRestart={restartTutorial}
         onExplore={continueExploringTutorial}
+        errorMessage={tutorialOverlayError}
       />
       {/* 1. Header */}
       <div className="bg-slate-800 border-b border-slate-700 p-2 shrink-0 shadow-md top-action-scroll-wrap">
@@ -9968,7 +10031,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                           )}
                         </div>
                         <span className="shrink-0 text-[10px] text-slate-400">
-                          {game.players.find(p => p.id === item.controllerId)?.name}
+                          {players.find(p => p?.id === item.controllerId)?.name}
                         </span>
                       </div>
                     );
@@ -11033,7 +11096,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       {viewZone && (
         <div className="fixed inset-0 bg-black/90 z-50 flex flex-col p-4">
           <div className="flex justify-between items-center mb-4">
-            <h2 className="text-xl font-bold text-white capitalize">{viewZone.zone} ({game.players.find(p => p.id === viewZone.ownerId)?.name})</h2>
+            <h2 className="text-xl font-bold text-white capitalize">{viewZone.zone} ({players.find(p => p?.id === viewZone.ownerId)?.name})</h2>
             <button onClick={() => setViewZone(null)}><X className="text-white"/></button>
           </div>
           <div className="flex-1 overflow-y-auto grid grid-cols-4 gap-2 content-start">

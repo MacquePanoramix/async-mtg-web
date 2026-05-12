@@ -630,7 +630,7 @@ const getPerfActionCardName = (payload = {}, currentGame = null) => {
 
 const compactPerfPayload = (payload = {}) => {
   if (!payload || typeof payload !== 'object') return {};
-  return Object.fromEntries(Object.entries(payload).filter(([key]) => ['cardId', 'sourceId', 'targetId', 'targetZone', 'stackItemId', 'faceIndex'].includes(key)));
+  return Object.fromEntries(Object.entries(payload).filter(([key]) => ['cardId', 'sourceId', 'targetId', 'targetZone', 'stackItemId', 'faceIndex', 'clientActionId'].includes(key)));
 };
 
 const getPerfGameCounts = (currentGame = {}) => {
@@ -728,60 +728,113 @@ const buildPerfUndoCardDebug = ({ cardId = null, currentGame = {}, previousState
   return debug;
 };
 
-const doesPerfSnapshotReflectAction = (action = {}, data = {}, lastLog = null) => {
-  if (!action?.actionType || !data) return false;
+const getPerfRecentLogs = (data = {}, limit = 8) => (Array.isArray(data.log) ? data.log.slice(-limit).reverse() : []);
+
+const getPerfLatestUndoEntry = (data = {}) => (Array.isArray(data.undoStack) && data.undoStack.length > 0 ? data.undoStack[data.undoStack.length - 1] : null);
+
+const getPerfEntryActionId = (entry = {}) => entry?.clientActionId || entry?.perfActionId || entry?.actionId || null;
+
+const perfEntryMatchesAction = (entry = {}, action = {}) => {
+  if (!entry || !action) return false;
+  const actionId = action.payload?.clientActionId || action.clientActionId || action.id || null;
+  const entryActionId = getPerfEntryActionId(entry);
+  const actionIdMatches = Boolean(actionId && entryActionId && actionId === entryActionId);
+  const typeMatches = !action.actionType || !entry.actionType || entry.actionType === action.actionType;
+  const cardMatches = !action.cardId || !entry.cardId || entry.cardId === action.cardId;
+  return actionIdMatches || (typeMatches && cardMatches);
+};
+
+const perfLogMatchesAction = (log = {}, action = {}, marker = {}) => {
+  if (!log || !action?.actionType) return false;
+  const actionId = action.payload?.clientActionId || action.clientActionId || action.id || null;
+  const logActionId = getPerfEntryActionId(log);
+  if (actionId && logActionId && actionId === logActionId) return true;
+  const logTimestamp = Number(log?.timestamp || 0);
+  const logIsNewEnough = !action.handlerStartWallNow || !logTimestamp || logTimestamp >= action.handlerStartWallNow - 2000;
+  const logTypeMatches = log?.type === marker.expectedLogType;
+  const cardMatchNotRequired = ['COPY_STACK_ITEM', 'RESOLVE_STACK_TOP', 'COUNTER_STACK_TOP'].includes(action.actionType);
+  const logCardMatches = cardMatchNotRequired || !action.cardId || !log?.cardId || log.cardId === action.cardId;
+  const stackItemMatches = !marker.stackItemId || !log?.copiedFromStackItemId || log.copiedFromStackItemId === marker.stackItemId;
+  return logTypeMatches && logCardMatches && stackItemMatches && logIsNewEnough;
+};
+
+const getPerfSnapshotReflection = (action = {}, data = {}, lastLog = null) => {
+  if (!action?.actionType || !data) return { reflects: false, reason: 'missing action or snapshot' };
   const marker = action.marker || getPerfActionMarker({ actionType: action.actionType, payload: action.payload, currentGame: null });
   const counts = getPerfSnapshotCounts(data);
   const expected = marker.expected || {};
-  const logTimestamp = Number(lastLog?.timestamp || 0);
-  const logIsNewEnough = !action.handlerStartWallNow || !logTimestamp || logTimestamp >= action.handlerStartWallNow - 2000;
-  const logTypeMatches = lastLog?.type === marker.expectedLogType;
-  const cardMatchNotRequired = ['COPY_STACK_ITEM', 'RESOLVE_STACK_TOP', 'COUNTER_STACK_TOP'].includes(action.actionType);
-  const logCardMatches = cardMatchNotRequired || !action.cardId || !lastLog?.cardId || lastLog.cardId === action.cardId;
-  const stackItemMatches = !marker.stackItemId || !lastLog?.copiedFromStackItemId || lastLog.copiedFromStackItemId === marker.stackItemId;
-  const logMatches = logTypeMatches && logCardMatches && stackItemMatches && logIsNewEnough;
+  const recentLogs = getPerfRecentLogs(data);
+  const logsToCheck = recentLogs.length > 0 ? recentLogs : (lastLog ? [lastLog] : []);
+  const matchingLog = logsToCheck.find((log) => perfLogMatchesAction(log, action, marker)) || null;
+  const logMatches = Boolean(matchingLog);
+  const latestUndoEntry = getPerfLatestUndoEntry(data);
+  const latestUndoPendingSync = Boolean(latestUndoEntry?.pendingSync);
+  const latestUndoMatches = Boolean(latestUndoEntry && !latestUndoPendingSync && perfEntryMatchesAction(latestUndoEntry, action));
+  const actualCardZone = getPerfCardZone(data, action.cardId);
+  const debug = {
+    actionType: action.actionType,
+    cardId: action.cardId || null,
+    expectedZone: expected.cardZone || null,
+    actualZone: actualCardZone,
+    latestUndoActionType: latestUndoEntry?.actionType || null,
+    latestUndoActionLabel: latestUndoEntry?.actionLabel || null,
+    latestUndoPendingSync,
+    latestUndoCardId: latestUndoEntry?.cardId || null,
+    latestUndoCardIdMatches: !action.cardId || latestUndoEntry?.cardId === action.cardId,
+    latestUndoMatches,
+    recentLogMatchType: matchingLog?.type || null,
+    recentLogMatchMessage: matchingLog?.message || matchingLog?.desc || null
+  };
+
+  if (action.actionType === 'PLAY_LAND') {
+    const cardInExpectedZone = actualCardZone === expected.cardZone;
+    if (cardInExpectedZone && latestUndoMatches) return { reflects: true, reason: 'played card is on battlefield and latest server undo entry matches', debug };
+    if (cardInExpectedZone && logMatches) return { reflects: true, reason: 'played card is on battlefield and a recent log entry matches', debug };
+    if (!cardInExpectedZone) return { reflects: false, reason: `played card zone is ${actualCardZone || 'missing'}, expected ${expected.cardZone}`, debug };
+    if (latestUndoEntry && latestUndoPendingSync) return { reflects: false, reason: 'latest undo entry is still pendingSync', debug };
+    if (latestUndoEntry && !latestUndoMatches) return { reflects: false, reason: 'latest undo entry does not match PLAY_LAND/card', debug };
+    return { reflects: false, reason: 'no matching server undo entry or recent PLAY_LAND log', debug };
+  }
 
   if (action.actionType === 'DRAW_CARD') {
-    return logMatches && counts.handCount >= expected.handCount && counts.libraryCount <= expected.libraryCount;
-  }
-  if (action.actionType === 'PLAY_LAND') {
-    return logMatches && getPerfCardZone(data, action.cardId) === expected.cardZone;
+    return { reflects: logMatches && counts.handCount >= expected.handCount && counts.libraryCount <= expected.libraryCount, reason: logMatches ? 'DRAW_CARD log and counts match' : 'no matching DRAW_CARD log' };
   }
   if (action.actionType === 'MOVE_ZONE') {
-    return logMatches && (!expected.cardZone || getPerfCardZone(data, action.cardId) === expected.cardZone || !getPerfCard(data, action.cardId));
+    return { reflects: logMatches && (!expected.cardZone || actualCardZone === expected.cardZone || !getPerfCard(data, action.cardId)), reason: logMatches ? 'MOVE_ZONE log and card zone match' : 'no matching MOVE_ZONE log' };
   }
   if (action.actionType === 'TAP_TOGGLE') {
-    return logMatches && getPerfCard(data, action.cardId)?.tapped === expected.tapped;
+    return { reflects: logMatches && getPerfCard(data, action.cardId)?.tapped === expected.tapped, reason: logMatches ? 'TAP_TOGGLE log and tapped state match' : 'no matching TAP_TOGGLE log' };
   }
   if (action.actionType === 'PHASE_TOGGLE') {
-    return logMatches && Boolean(getPerfCard(data, action.cardId)?.phasedOut) === expected.phasedOut;
+    return { reflects: logMatches && Boolean(getPerfCard(data, action.cardId)?.phasedOut) === expected.phasedOut, reason: logMatches ? 'PHASE_TOGGLE log and phased state match' : 'no matching PHASE_TOGGLE log' };
   }
   if (action.actionType === 'SWITCH_CARD_FACE') {
-    return logMatches && (expected.activeFaceIndex == null || getPerfCard(data, action.cardId)?.activeFaceIndex === expected.activeFaceIndex);
+    return { reflects: logMatches && (expected.activeFaceIndex == null || getPerfCard(data, action.cardId)?.activeFaceIndex === expected.activeFaceIndex), reason: logMatches ? 'SWITCH_CARD_FACE log and face match' : 'no matching SWITCH_CARD_FACE log' };
   }
   if (action.actionType === 'ADD_CARD_REMINDER') {
     const reminders = getEntityReminders(getPerfCard(data, action.cardId));
-    return logMatches && reminders.some((reminder) => reminder.text === expected.reminderText);
+    return { reflects: logMatches && reminders.some((reminder) => reminder.text === expected.reminderText), reason: logMatches ? 'ADD_CARD_REMINDER log and reminder match' : 'no matching ADD_CARD_REMINDER log' };
   }
   if (action.actionType === 'REMOVE_CARD_REMINDER') {
     const reminders = getEntityReminders(getPerfCard(data, action.cardId));
-    return logMatches && expected.reminderId && !reminders.some((reminder) => reminder.id === expected.reminderId);
+    return { reflects: logMatches && expected.reminderId && !reminders.some((reminder) => reminder.id === expected.reminderId), reason: logMatches ? 'REMOVE_CARD_REMINDER log and reminder removal match' : 'no matching REMOVE_CARD_REMINDER log' };
   }
   if (action.actionType === 'CAST_SPELL') {
-    return logMatches && counts.stackLength >= expected.stackLength && (!action.cardId || getPerfCardZone(data, action.cardId) === expected.cardZone || (data.stack || []).some((item) => item.sourceId === action.cardId));
+    return { reflects: logMatches && counts.stackLength >= expected.stackLength && (!action.cardId || actualCardZone === expected.cardZone || (data.stack || []).some((item) => item.sourceId === action.cardId)), reason: logMatches ? 'CAST_SPELL log and stack/card state match' : 'no matching CAST_SPELL log' };
   }
   if (action.actionType === 'COPY_STACK_ITEM') {
-    return logMatches && counts.stackLength >= expected.stackLength;
+    return { reflects: logMatches && counts.stackLength >= expected.stackLength, reason: logMatches ? 'COPY_STACK_ITEM log and stack count match' : 'no matching COPY_STACK_ITEM log' };
   }
   if (action.actionType === 'RESOLVE_STACK_TOP' || action.actionType === 'COUNTER_STACK_TOP') {
-    return logMatches && counts.stackLength <= expected.stackLength;
+    return { reflects: logMatches && counts.stackLength <= expected.stackLength, reason: logMatches ? 'stack-top log and stack count match' : 'no matching stack-top log' };
   }
   if (action.actionType === 'UNDO_LAST_ACTION') {
-    const cardZoneMatches = !action.cardId || !expected.cardZone || getPerfCardZone(data, action.cardId) === expected.cardZone;
-    return logMatches && (!expected.undoneActionId || lastLog?.undoneActionId === expected.undoneActionId) && cardZoneMatches;
+    const cardZoneMatches = !action.cardId || !expected.cardZone || actualCardZone === expected.cardZone;
+    return { reflects: logMatches && (!expected.undoneActionId || matchingLog?.undoneActionId === expected.undoneActionId) && cardZoneMatches, reason: logMatches ? 'UNDO log and restored state match' : 'no matching UNDO log' };
   }
-  return logMatches;
+  return { reflects: logMatches, reason: logMatches ? 'recent log matches action' : 'no matching recent log' };
 };
+
 
 const recordPerfListenerEvent = (event = {}) => {
   if (!isPerfActionsEnabled()) return;
@@ -1604,7 +1657,7 @@ const normalizeUndoActionLabel = (message, actorName) => {
   return label || 'last game action';
 };
 
-const buildUndoEntry = ({ currentGame, actorId, actorName, actionLabel, fields, actionType, cardId = null, postActionCards = null }) => {
+const buildUndoEntry = ({ currentGame, actorId, actorName, actionLabel, fields, actionType, cardId = null, postActionCards = null, clientActionId = null }) => {
   const selectedFields = Array.isArray(fields) && fields.length > 0 ? [...new Set(fields)] : UNDO_STATE_FIELDS;
   const measureUndo = isDebugActionsEnabled() || isPerfActionsEnabled();
   const startedAt = measureUndo ? getActionPerfNow() : 0;
@@ -1631,6 +1684,7 @@ const buildUndoEntry = ({ currentGame, actorId, actorName, actionLabel, fields, 
     actorName: actorName || 'Unknown',
     actionLabel: actionLabel || 'last game action',
     actionType: actionType || null,
+    clientActionId: clientActionId || null,
     cardId: cardId || null,
     cardZoneBefore: cardDebug?.zoneBeforeAction || null,
     cardZoneAfter: cardDebug?.zoneAfterAction || null,
@@ -1642,6 +1696,11 @@ const appendUndoEntry = (currentGame, undoEntry) => pruneUndoStackForFirestore([
   ...((currentGame?.undoStack || [])),
   undoEntry
 ]);
+
+const appendOptimisticUndoEntry = (currentGame, undoEntry) => [
+  ...((currentGame?.undoStack || [])).slice(-(MAX_UNDO_STACK_ENTRIES - 1)).map(normalizeUndoEntryForFirestore),
+  undoEntry
+];
 
 const getUndoRestoreUpdates = (previousState = {}) => {
   const updates = {};
@@ -3737,6 +3796,8 @@ const PerformanceDebugPanel = ({ game = null, onRepairGameSize = null, canRepair
   const listenerEvents = perfState.listenerEvents || [];
   const visibleUpdate = perfState.lastVisibleUpdate || lastAction?.visibleUpdate || null;
   const undoCardDebug = lastAction?.undo?.cardDebug || null;
+  const reflectionDebug = lastAction?.snapshot?.reflectionDebug || null;
+  const reflectionReason = lastAction?.snapshot?.reflectionReason || null;
   const sizeEstimate = game ? getGameDocumentSizeEstimate(game) : null;
   const formatBytes = (bytes) => (Number.isFinite(bytes) ? `${Math.round(bytes / 1024)} KB` : '—');
 
@@ -3820,6 +3881,17 @@ const PerformanceDebugPanel = ({ game = null, onRepairGameSize = null, canRepair
                 <div className="rounded bg-slate-900 p-2"><span className="text-slate-400">Undo optimistic applied:</span> <b className={lastAction.undo?.optimisticApplied ? 'text-emerald-300' : 'text-slate-300'}>{lastAction.undo?.optimisticApplied == null ? '—' : (lastAction.undo.optimisticApplied ? 'yes' : 'no')}</b></div>
                 <div className="rounded bg-slate-900 p-2"><span className="text-slate-400">Click → undo visible:</span> <b>{formatPerfMs(lastAction.undo?.clickToUndoVisibleMs)}</b></div>
                 <div className="col-span-2 rounded bg-slate-900 p-2"><span className="text-slate-400">Undo restored fields:</span> <span className="break-words font-mono">{lastAction.undo?.restoredFields?.length ? lastAction.undo.restoredFields.join(', ') : '—'}</span></div>
+
+                {lastAction.actionType === 'PLAY_LAND' && (reflectionDebug || reflectionReason) && (
+                  <>
+                    <div className="col-span-2 rounded bg-slate-900 p-2"><span className="text-slate-400">PLAY_LAND reflect reason:</span> <span className="break-words font-mono">{reflectionReason || '—'}</span></div>
+                    <div className="col-span-2 rounded bg-slate-900 p-2"><span className="text-slate-400">Played card id:</span> <span className="break-words font-mono">{reflectionDebug?.cardId || lastAction.cardId || '—'}</span></div>
+                    <div className="rounded bg-slate-900 p-2"><span className="text-slate-400">Expected/actual zone:</span> <b>{reflectionDebug?.expectedZone || '—'} / {reflectionDebug?.actualZone || '—'}</b></div>
+                    <div className="rounded bg-slate-900 p-2"><span className="text-slate-400">Latest undo:</span> <b>{reflectionDebug?.latestUndoActionType || '—'} · {reflectionDebug?.latestUndoActionLabel || '—'}</b></div>
+                    <div className="rounded bg-slate-900 p-2"><span className="text-slate-400">Latest undo pending:</span> <b className={reflectionDebug?.latestUndoPendingSync ? 'text-amber-300' : 'text-emerald-300'}>{reflectionDebug?.latestUndoPendingSync ? 'yes' : 'no'}</b></div>
+                    <div className="rounded bg-slate-900 p-2"><span className="text-slate-400">Undo card matches:</span> <b className={reflectionDebug?.latestUndoCardIdMatches ? 'text-emerald-300' : 'text-rose-300'}>{reflectionDebug?.latestUndoCardIdMatches ? 'yes' : 'no'}</b></div>
+                  </>
+                )}
                 {undoCardDebug && (
                   <>
                     <div className="col-span-2 rounded bg-slate-900 p-2"><span className="text-slate-400">Undo card:</span> <span className="break-words font-mono">{undoCardDebug.cardId || '—'}</span></div>
@@ -3887,6 +3959,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const [pendingOptimisticActionId, setPendingOptimisticActionId] = useState(null);
   const [pendingOptimisticStartedAt, setPendingOptimisticStartedAt] = useState(null);
   const pendingOptimisticActionRef = useRef(null);
+  const completedOptimisticActionIdsRef = useRef(new Set());
+  const latestFirestoreGameRef = useRef(null);
   const game = optimisticGame || firestoreGame;
   const [loading, setLoading] = useState(true);
   const gameListenerIdRef = useRef(null);
@@ -4061,7 +4135,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       ...game,
       ...patch,
       combat: patch.combat || game.combat || getEmptyCombatState(),
-      __optimisticActionId: perfActionId || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+      __optimisticActionId: perfActionId || payload.clientActionId || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
     };
     const actionId = nextOptimisticGame.__optimisticActionId;
     const startedAt = getActionPerfNow();
@@ -4263,8 +4337,10 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           const lastLog = data.log && data.log.length > 0 ? data.log[data.log.length - 1] : null;
           if (isPerfActionsEnabled()) {
             const state = getPerfActionsState();
-            const reflectsByActionId = Object.fromEntries((state.actions || []).map((action) => [action.id, doesPerfSnapshotReflectAction(action, data, lastLog)]));
+            const reflectionsByActionId = Object.fromEntries((state.actions || []).map((action) => [action.id, getPerfSnapshotReflection(action, data, lastLog)]));
+            const reflectsByActionId = Object.fromEntries(Object.entries(reflectionsByActionId).map(([actionId, reflection]) => [actionId, Boolean(reflection.reflects)]));
             const lastAction = state.actions[0];
+            const lastActionReflection = lastAction ? reflectionsByActionId[lastAction.id] : null;
             const updatedAtValue = data.updatedAt?.toMillis?.() ?? (data.updatedAt?.seconds ? data.updatedAt.seconds * 1000 : null);
             recordPerfSnapshot({
               gameId,
@@ -4278,16 +4354,32 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               lastLogMessage: lastLog?.message || lastLog?.desc || null,
               lastLogTimestamp: lastLog?.timestamp || null,
               reflectsByActionId,
-              reflectsLastAction: Boolean(lastAction && reflectsByActionId[lastAction.id])
+              reflectsLastAction: Boolean(lastAction && reflectsByActionId[lastAction.id]),
+              reflectionReason: lastActionReflection?.reason || null,
+              reflectionDebug: lastActionReflection?.debug || null
             });
           }
           const nextFirestoreGame = { ...data, combat: data.combat || getEmptyCombatState() };
+          latestFirestoreGameRef.current = nextFirestoreGame;
           setFirestoreGame(nextFirestoreGame);
           const pendingOptimistic = pendingOptimisticActionRef.current;
           if (pendingOptimistic) {
-            const reflectsPending = doesPerfSnapshotReflectAction(pendingOptimistic, nextFirestoreGame, lastLog);
-            if (reflectsPending) {
-              recordPerfOptimisticConfirmed({ snapshotFromCache: snapshotDoc.metadata.fromCache, hasPendingWrites: snapshotDoc.metadata.hasPendingWrites }, pendingOptimistic.id);
+            const pendingReflection = getPerfSnapshotReflection(pendingOptimistic, nextFirestoreGame, lastLog);
+            const completedWrite = completedOptimisticActionIdsRef.current.has(pendingOptimistic.id);
+            const serverSnapshot = !snapshotDoc.metadata.hasPendingWrites && !snapshotDoc.metadata.fromCache;
+            const safeFallbackReflects = completedWrite
+              && pendingOptimistic.actionType === 'PLAY_LAND'
+              && getPerfCardZone(nextFirestoreGame, pendingOptimistic.cardId) === ZONES.BATTLEFIELD
+              && Boolean(getPerfLatestUndoEntry(nextFirestoreGame) && !getPerfLatestUndoEntry(nextFirestoreGame).pendingSync && perfEntryMatchesAction(getPerfLatestUndoEntry(nextFirestoreGame), pendingOptimistic));
+            const canReconcileOptimistic = pendingReflection.reflects && (serverSnapshot || completedWrite || safeFallbackReflects);
+            if (canReconcileOptimistic || safeFallbackReflects) {
+              recordPerfOptimisticConfirmed({
+                snapshotFromCache: snapshotDoc.metadata.fromCache,
+                hasPendingWrites: snapshotDoc.metadata.hasPendingWrites,
+                reflectionReason: pendingReflection.reason,
+                safeFallbackReflects
+              }, pendingOptimistic.id);
+              completedOptimisticActionIdsRef.current.delete(pendingOptimistic.id);
               pendingOptimisticActionRef.current = null;
               setOptimisticGame(null);
               setPendingOptimisticActionId(null);
@@ -5035,6 +5127,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
   const handleAction = async (actionType, payload = {}) => {
     const perfActionId = startPerfAction({ actionType, payload, currentGame: game });
+    const clientActionId = perfActionId || `ca-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
     recordPerfCheckpoint('handleAction start', { actionType }, perfActionId);
     const debugActions = isDebugActionsEnabled();
     if (debugActions) {
@@ -5135,6 +5228,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       type,
       category: extra.category || type,
       message,
+      clientActionId,
       ...extra
       });
     };
@@ -6718,6 +6812,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             actionLabel: optimisticActionLabel,
             fields: getUndoFieldsForAction(actionType, { updates }),
             actionType,
+            clientActionId,
             cardId: getPerfActionCardId(payload),
             postActionCards: updates.cards
           }),
@@ -6725,14 +6820,15 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         };
         optimisticPatch = {
           ...optimisticPatch,
-          undoStack: appendUndoEntry(game, optimisticUndoEntry)
+          undoStack: appendOptimisticUndoEntry(game, optimisticUndoEntry)
         };
       }
-      applyOptimisticGamePatch({ actionType, payload, patch: optimisticPatch, perfActionId });
+      applyOptimisticGamePatch({ actionType, payload: { ...payload, clientActionId }, patch: optimisticPatch, perfActionId });
     } else if (['DRAW_CARD', 'BATCH_DRAW_LIBRARY', 'BATCH_MILL_LIBRARY', 'BATCH_EXILE_LIBRARY', 'BATCH_SCRY_LIBRARY', 'BATCH_SURVEIL_LIBRARY', 'PLAY_LAND', 'CAST_SPELL', 'MOVE_ZONE', 'SWITCH_CARD_FACE', 'TAP_TOGGLE', 'PHASE_TOGGLE', 'ADD_CARD_REMINDER', 'REMOVE_CARD_REMINDER'].includes(actionType)) {
       recordPerfOptimisticSkipped('No conservative local patch was produced.', perfActionId);
     }
 
+    let firestoreWriteCommitted = false;
     if (UNDOABLE_ACTION_TYPES.has(actionType) && actionUpdatesRestorableState(updates)) {
       const actionLabel = normalizeUndoActionLabel(actionMessages[0] || payload.desc || actionType, actorName);
       await perfRunTransaction('runTransaction', async (transaction) => {
@@ -6769,6 +6865,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             }))
           };
         }
+        firestoreWriteCommitted = true;
         transaction.update(gameRef, normalizeGameUpdatesForFirestore({
           ...transactionUpdates,
           undoStack: appendUndoEntry(currentGame, buildUndoEntry({
@@ -6778,6 +6875,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             actionLabel,
             fields: getUndoFieldsForAction(actionType, { updates: transactionUpdates }),
             actionType,
+            clientActionId,
             cardId: getPerfActionCardId(payload),
             postActionCards: transactionUpdates.cards
           })),
@@ -6786,6 +6884,28 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       });
     } else {
       await perfUpdateDoc(gameRef, normalizeGameUpdatesForFirestore(updates, actionType));
+      firestoreWriteCommitted = true;
+    }
+    if (firestoreWriteCommitted && (pendingOptimisticActionRef.current?.id || perfActionId)) {
+      const completedActionId = pendingOptimisticActionRef.current?.id || perfActionId;
+      completedOptimisticActionIdsRef.current.add(completedActionId);
+      const latestFirestore = latestFirestoreGameRef.current;
+      const latestLog = latestFirestore?.log && latestFirestore.log.length > 0 ? latestFirestore.log[latestFirestore.log.length - 1] : null;
+      const pendingOptimistic = pendingOptimisticActionRef.current;
+      if (pendingOptimistic && latestFirestore) {
+        const reflection = getPerfSnapshotReflection(pendingOptimistic, latestFirestore, latestLog);
+        const fallbackReflects = pendingOptimistic.actionType === 'PLAY_LAND'
+          && getPerfCardZone(latestFirestore, pendingOptimistic.cardId) === ZONES.BATTLEFIELD
+          && Boolean(getPerfLatestUndoEntry(latestFirestore) && !getPerfLatestUndoEntry(latestFirestore).pendingSync && perfEntryMatchesAction(getPerfLatestUndoEntry(latestFirestore), pendingOptimistic));
+        if (reflection.reflects || fallbackReflects) {
+          recordPerfOptimisticConfirmed({ reflectionReason: reflection.reason, safeFallbackReflects: fallbackReflects, transactionResolvedFallback: true }, pendingOptimistic.id);
+          completedOptimisticActionIdsRef.current.delete(pendingOptimistic.id);
+          pendingOptimisticActionRef.current = null;
+          setOptimisticGame(null);
+          setPendingOptimisticActionId(null);
+          setPendingOptimisticStartedAt(null);
+        }
+      }
     }
     if (pendingRecapEvents.length > 0) {
       await Promise.all(pendingRecapEvents.map((event) => appendEvent(gameId, event)));

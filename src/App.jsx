@@ -33,641 +33,82 @@ const GAME_MODES = {
   COMMANDER: 'commander'
 };
 
-const TUTORIAL_SCRIPT_VERSION = 3;
+const TUTORIAL_SCRIPT_VERSION = 4;
 const TUTORIAL_SCRIPT_STEPS = [
-  {
-    id: 'intro',
-    chapter: 'Trial of the Elder Dragon',
-    title: 'Nicol Bolas and the Board of Doom',
-    scene: 'The arena unfolds like a book with teeth.',
-    dialogue: 'You have opened my training ground, little planeswalker. Survive the lesson and perhaps I will let you keep your turn.',
-    objective: 'Begin the scripted boss battle.',
-    hint: 'Tap Next. This tutorial uses the real app tools; Bolas is only scripted flavor.',
-    anchor: null,
-    completion: 'manual'
-  },
-  {
-    id: 'room_code',
-    chapter: 'Trial of the Elder Dragon',
-    title: 'Seal of Summoning',
-    scene: 'A rune burns above the battlefield: the room code.',
-    dialogue: 'Every duel needs a doorway. Share that code, and another mortal may enter my magnificent trap.',
-    objective: 'Find the room code near the top of the screen.',
-    hint: 'Send this code to friends so they can join or watch the game.',
-    anchor: 'room-code',
-    completion: 'manual'
-  },
-  {
-    id: 'battlefields',
-    chapter: 'Trial of the Elder Dragon',
-    title: 'Two Thrones in the Sand',
-    scene: 'Two battlefields rise: yours below, Bolas above.',
-    dialogue: 'Observe the geography of defeat. My empire waits above; your rebellion trembles below.',
-    objective: 'Find your battlefield and Nicol Bolas’s battlefield.',
-    hint: 'Your battlefield is labeled with your name. The opponent battlefield is labeled Nicol Bolas.',
-    anchor: 'battlefields',
-    completion: 'manual'
-  },
-  {
-    id: 'bottom_toolbar',
-    chapter: 'Chapter 1 — The Library Gate · Power: The Deckless Void',
-    title: 'The Relic Bar',
-    scene: 'Bolas sweeps your future into a dark vault, leaving only tools along the bottom edge.',
-    dialogue: 'I have hidden your possibilities. Your first weapon is not a spell, but the bar of relics at your feet.',
-    objective: 'Find the bottom toolbar.',
-    hint: 'Swipe the bottom toolbar sideways if a tool is not visible.',
-    anchor: 'bottom-toolbar',
-    completion: 'manual'
-  },
-  {
-    id: 'open_library_tools',
-    chapter: 'Chapter 1 — The Library Gate · Power: The Deckless Void',
-    title: 'Open the Library Gate',
-    scene: 'A sealed library-door grinds open beneath Bolas’s shadow.',
-    dialogue: 'No future reaches your hand unless you pry it from the library. Open the gate.',
-    objective: 'Open the Library tools menu.',
-    hint: 'Tap the book/library icon. If you cannot see it, swipe the bottom toolbar sideways.',
-    reaction: 'Bolas: You found the tool shelf. Try not to look proud.',
-    anchor: 'library-menu-button',
-    completion: 'detect-or-manual'
-  },
-  {
-    id: 'draw_card',
-    chapter: 'Chapter 1 — The Library Gate · Power: The Deckless Void',
-    title: 'Draw the First Thread',
-    scene: 'One card glows at the top of your library like a possible escape route.',
-    dialogue: 'Draw, and acquire a future. A small one. Possibly flammable.',
-    objective: 'Draw one card.',
-    hint: 'Use the blue Draw button. The tutorial deck has already been prepared for you.',
-    reaction: 'Bolas: Good. You have acquired a possibility. Try not to drop it.',
-    anchor: 'draw-button',
-    completion: 'detect'
-  },
-  {
-    id: 'hand_area',
-    chapter: 'Chapter 1 — The Library Gate · Power: The Deckless Void',
-    title: 'The Hand of Possible Futures',
-    scene: 'The new card joins a fan of options at the edge of the arena.',
-    dialogue: 'Your hand is not power. It is power waiting for nerve.',
-    objective: 'Find your hand at the bottom of the screen.',
-    hint: 'Cards in your hand appear along the bottom. You may need to scroll horizontally.',
-    anchor: 'hand-area',
-    completion: 'manual'
-  },
-  {
-    id: 'mulligan_note',
-    chapter: 'Chapter 1 — The Library Gate · Power: The Deckless Void',
-    title: 'The Mercy of Seven',
-    scene: 'Bolas flicks one claw, offering a false second chance.',
-    dialogue: 'Sometimes the opening future is insulting. Magic calls the replacement a mulligan; I call it begging politely.',
-    objective: 'Learn where Mulligan is.',
-    hint: 'Open Library tools again. Mulligan is in the same menu as Draw, Scry, Search, and Shuffle.',
-    anchor: 'library-menu-button',
-    completion: 'manual'
-  },
-  {
-    id: 'play_land',
-    chapter: 'Chapter 2 — Cards Enter the World · Power: The Seven Zones of Regret',
-    title: 'The Mountain Oath',
-    scene: 'The floor splits, and a red horizon burns beneath the board.',
-    dialogue: 'Choose a place for power to stand. A land is not merely played; it is sworn into reality.',
-    objective: 'Play a Mountain from your hand.',
-    hint: 'Tap Mountain in your hand, then choose Play Land.',
-    reaction: 'Bolas: The table accepts your little mountain. How sentimental.',
-    anchor: 'hand-area',
-    completion: 'detect'
-  },
-  {
-    id: 'undo_play_land',
-    chapter: 'Chapter 2 — Cards Enter the World · Power: The Seven Zones of Regret',
-    title: 'Regret Has a Button',
-    scene: 'Bolas cracks the scene backward, showing the Mountain before it became real.',
-    dialogue: 'Ah, regret. The only spell mortals cast perfectly. Show me you can rewind a legal mistake.',
-    objective: 'Undo the land play.',
-    hint: 'Tap the orange Undo button and confirm. Undo is for fixing recent mistakes, not rewriting an entire game.',
-    reaction: 'Bolas: Regret obeyed you once. Do not build a personality around it.',
-    anchor: 'undo-button',
-    completion: 'detect'
-  },
-  {
-    id: 'cast_spell_to_stack',
-    chapter: 'Chapter 2 — Cards Enter the World · Power: The Seven Zones of Regret',
-    title: 'Lightning on Trial',
-    scene: 'Bolas raises one claw; the air becomes a courtroom for violence.',
-    dialogue: 'Do not throw the spell at me yet. Place it where all doomed choices must wait: the stack.',
-    objective: 'Cast Lightning Bolt.',
-    hint: 'Tap Lightning Bolt in your hand, then choose Cast Spell. It goes to the stack first.',
-    reaction: 'Bolas: Violence properly filed. How civilized.',
-    anchor: 'hand-area',
-    completion: 'detect'
-  },
-  {
-    id: 'inspect_stack',
-    chapter: 'Chapter 3 — The Infinite Priority Stack · Power: The Tower Where Time Waits Its Turn',
-    title: 'The Tower Opens',
-    scene: 'The bolt hangs overhead, paused by a tower of waiting decisions.',
-    dialogue: 'The stack is where time queues politely before becoming terrible. Inspect your little storm.',
-    objective: 'Open the stack panel and inspect Lightning Bolt.',
-    hint: 'Tap the Stack button near the top. It shows items waiting to resolve.',
-    anchor: 'stack-button',
-    completion: 'detect-or-manual'
-  },
-  {
-    id: 'copy_stack_item',
-    chapter: 'Chapter 3 — The Infinite Priority Stack · Power: The Tower Where Time Waits Its Turn',
-    title: 'Two Futures of Lightning',
-    scene: 'Bolas smiles, and the suspended bolt gains a shadow.',
-    dialogue: 'One threat is a spell. Two threats are a negotiation.',
-    objective: 'Copy the Lightning Bolt on the stack.',
-    hint: 'Open the stack item details and use Copy Stack Item.',
-    reaction: 'Bolas: I see. You have discovered multiplication. Dangerous.',
-    anchor: 'stack-panel',
-    completion: 'detect'
-  },
-  {
-    id: 'resolve_stack_item',
-    chapter: 'Chapter 3 — The Infinite Priority Stack · Power: The Tower Where Time Waits Its Turn',
-    title: 'The Highest Doom Falls',
-    scene: 'The uppermost bolt shakes loose from the tower.',
-    dialogue: 'The top thought becomes real first. That is not fairness; that is architecture.',
-    objective: 'Resolve the top stack item.',
-    hint: 'Use Resolve Top Stack Item from the stack controls.',
-    reaction: 'Bolas: One future has happened. The others are still making threats.',
-    anchor: 'stack-panel',
-    completion: 'detect'
-  },
-  {
-    id: 'counter_stack_item',
-    chapter: 'Chapter 3 — The Infinite Priority Stack · Power: The Tower Where Time Waits Its Turn',
-    title: 'Erase the Remaining Future',
-    scene: 'Bolas pinches the last bolt between two talons.',
-    dialogue: 'Some futures deserve the graveyard without the dignity of happening. Deny it.',
-    objective: 'Counter or fizzle the remaining stack item.',
-    hint: 'Use Counter/Fizzle Top Stack Item from the stack controls.',
-    reaction: 'Bolas: Denial suits you. Try it on despair next.',
-    anchor: 'stack-panel',
-    completion: 'detect'
-  },
-  {
-    id: 'pass_priority',
-    chapter: 'Chapter 3 — The Infinite Priority Stack · Power: The Tower Where Time Waits Its Turn',
-    title: 'Speak the Dangerous Words',
-    scene: 'The tower waits for permission to move again.',
-    dialogue: 'Priority is the question beneath every duel: will you act, or will you let doom continue?',
-    objective: 'Pass priority.',
-    hint: 'Tap Pass. Passing tells the table you are done acting for now.',
-    reaction: 'Bolas: You passed. Time limps forward.',
-    anchor: 'pass-button',
-    completion: 'detect'
-  },
-  {
-    id: 'autopass',
-    chapter: 'Chapter 9 — Async Survival · Power: The Silence Between Turns',
-    title: 'The Sleeping Sentinel',
-    scene: 'Bolas stretches one turn into an evening of waiting.',
-    dialogue: 'When nothing matters until later, command your sentinel to pass while you are away.',
-    objective: 'Learn AutoPass.',
-    hint: 'Tap AutoPass to see options for passing automatically until a phase or turn point.',
-    anchor: 'autopass-button',
-    completion: 'manual'
-  },
-  {
-    id: 'game_log',
-    chapter: 'Chapter 9 — Async Survival · Power: The Silence Between Turns',
-    title: 'The Chronicle of Bruises',
-    scene: 'Every action carves a glowing line into the arena wall.',
-    dialogue: 'Memory is a weapon in asynchronous war. Leave a record, or argue with ghosts.',
-    objective: 'Find the game log and chat.',
-    hint: 'Open the log/chat button to review actions and leave messages.',
-    anchor: 'log-chat-button',
-    completion: 'manual'
-  },
-  {
-    id: 'open_time_controls',
-    chapter: 'Chapter 4 — The Combat Step That Refused To End · Power: The War That Happens Twice',
-    title: 'Open the Clock Gate',
-    scene: 'Bolas bends the turn into sharp, labeled pieces.',
-    dialogue: 'Combat is not one door. It is a hallway with traps placed at excellent intervals.',
-    objective: 'Open the turn/phase controls.',
-    hint: 'Tap the current phase indicator near the top.',
-    anchor: 'phase-indicator',
-    completion: 'detect-or-manual'
-  },
-  {
-    id: 'set_attackers_phase',
-    chapter: 'Chapter 4 — The Combat Step That Refused To End · Power: The War That Happens Twice',
-    title: 'March to Attackers',
-    scene: 'The arena demands a declaration before steel may move.',
-    dialogue: 'Name the moment. If war is coming, put the game where attackers are chosen.',
-    objective: 'Move to the Attackers step.',
-    hint: 'In phase controls, choose the Attackers step.',
-    reaction: 'Bolas: The war has been scheduled. Bureaucracy improves violence.',
-    anchor: 'phase-controls',
-    completion: 'detect'
-  },
-  {
-    id: 'declare_attacker_player',
-    chapter: 'Chapter 4 — The Combat Step That Refused To End · Power: The War That Happens Twice',
-    title: 'Point the Blade',
-    scene: 'A creature turns toward the dragon’s throne.',
-    dialogue: 'An attacker without a target is merely exercise. Give your creature a destination.',
-    objective: 'Declare an attacker at Nicol Bolas.',
-    hint: 'Tap your creature and use attack/target controls to attack the opposing player.',
-    reaction: 'Bolas: It walks toward me. Adorable.',
-    anchor: 'own-battlefield',
-    completion: 'detect'
-  },
-  {
-    id: 'attack_planeswalker_battle_note',
-    chapter: 'Chapter 4 — The Combat Step That Refused To End · Power: The War That Happens Twice',
-    title: 'Other Thrones Can Bleed',
-    scene: 'Illusions of planeswalkers and battles flicker beside Bolas.',
-    dialogue: 'Not every attack aims at a player. Some wars assault egos with loyalty counters.',
-    objective: 'Learn attack targets for planeswalkers and battles.',
-    hint: 'The combat summary can track attackers aimed at players, planeswalkers, or battles.',
-    anchor: 'combat-summary',
-    completion: 'manual'
-  },
-  {
-    id: 'combat_summary',
-    chapter: 'Chapter 4 — The Combat Step That Refused To End · Power: The War That Happens Twice',
-    title: 'The War Ledger',
-    scene: 'The battlefield writes down attackers, blockers, and damage windows.',
-    dialogue: 'A clear war is harder to dispute. Consult the ledger before the shouting begins.',
-    objective: 'Find the combat summary.',
-    hint: 'It lists attackers, blockers, and damage-step information.',
-    anchor: 'combat-summary',
-    completion: 'manual'
-  },
-  {
-    id: 'first_strike_step',
-    chapter: 'Chapter 4 — The Combat Step That Refused To End · Power: The War That Happens Twice',
-    title: 'The First Blade',
-    scene: 'Bolas splits combat; the fastest wounds arrive early.',
-    dialogue: 'Some blades are arrogant enough to happen before the rest. Mark the first-strike window.',
-    objective: 'Set combat damage step to First-strike damage.',
-    hint: 'Open phase controls and choose First-strike damage in Combat Damage Step.',
-    reaction: 'Bolas: The quick blade has its moment.',
-    anchor: 'phase-controls',
-    completion: 'detect'
-  },
-  {
-    id: 'regular_damage_step',
-    chapter: 'Chapter 4 — The Combat Step That Refused To End · Power: The War That Happens Twice',
-    title: 'The Second Impact',
-    scene: 'The first echo fades, and the rest of the war finally lands.',
-    dialogue: 'Now the ordinary violence catches up. Ordinary does not mean gentle.',
-    objective: 'Set combat damage step to Regular damage.',
-    hint: 'Choose Regular damage in the Combat Damage Step controls.',
-    reaction: 'Bolas: Twice-struck combat. Elegant, if inconvenient.',
-    anchor: 'phase-controls',
-    completion: 'detect'
-  },
-  {
-    id: 'damage_markers',
-    chapter: 'Chapter 4 — The Combat Step That Refused To End · Power: The War That Happens Twice',
-    title: 'Wounds That Remember Cleanup',
-    scene: 'Red marks flare on damaged creatures.',
-    dialogue: 'Damage is temporary, but arguments about it are eternal. Mark it clearly.',
-    objective: 'Learn temporary damage markers.',
-    hint: 'Open a creature detail panel and use damage controls when combat or spells mark damage.',
-    anchor: 'card-detail',
-    completion: 'manual'
-  },
-  {
-    id: 'tap_card',
-    chapter: 'Chapter 5 — The Masked Permanent · Power: The Creature That Forgot Its Own Face',
-    title: 'Bend the Knee',
-    scene: 'Bolas presses the world sideways; a permanent turns with it.',
-    dialogue: 'A tapped card is a creature bowing to exhaustion, payment, or intimidation.',
-    objective: 'Tap or untap a permanent.',
-    hint: 'Tap a permanent on your battlefield and use Tap/Untap.',
-    reaction: 'Bolas: Even your permanents know when to kneel.',
-    anchor: 'own-battlefield',
-    completion: 'detect'
-  },
-  {
-    id: 'add_counter',
-    chapter: 'Chapter 5 — The Masked Permanent · Power: The Creature That Forgot Its Own Face',
-    title: 'Numbers With Teeth',
-    scene: 'A small counter lands like a crown made of math.',
-    dialogue: 'Counters are tiny destinies. Place one, and the object becomes harder to forget.',
-    objective: 'Add a counter to a permanent.',
-    hint: 'Open a card detail panel and use counter controls.',
-    reaction: 'Bolas: A number appears. Soon it will demand respect.',
-    anchor: 'card-detail',
-    completion: 'detect'
-  },
-  {
-    id: 'add_reminder',
-    chapter: 'Chapter 5 — The Masked Permanent · Power: The Creature That Forgot Its Own Face',
-    title: 'The Sticky Curse',
-    scene: 'Bolas pins a note to reality.',
-    dialogue: 'When memory is not enough, nail the reminder to the thing itself.',
-    objective: 'Add a reminder to a permanent.',
-    hint: 'Open a card detail panel and add a reminder such as “dies at end step.”',
-    reaction: 'Bolas: A note! How mortal. How useful.',
-    anchor: 'card-detail',
-    completion: 'detect'
-  },
-  {
-    id: 'phase_card',
-    chapter: 'Chapter 5 — The Masked Permanent · Power: The Creature That Forgot Its Own Face',
-    title: 'Half Outside Reality',
-    scene: 'The creature blinks sideways, present but untouchable.',
-    dialogue: 'Phasing is absence wearing a name tag. Mark it before anyone forgets what cannot be touched.',
-    objective: 'Phase a permanent out or in.',
-    hint: 'Open card details and use Phase Out/In.',
-    reaction: 'Bolas: It left without leaving. I approve of the rudeness.',
-    anchor: 'card-detail',
-    completion: 'detect-or-manual'
-  },
-  {
-    id: 'transform_card',
-    chapter: 'Chapter 5 — The Masked Permanent · Power: The Creature That Forgot Its Own Face',
-    title: 'The Other Face Opens',
-    scene: 'Bolas twists the card until its second face stares back.',
-    dialogue: 'Some permanents are liars with hinges. Turn the hinge.',
-    objective: 'Transform a double-faced permanent.',
-    hint: 'Open a transformable card and use the transform/switch face control.',
-    reaction: 'Bolas: A mask under the mask. Finally, taste.',
-    anchor: 'card-detail',
-    completion: 'detect-or-manual'
-  },
-  {
-    id: 'face_down_reveal',
-    chapter: 'Chapter 5 — The Masked Permanent · Power: The Creature That Forgot Its Own Face',
-    title: 'The Nameless Mask',
-    scene: 'The card forgets its own name, then remembers with a hiss.',
-    dialogue: 'Face-down cards are secrets placed in cardboard form. Hide them honestly; reveal them clearly.',
-    objective: 'Learn face-down and reveal controls.',
-    hint: 'Open card details to turn a card face down or reveal it when a card effect allows.',
-    anchor: 'card-detail',
-    completion: 'manual'
-  },
-  {
-    id: 'create_token',
-    chapter: 'Chapter 6 — The Token Legion · Power: The Army of Things That Were Never Cards',
-    title: 'Summon the Unprinted',
-    scene: 'A soldier made of pure bookkeeping crawls from the sand.',
-    dialogue: 'Behold an army that was never in a deck. Tokens are lies the table agrees to respect.',
-    objective: 'Create a token.',
-    hint: 'Open Token tools and create a preset or deck-derived token.',
-    reaction: 'Bolas: A thing that was never a card. The paperwork shivers.',
-    anchor: 'token-tools',
-    completion: 'detect'
-  },
-  {
-    id: 'custom_token',
-    chapter: 'Chapter 6 — The Token Legion · Power: The Army of Things That Were Never Cards',
-    title: 'Invent a Monster',
-    scene: 'Bolas gestures at an empty space and dares you to define it.',
-    dialogue: 'When the printed world fails you, write a creature into being. Be concise; monsters dislike essays.',
-    objective: 'Learn custom tokens.',
-    hint: 'Use Token tools to create a custom token only when a card effect needs one.',
-    anchor: 'token-tools',
-    completion: 'manual'
-  },
-  {
-    id: 'target_system',
-    chapter: 'Chapter 6 — The Token Legion · Power: The Army of Things That Were Never Cards',
-    title: 'Mark the Doomed',
-    scene: 'A blue sigil locks onto a creature, then a player, then a threat.',
-    dialogue: 'A spell without a target is just theater. Mark exactly what your effect is touching.',
-    objective: 'Use the target tool.',
-    hint: 'Tap a card or use target controls, then choose the intended target.',
-    reaction: 'Bolas: You pointed at doom. Doom noticed.',
-    anchor: 'target-tools',
-    completion: 'detect-or-manual'
-  },
-  {
-    id: 'attach_to_permanent',
-    chapter: 'Chapter 6 — The Token Legion · Power: The Army of Things That Were Never Cards',
-    title: 'Chains on Cardboard',
-    scene: 'A curse-chain lashes one permanent to another.',
-    dialogue: 'Auras, Equipment, and strange attachments need visible chains. Otherwise mortals start negotiating reality.',
-    objective: 'Learn attaching to permanents.',
-    hint: 'Open card details and use attachment controls when an effect attaches one card to another.',
-    anchor: 'card-detail',
-    completion: 'manual'
-  },
-  {
-    id: 'attach_to_player',
-    chapter: 'Chapter 6 — The Token Legion · Power: The Army of Things That Were Never Cards',
-    title: 'The Curse Chooses a Player',
-    scene: 'Bolas drops a glowing brand over your nameplate.',
-    dialogue: 'Some curses cling to players, not creatures. Make the victim obvious.',
-    objective: 'Learn player attachments and curses.',
-    hint: 'Use player attachment controls when an Aura, Curse, or effect attaches to a player.',
-    anchor: 'player-panel',
-    completion: 'manual'
-  },
-  {
-    id: 'clone_control',
-    chapter: 'Chapter 6 — The Token Legion · Power: The Army of Things That Were Never Cards',
-    title: 'The Stolen Reflection',
-    scene: 'A copy salutes the wrong commander.',
-    dialogue: 'Clones imitate. Control changes betray. Both must be displayed before trust collapses.',
-    objective: 'Learn clone and control tools.',
-    hint: 'Use card detail controls to clone a permanent or give control when a card effect says so.',
-    anchor: 'card-detail',
-    completion: 'manual'
-  },
-  {
-    id: 'reveal_hand',
-    chapter: 'Chapter 7 — The Library Labyrinth · Power: The Hand Behind the Hand',
-    title: 'Public Secrets',
-    scene: 'Bolas turns a hidden hand into a stained-glass confession.',
-    dialogue: 'Public information should shine where all may see it. Reveal, and remove excuses.',
-    objective: 'Learn reveal-hand tools.',
-    hint: 'Use Reveal Hand when a card effect makes a hand public.',
-    anchor: 'reveal-tools',
-    completion: 'manual'
-  },
-  {
-    id: 'private_hand_peek',
-    chapter: 'Chapter 7 — The Library Labyrinth · Power: The Hand Behind the Hand',
-    title: 'The Forbidden Glance',
-    scene: 'A single card peeks from behind Bolas’s sleeve and vanishes again.',
-    dialogue: 'Sometimes only one player is permitted to know. Look privately; do not turn secrecy into spectacle.',
-    objective: 'Privately peek at Nicol Bolas’s hand.',
-    hint: 'Use the private peek button near the opponent area. This is local-only information.',
-    reaction: 'Bolas: You saw a secret and did not announce it. Disturbingly competent.',
-    anchor: 'private-hand-peek-button',
-    completion: 'detect'
-  },
-  {
-    id: 'scry_search_reorder',
-    chapter: 'Chapter 7 — The Library Labyrinth · Power: The Hand Behind the Hand',
-    title: 'Rearrange the Maze',
-    scene: 'The top of the library becomes a corridor of sliding doors.',
-    dialogue: 'Scry, search, shuffle, reorder: these are legal when a spell grants a map. Do not invent permission.',
-    objective: 'Learn scry/search/reorder tools.',
-    hint: 'Open Library tools. These actions are manual and should only be used when a card effect allows them.',
-    anchor: 'library-menu-button',
-    completion: 'manual'
-  },
-  {
-    id: 'batch_library_actions',
-    chapter: 'Chapter 7 — The Library Labyrinth · Power: The Hand Behind the Hand',
-    title: 'Many Doors at Once',
-    scene: 'Bolas fans several library cards like knives.',
-    dialogue: 'One card is a choice. Ten cards are logistics. Use the batch gate when effects arrive in swarms.',
-    objective: 'Open Library Batch Actions.',
-    hint: 'Use Batch Actions for Draw N, Mill N, Reveal top N, Exile top N, Scry N, or Surveil N.',
-    reaction: 'Bolas: Several futures moved at once. The maze applauds.',
-    anchor: 'library-menu-button',
-    completion: 'detect-or-manual'
-  },
-  {
-    id: 'opponent_library_tools',
-    chapter: 'Chapter 7 — The Library Labyrinth · Power: The Hand Behind the Hand',
-    title: 'Trespass with Permission',
-    scene: 'The enemy library opens exactly one crack.',
-    dialogue: 'Sometimes a spell grants trespass. Enjoy legality while it lasts; theft without text is merely cheating.',
-    objective: 'Find opponent library tools.',
-    hint: 'Open Library tools and look under Opponent Library. Use these only when a card effect allows it.',
-    anchor: 'library-menu-button',
-    completion: 'manual'
-  },
-  {
-    id: 'player_counters_statuses',
-    chapter: 'Chapter 8 — Crowns, Counters, and Curses · Power: The Crown That Counts You',
-    title: 'Open the Crown Ledger',
-    scene: 'Bolas drops crowns, poison, mana sparks, and tiny doom-numbers onto the players.',
-    dialogue: 'Cards are not the only objects that collect consequences. Players do too.',
-    objective: 'Open Player Counters & Statuses.',
-    hint: 'Tap the player/status/counter button near your battlefield.',
-    anchor: 'player-counters-button',
-    completion: 'detect-or-manual'
-  },
-  {
-    id: 'player_counters',
-    chapter: 'Chapter 8 — Crowns, Counters, and Curses · Power: The Crown That Counts You',
-    title: 'Numbers on the Soul',
-    scene: 'A counter clicks beside your name like a lock.',
-    dialogue: 'Poison, energy, experience: little accountants of doom. Adjust them where everyone can see.',
-    objective: 'Add and remove a player counter.',
-    hint: 'Use Poison, Energy, Experience, or create a custom player counter.',
-    reaction: 'Bolas: The crown counts you now.',
-    anchor: 'player-counters-panel',
-    completion: 'detect-or-manual'
-  },
-  {
-    id: 'mana_pool',
-    chapter: 'Chapter 8 — Crowns, Counters, and Curses · Power: The Crown That Counts You',
-    title: 'Floating Fire',
-    scene: 'Unused mana sparks above your name before fading.',
-    dialogue: 'Mana unspent is a threat with nowhere to stand. Track it, then dismiss it.',
-    objective: 'Add mana to your mana pool, then clear it.',
-    hint: 'In Player Counters & Statuses, use Mana Pool controls. This is manual and does not pay for spells automatically.',
-    reaction: 'Bolas: Fire in a bowl. Quaint.',
-    anchor: 'mana-pool-panel',
-    completion: 'detect-or-manual'
-  },
-  {
-    id: 'statuses',
-    chapter: 'Chapter 8 — Crowns, Counters, and Curses · Power: The Crown That Counts You',
-    title: 'Badges of Trouble',
-    scene: 'A crown, an initiative torch, and a day-night sun orbit the duel.',
-    dialogue: 'Titles are counters with better hats. Wear one, remove one, remember who is blamed.',
-    objective: 'Toggle a player status.',
-    hint: 'Try Monarch, Initiative, City’s Blessing, Day/Night, or Ring temptation.',
-    reaction: 'Bolas: A title appears. Try not to govern poorly.',
-    anchor: 'status-panel',
-    completion: 'detect-or-manual'
-  },
-  {
-    id: 'emblems',
-    chapter: 'Chapter 8 — Crowns, Counters, and Curses · Power: The Crown That Counts You',
-    title: 'A Threat That Outlives Its Maker',
-    scene: 'A planeswalker-shaped warning burns into the sky.',
-    dialogue: 'An emblem is a threat that refuses to leave when its author does. Mark it with care.',
-    objective: 'Add an emblem.',
-    hint: 'Use a preset emblem, custom emblem, or a deck-derived emblem if available.',
-    reaction: 'Bolas: Permanent consequences. My favorite kind.',
-    anchor: 'emblem-panel',
-    completion: 'detect-or-manual'
-  },
-  {
-    id: 'dungeons',
-    chapter: 'Chapter 8 — Crowns, Counters, and Curses · Power: The Crown That Counts You',
-    title: 'Rooms Beneath the Turn',
-    scene: 'Trapdoors open under the battlefield, labeled like very rude maps.',
-    dialogue: 'Dungeons are journeys pretending to be references. Keep the map visible; the app will not walk it for you.',
-    objective: 'Find dungeon references.',
-    hint: 'Dungeon references may appear from your deck or venture/initiative cards. This is a reference tool, not automatic progression.',
-    anchor: 'dungeon-references',
-    completion: 'manual'
-  },
-  {
-    id: 'commander_note',
-    chapter: 'Chapter 8 — Crowns, Counters, and Curses · Power: The Crown That Counts You',
-    title: 'The Command Zone Bargain',
-    scene: 'A commander’s shadow returns from exile with an invoice.',
-    dialogue: 'In Commander, even death negotiates. Track tax, damage, and the oversized ego in the command zone.',
-    objective: 'Learn what Commander mode adds.',
-    hint: 'Commander games start at 40 life and include command zone, commander tax, commander damage, and commander badges.',
-    anchor: 'player-panel',
-    completion: 'manual'
-  },
-  {
-    id: 'cleanup_old_games',
-    chapter: 'Chapter 9 — Async Survival · Power: The Silence Between Turns',
-    title: 'Sweep the Ruins',
-    scene: 'Old battlefields rattle in the dark, begging to become clutter.',
-    dialogue: 'Abandoned games breed if left alone. Sweep your ruins before they achieve citizenship.',
-    objective: 'Learn old game cleanup.',
-    hint: 'In the lobby, Clean up old games can permanently remove host-owned zombie games.',
-    anchor: null,
-    completion: 'manual'
-  },
-  {
-    id: 'watch_game',
-    chapter: 'Chapter 9 — Async Survival · Power: The Silence Between Turns',
-    title: 'The Observer’s Eye',
-    scene: 'A silent watcher appears beyond the glass.',
-    dialogue: 'A watcher cannot change the duel. They can, however, judge it with unbearable accuracy.',
-    objective: 'Learn Watch Game mode.',
-    hint: 'From the lobby, a room code can be watched instead of joined.',
-    anchor: null,
-    completion: 'manual'
-  },
-  {
-    id: 'manual_toolbox_warning',
-    chapter: 'Chapter 9 — Async Survival · Power: The Silence Between Turns',
-    title: 'Blades, Not Wisdom',
-    scene: 'Bolas hands you a toolbox and pointedly not a judge.',
-    dialogue: 'This machine will not save you from illegal plays. It gives you blades, not wisdom.',
-    objective: 'Understand the app’s manual-toolbox philosophy.',
-    hint: 'The app is a paper-Magic helper, not a full rules engine. Players represent actions honestly.',
-    anchor: null,
-    completion: 'manual'
-  },
-  {
-    id: 'final_trial',
-    chapter: 'Chapter 9 — Async Survival · Power: The Silence Between Turns',
-    title: 'Final Trial: In Response',
-    scene: 'The arena goes quiet, waiting for the oldest words in Magic.',
-    dialogue: 'You have learned logs, zones, secrets, tokens, crowns, and the tower of priority. Now let time move.',
-    objective: 'Pass priority to end the tutorial.',
-    hint: 'Tap Pass. This completes the tutorial battle.',
-    anchor: 'pass-button',
-    completion: 'detect-or-manual'
-  },
-  {
-    id: 'tutorial_complete',
-    chapter: 'Victory, Temporarily',
-    title: 'The Dragon Allows You to Leave',
-    scene: 'Bolas folds the arena back into a deck-sized scar.',
-    dialogue: 'You have survived the lesson. Go teach your friends the sacred terror of saying “in response.”',
-    objective: 'Finish the tutorial.',
-    hint: 'You can restart tutorial mode from the lobby any time.',
-    reaction: 'Bolas: Temporary survival granted.',
-    anchor: null,
-    completion: 'finish'
-  },
+  { id: 'intro', chapter: 'Act 1 / Turn 1 — Main Phase', title: 'Nicol Bolas and the Board of Doom', scene: 'The lobby has cracked open into an arena. Seven cards wait at the edge of your battlefield.', dialogue: 'Enough doors. Sit. Draw. Learn.', objective: 'Begin the guided duel.', hint: 'Tap Next. This is a scripted tutorial duel that uses the same manual tools as a real game.', anchor: null, completion: 'manual' },
+  { id: 'room_code', chapter: 'Act 1 / Turn 1 — Main Phase', title: 'The Doorway Sigil', scene: 'A six-character room code burns above the battlefield.', dialogue: 'This code is the doorway. Send it to the friend you wish to inconvenience.', objective: 'Find the room code.', hint: 'In real games, friends use this code to join as a player or watch as a spectator.', anchor: 'room-code', completion: 'manual' },
+  { id: 'battlefields', chapter: 'Act 1 / Turn 1 — Main Phase', title: 'Two Battlefields', scene: 'Two battlefields rise: yours below, mine above.', dialogue: 'Know the geography before you begin losing territory.', objective: 'Find your battlefield and Nicol Bolas’s battlefield.', hint: 'Your battlefield is near the bottom. Nicol Bolas is the scripted opponent above.', anchor: 'battlefields', completion: 'manual' },
+  { id: 'hand_area', chapter: 'Act 1 / Turn 1 — Main Phase', title: 'Opening Hand', scene: 'Seven cards fan out like possible futures.', dialogue: 'Seven choices. Most mortals need only one to disappoint me.', objective: 'Find your hand.', hint: 'Your hand is at the bottom. Scroll sideways if needed.', anchor: 'hand-area', completion: 'manual' },
+  { id: 'import_deck', chapter: 'Act 1 / Turn 1 — Before the First Spell', title: 'The Deck You Brought', scene: 'Your prepared tutorial deck waits, but the import altar is visible beside your hand.', dialogue: 'Before a real duel, bring a real deck. Commander lists may even declare their Commander before the Deck.', objective: 'Learn where Import Deck is.', hint: 'Import Deck accepts pasted decklists. Delete Deck lets you safely re-import, and deck-derived token, emblem, and dungeon templates can appear from your list.', anchor: 'hand-area', completion: 'manual' },
+  { id: 'play_land', chapter: 'Act 1 / Turn 1 — Main Phase', title: 'Play Mountain', scene: 'The floor splits into red stone.', dialogue: 'Put a place beneath your power.', objective: 'Play Mountain.', hint: 'Tap Mountain in your hand, then choose Play Land.', anchor: 'hand-area', completion: 'detect' },
+  { id: 'undo_play_land', chapter: 'Act 1 / Turn 1 — Main Phase', title: 'Undo and Replay', scene: 'Time stutters around the Mountain.', dialogue: 'Regret is the first spell every player learns.', objective: 'Undo the Mountain, then play it again.', hint: 'Tap Undo, confirm, then replay Mountain. This uses the normal Play Land undo flow.', anchor: 'undo-button', completion: 'detect-or-manual' },
+  { id: 'cast_spell_to_stack', chapter: 'Act 1 / Turn 1 — Main Phase', title: 'Lightning Bolt Enters the Stack', scene: 'A red spell ignites above your hand.', dialogue: 'Do not throw it at me yet. In Magic, even violence must wait in line.', objective: 'Cast Lightning Bolt targeting Nicol Bolas.', hint: 'Tap Lightning Bolt in your hand and choose Cast Spell or Cast + Target.', anchor: 'hand-area', completion: 'detect' },
+  { id: 'inspect_stack', chapter: 'Act 1 / Turn 1 — Main Phase', title: 'Open the Stack', scene: 'The bolt freezes in the air.', dialogue: 'The stack: where intentions become paperwork before becoming pain.', objective: 'Open the Stack panel.', hint: 'Tap the Stack button near the top of the screen.', anchor: 'stack-button', completion: 'detect-or-manual' },
+  { id: 'bolas_negate', chapter: 'Act 1 / Turn 1 — Main Phase', title: 'Bolas Responds with Negate', scene: 'Blue light wraps around your spell.', dialogue: 'Denied? Not yet. Merely contested.', objective: 'Watch Negate appear above Lightning Bolt.', hint: 'The newest stack item resolves first, so Negate sits above your Bolt.', anchor: 'stack-panel', completion: 'manual' },
+  { id: 'copy_stack_item', chapter: 'Act 1 / Turn 1 — Main Phase', title: 'Copy the Bolt', scene: 'Your spell casts a second shadow.', dialogue: 'Ah. Multiplication. Dangerous when discovered by the desperate.', objective: 'Copy Lightning Bolt.', hint: 'Open Lightning Bolt’s stack item details and use Copy Stack Item.', anchor: 'stack-panel', completion: 'detect' },
+  { id: 'resolve_stack_item', chapter: 'Act 1 / Turn 1 — Main Phase', title: 'Resolve the Copy', scene: 'The copied bolt slips past the counterspell.', dialogue: 'The imitation wounds first. How vulgar.', objective: 'Resolve the top Lightning Bolt copy.', hint: 'Use Resolve Top Stack Item. The top object resolves first.', anchor: 'stack-panel', completion: 'detect' },
+  { id: 'counter_stack_item', chapter: 'Act 1 / Turn 1 — Main Phase', title: 'Negate Closes', scene: 'Negate closes around the original spell.', dialogue: 'The first future dies. Remember: the top resolves first.', objective: 'Counter or fizzle the remaining original spell as instructed by the stack.', hint: 'Use Counter/Fizzle or resolve the counterspell, depending on the current top item.', anchor: 'stack-panel', completion: 'detect-or-manual' },
+  { id: 'pass_priority', chapter: 'Act 1 / Turn 1 — End Step', title: 'Pass Priority', scene: 'Silence returns to the battlefield.', dialogue: 'In async Magic, silence must be announced.', objective: 'Pass priority.', hint: 'Tap Pass when you are done acting.', anchor: 'pass-button', completion: 'detect' },
+  { id: 'game_log', chapter: 'Act 1 / Turn 1 — End Step', title: 'The Arena Remembers', scene: 'The arena wall records every insult.', dialogue: 'Memory is a weapon. The log is where your excuses go to die.', objective: 'Open the log/chat.', hint: 'Use the chat/log icon near the top to review actions and leave clear async notes.', anchor: 'reveal-tools', completion: 'manual' },
+  { id: 'beginning_phase_draw', chapter: 'Act 2 / Turn 2 — Untap, Upkeep, Draw', title: 'The Ritual of a Turn', scene: 'A new turn opens like a blade.', dialogue: 'Untap. Upkeep. Draw. The ritual matters because mistakes love shortcuts.', objective: 'Move through the beginning phase and draw for turn.', hint: 'Normal card draw happens in the draw step. Use phase controls and Draw when appropriate.', anchor: 'phase-indicator', completion: 'manual' },
+  { id: 'cast_delver', chapter: 'Act 2 / Turn 2 — Main Phase', title: 'Cast Delver of Secrets', scene: 'A small wizard steps onto the board carrying a terrible secret.', dialogue: 'Small creatures are often containers for larger problems.', objective: 'Cast Delver of Secrets.', hint: 'Tap Delver in your hand, cast it, and resolve it to the battlefield.', anchor: 'hand-area', completion: 'manual' },
+  { id: 'reveal_top_delver', chapter: 'Act 2 / Turn 2 — Upkeep Trigger', title: 'Reveal the Top Card', scene: 'The top of your library glows with instant magic.', dialogue: 'Show the insect what it wants to become.', objective: 'Reveal the top card for Delver’s trigger.', hint: 'Use Library tools / reveal top card when an effect tells everyone what the top card is.', anchor: 'library-menu-button', completion: 'manual' },
+  { id: 'transform_card', chapter: 'Act 2 / Turn 2 — Upkeep Trigger', title: 'Transform Delver', scene: 'The wizard’s shadow unfolds into wings.', dialogue: 'Identity is just a face with ambition.', objective: 'Transform Delver into Insectile Aberration.', hint: 'Open Delver’s card detail and use Transform / Switch face.', anchor: 'card-detail', completion: 'detect-or-manual' },
+  { id: 'bolas_removal', chapter: 'Act 2 / Turn 2 — Main Phase', title: 'Doom Blade on the Stack', scene: 'Black fire forms around the insect.', dialogue: 'Now let us see whether your little revelation survives contact with removal.', objective: 'Watch Bolas target your transformed Delver.', hint: 'The scripted Doom Blade demonstrates targets and why protection/phase-out tools matter.', anchor: 'stack-panel', completion: 'manual' },
+  { id: 'phase_card', chapter: 'Act 2 / Turn 2 — In Response', title: 'Slip Out the Back', scene: 'Delver folds sideways out of reality.', dialogue: 'Annoying. You have found the door marked not here.', objective: 'Phase out Delver.', hint: 'Open Delver details and use Phase Out when a card like Slip Out the Back makes it phase out.', anchor: 'card-detail', completion: 'detect-or-manual' },
+  { id: 'add_counter', chapter: 'Act 2 / Turn 2 — In Response', title: '+1/+1 Counter', scene: 'A counter remains where the spell touched your creature.', dialogue: 'A number appears. Soon it will demand respect.', objective: 'Add a +1/+1 counter to Delver.', hint: 'Use card detail counters to represent counters from real effects.', anchor: 'card-detail', completion: 'detect-or-manual' },
+  { id: 'add_reminder', chapter: 'Act 2 / Turn 2 — Cleanup Memory', title: 'Until End of Turn Reminder', scene: 'A temporary note clings to the creature’s outline.', dialogue: 'Until end of turn is where memory goes to be betrayed.', objective: 'Add a reminder marker.', hint: 'Use a reminder like “Can’t block” or “+3/+3 until EOT” when a temporary effect needs remembering.', anchor: 'card-detail', completion: 'detect-or-manual' },
+  { id: 'tap_card', chapter: 'Act 2 / Turn 2 — Main Phase', title: 'Tap and Untap', scene: 'The creature returns, exhausted from not existing.', dialogue: 'Turn it sideways. The oldest gesture of usefulness.', objective: 'Tap and untap a permanent.', hint: 'Open card details and use Tap/Untap.', anchor: 'card-detail', completion: 'detect-or-manual' },
+  { id: 'face_down_reveal', chapter: 'Act 2 / Turn 2 — Hidden Information', title: 'Face Down and Reveal', scene: 'Bolas places a blank mask over a card.', dialogue: 'Sometimes a card is a secret with corners.', objective: 'Learn face-down and reveal tools.', hint: 'Use Turn Face Down / Reveal only when a card effect creates hidden information.', anchor: 'card-detail', completion: 'manual' },
+  { id: 'set_attackers_phase', chapter: 'Act 3 / Turn 3 — Beginning of Combat', title: 'Scheduled Violence', scene: 'The arena lowers its walls.', dialogue: 'Combat is not violence. It is scheduled violence.', objective: 'Move to the attackers step.', hint: 'Tap the phase indicator and choose Attackers after beginning combat.', anchor: 'phase-indicator', completion: 'detect-or-manual' },
+  { id: 'declare_attacker_player', chapter: 'Act 3 / Turn 3 — Declare Attackers', title: 'Attack Bolas', scene: 'Your creature crosses the line.', dialogue: 'Very well. Aim your little rebellion.', objective: 'Declare an attacker against Nicol Bolas.', hint: 'Tap your creature, choose Attack, then choose Nicol Bolas.', anchor: 'card-detail', completion: 'detect-or-manual' },
+  { id: 'attack_planeswalker_battle_note', chapter: 'Act 3 / Turn 3 — Declare Attackers', title: 'Not Every Attack Seeks a Face', scene: 'Bolas places a false throne between you and him.', dialogue: 'Some attacks seek a planeswalker. Some seek a battle.', objective: 'Learn attack target options.', hint: 'When planeswalkers or battles exist, the attack target picker can choose them instead of a player.', anchor: 'combat-summary', completion: 'manual' },
+  { id: 'declare_blocker_note', chapter: 'Act 3 / Turn 3 — Declare Blockers', title: 'A Blocker Appears', scene: 'A Zombie lurches between blade and dragon.', dialogue: 'The honorable thing would be to block. Fortunately, I am flexible.', objective: 'Learn blockers.', hint: 'The defending player can mark blockers manually in combat.', anchor: 'combat-summary', completion: 'manual' },
+  { id: 'first_strike_step', chapter: 'Act 3 / Turn 3 — First-Strike Damage', title: 'The Early Wound', scene: 'One blade lands before time catches up.', dialogue: 'First strike is violence arriving early.', objective: 'Set combat damage to First-strike damage.', hint: 'Use phase/combat controls when first strike or double strike matters.', anchor: 'phase-indicator', completion: 'detect-or-manual' },
+  { id: 'regular_damage_step', chapter: 'Act 3 / Turn 3 — Regular Damage', title: 'Damage on Schedule', scene: 'The second wound arrives on schedule.', dialogue: 'Then time remembers the rest of the damage.', objective: 'Set combat damage to Regular damage.', hint: 'Use combat damage step controls for the normal damage step.', anchor: 'phase-indicator', completion: 'detect-or-manual' },
+  { id: 'damage_markers', chapter: 'Act 3 / Turn 3 — End of Combat', title: 'Damage Markers', scene: 'Red marks flare on damaged creatures.', dialogue: 'Damage fades at cleanup. Arguments do not.', objective: 'Add temporary damage to a creature.', hint: 'Open a creature detail panel and use damage controls.', anchor: 'card-detail', completion: 'manual' },
+  { id: 'combat_summary_note', chapter: 'Act 3 / Turn 3 — End Combat', title: 'Combat Summary', scene: 'The arena writes down who is trying to hurt whom.', dialogue: 'The combat summary exists because memory is not a legal game object.', objective: 'Find Combat Summary.', hint: 'It lists attackers, blockers, attack targets, and damage-step state.', anchor: 'combat-summary', completion: 'manual' },
+  { id: 'private_hand_peek', chapter: 'Act 4 / Turn 4 — The Library Labyrinth', title: 'Duress the Dragon', scene: 'A thought-spell slips behind Bolas’s eyes.', dialogue: 'Public knowledge is vulgar. Private knowledge wins games.', objective: 'Use Private hand peek on Nicol Bolas.', hint: 'Use private peek only when a spell or effect lets you see hidden cards privately.', anchor: 'private-hand-peek-button', completion: 'detect-or-manual' },
+  { id: 'reveal_hand_note', chapter: 'Act 4 / Turn 4 — Public Knowledge', title: 'Reveal and Hide Hand', scene: 'Bolas opens one hand to the arena, then closes it.', dialogue: 'Public reveal is not the same as private knowledge. Do not confuse theatre with espionage.', objective: 'Learn Reveal Hand and Hide Hand.', hint: 'Use reveal tools when the whole table should see a player’s hand.', anchor: 'reveal-tools', completion: 'manual' },
+  { id: 'open_library_tools', chapter: 'Act 4 / Turn 4 — Your Library', title: 'Open the Library Labyrinth', scene: 'Your next draws appear as floating cards.', dialogue: 'The future is fragile. Rearrange it before it notices.', objective: 'Open Library tools.', hint: 'Tap the book/library icon. Swipe the bottom toolbar if it is off-screen.', anchor: 'library-menu-button', completion: 'detect-or-manual' },
+  { id: 'batch_library_actions', chapter: 'Act 4 / Turn 4 — Batch Actions', title: 'One Card, Ten Cards', scene: 'Several cards fall from the top of a library at once.', dialogue: 'One card is a choice. Ten cards is weather.', objective: 'Open Batch Actions.', hint: 'Batch Actions covers Draw N, Mill N, Reveal top N, Exile top N, Scry N, and Surveil N.', anchor: 'library-menu-button', completion: 'detect-or-manual' },
+  { id: 'opponent_library_tools', chapter: 'Act 4 / Turn 4 — Portent', title: 'Trespass with Permission', scene: 'Portent points at Bolas’s library instead of yours.', dialogue: 'Permission to trespass is still trespassing.', objective: 'Find opponent library tools.', hint: 'Use opponent library tools only when an effect like Portent lets you look at or reorder an opponent’s library.', anchor: 'library-menu-button', completion: 'manual' },
+  { id: 'create_token', chapter: 'Act 5 / Turn 5 — Main Phase', title: 'Dragon Fodder', scene: 'Two goblins crawl out of a spell-shaped hole.', dialogue: 'Some creatures were never cards. Still, they insist on standing there.', objective: 'Create Goblin tokens.', hint: 'Use Token Tools or deck-derived token templates when a spell creates tokens.', anchor: 'token-tools', completion: 'detect-or-manual' },
+  { id: 'deck_tokens_note', chapter: 'Act 5 / Turn 5 — Main Phase', title: 'Deck-Derived Templates', scene: 'Dragon Fodder remembers what it usually creates.', dialogue: 'Your deck has habits. The app can remember them.', objective: 'Find From Your Deck token templates.', hint: 'Imported decks can surface token, emblem, and dungeon references without storing huge card data.', anchor: 'token-tools', completion: 'manual' },
+  { id: 'custom_token_note', chapter: 'Act 5 / Turn 5 — Main Phase', title: 'Custom Monster', scene: 'Bolas names a creature no preset has prepared for.', dialogue: 'When reality lacks the correct monster, fill out the form.', objective: 'Learn Custom Token.', hint: 'Custom Token lets you choose name, stats, colors, text, and quantity.', anchor: 'token-tools', completion: 'manual' },
+  { id: 'target_system', chapter: 'Act 5 / Turn 5 — Main Phase', title: 'A Promise with Consequences', scene: 'A red line connects spell and victim.', dialogue: 'A target is a promise with consequences.', objective: 'Mark a target.', hint: 'Use Ability/Target tools on a spell or permanent when an effect targets something.', anchor: 'target-tools', completion: 'detect-or-manual' },
+  { id: 'attach_to_permanent', chapter: 'Act 5 / Turn 5 — Main Phase', title: 'Rancor Finds a Body', scene: 'Rancor coils around a creature.', dialogue: 'Attachments are relationships with rules text.', objective: 'Attach an Aura or Equipment-style card to a permanent.', hint: 'Use Attach to permanent when a card becomes attached to a creature, artifact, or other permanent.', anchor: 'card-detail', completion: 'manual' },
+  { id: 'attach_to_player_note', chapter: 'Act 5 / Turn 5 — Main Phase', title: 'Curse the Dragon', scene: 'Curse of the Pierced Heart hangs behind Bolas like a bad moon.', dialogue: 'Why curse a creature when you can curse the person making decisions?', objective: 'Attach a curse to Nicol Bolas.', hint: 'Use Attach to player for player-bound Auras such as Curses.', anchor: 'card-detail', completion: 'manual' },
+  { id: 'clone_control', chapter: 'Act 5 / Turn 5 — Main Phase', title: 'Clone and Betrayal', scene: 'A creature looks at itself and makes a tactical error.', dialogue: 'Copies are lies that learned anatomy. Control changes are betrayal with timestamps.', objective: 'Learn Clone and Give Control.', hint: 'Open card detail to clone a permanent or give control when a spell like Act of Treason says so.', anchor: 'card-detail', completion: 'manual' },
+  { id: 'player_panel', chapter: 'Act 6 / Turn 6 — The Player Becomes the Battlefield', title: 'Open Player Panel', scene: 'Bolas points at you instead of your cards.', dialogue: 'The battlefield is not only where creatures stand. Sometimes it is you.', objective: 'Open Player Counters & Statuses.', hint: 'Tap the player/status/counter button near your battlefield.', anchor: 'player-counters-button', completion: 'manual' },
+  { id: 'mana_pool', chapter: 'Act 6 / Turn 6 — Mana Pool', title: 'Floating Mana', scene: 'Green mana floats like a captured firefly.', dialogue: 'Mana unspent is a threat looking for a sentence.', objective: 'Add mana to your mana pool, then clear it.', hint: 'Mana Pool controls are manual and do not automatically pay for spells.', anchor: 'mana-pool-panel', completion: 'detect-or-manual' },
+  { id: 'player_counters', chapter: 'Act 6 / Turn 6 — Player Counters', title: 'Invisible Ledgers', scene: 'Poison, energy, and experience ledgers open beside your name.', dialogue: 'Some numbers sit on players because cards are too fragile to hold them.', objective: 'Add and remove a player counter.', hint: 'Use Poison, Energy, Experience, or custom player counters.', anchor: 'player-counters-panel', completion: 'detect-or-manual' },
+  { id: 'statuses', chapter: 'Act 6 / Turn 6 — Statuses', title: 'Crowns and Nightfall', scene: 'A crown, a dungeon door, a city seal, and a changing sky appear.', dialogue: 'Titles are counters with better costumes.', objective: 'Toggle a status, Day/Night, or Ring temptation.', hint: 'Use Monarch, Initiative, City’s Blessing, Day/Night, and Ring controls as cards require.', anchor: 'status-panel', completion: 'detect-or-manual' },
+  { id: 'emblems', chapter: 'Act 6 / Turn 6 — Emblems', title: 'A Scar the Rules Remember', scene: 'A planeswalker’s threat remains after the planeswalker is gone.', dialogue: 'An emblem is a scar the rules refuse to forget.', objective: 'Add an emblem.', hint: 'Use preset, custom, or deck-derived emblems.', anchor: 'player-counters-panel', completion: 'detect-or-manual' },
+  { id: 'dungeons_note', chapter: 'Act 6 / Turn 6 — Dungeons', title: 'Checklist with Walls', scene: 'A map appears beneath the turn order.', dialogue: 'Dungeons are not places. They are checklists with walls.', objective: 'Learn dungeon references.', hint: 'Use dungeon references for venture/initiative cards. Progress is manual.', anchor: 'player-counters-panel', completion: 'manual' },
+  { id: 'commander_note', chapter: 'Act 6 / Turn 6 — Commander', title: 'The Command Zone', scene: 'A command zone opens like a throne room.', dialogue: 'In Commander, death is merely a tax increase.', objective: 'Learn Commander mode tools.', hint: 'Commander games start at 40 life and add command zone, commander tax, and commander damage tools.', anchor: 'player-counters-panel', completion: 'manual' },
+  { id: 'final_spell', chapter: 'Act 7 / Final Turn — Main Phase', title: 'The Final Spell', scene: 'Your battlefield has become a weapon with several moving parts.', dialogue: 'Show me the oldest phrase in Magic. Show me you know when to answer.', objective: 'Cast the final spell or declare the final attack.', hint: 'Use the shown card or combat tool. The board is prepared for a lethal line.', anchor: 'hand-area', completion: 'manual' },
+  { id: 'final_bolas_response', chapter: 'Act 7 / Final Turn — In Response', title: 'Bolas Responds', scene: 'Bolas places one last spell above yours.', dialogue: 'Victory is adorable when it believes the stack is empty.', objective: 'Open the stack and inspect Bolas’s response.', hint: 'The newest spell is on top.', anchor: 'stack-button', completion: 'manual' },
+  { id: 'final_in_response', chapter: 'Act 7 / Final Turn — In Response', title: 'In Response', scene: 'Your answer appears above his answer.', dialogue: 'Ah. There it is. The phrase that ruins kings.', objective: 'Respond using the shown tool.', hint: 'Copy, counter, or resolve as instructed by the scripted board state.', anchor: 'stack-panel', completion: 'manual' },
+  { id: 'final_trial', chapter: 'Act 7 / Final Turn — Pass Priority', title: 'Let the Future Happen', scene: 'The arena waits.', dialogue: 'No more tricks? Then pass. Let the future happen.', objective: 'Pass priority.', hint: 'Tap Pass to finish the duel.', anchor: 'pass-button', completion: 'detect-or-manual' },
+  { id: 'async_oath', chapter: 'Act 8 / After the Duel — Async Survival', title: 'The Async Oath', scene: 'The dragon’s shadow cracks, but its smile remains.', dialogue: 'Leave clear board states. Pass priority. Use the log. Do not make your friends solve archaeology.', objective: 'Learn async play habits.', hint: 'Use pass, logs, and clear markers so friends can understand the game later.', anchor: 'pass-button', completion: 'manual' },
+  { id: 'watch_cleanup_note', chapter: 'Act 8 / After the Duel — Async Survival', title: 'Watchers and Cleanup', scene: 'The arena folds back toward the lobby.', dialogue: 'Some will watch. Some rooms will rot. Know the difference.', objective: 'Review Watch Game and Clean up old games.', hint: 'Watch from the lobby for spectators. Use cleanup for old host-owned games.', anchor: 'room-code', completion: 'manual' },
+  { id: 'manual_toolbox_note', chapter: 'Act 8 / After the Duel — Async Survival', title: 'The Manual Toolbox', scene: 'Bolas hands you a toolbox and pointedly not a judge.', dialogue: 'This machine is not a judge. It is a table, a memory, and a knife drawer.', objective: 'Understand the app’s manual-toolbox philosophy.', hint: 'Players are responsible for legal play; the app helps represent paper Magic.', anchor: null, completion: 'manual' },
+  { id: 'tutorial_complete', chapter: 'Victory, Temporarily', title: 'Nicol Bolas Defeated', scene: 'The dragon’s shadow cracks, but its smile remains.', dialogue: 'You have not defeated me. You have merely become inconvenient.', objective: 'Finish the tutorial duel.', hint: 'You can now return to the lobby, keep exploring this board, or restart the guided duel.', anchor: null, completion: 'finish' },
 ];
+const TUTORIAL_LOBBY_SCENES = [
+  { id: 'name', title: 'L0 — Name Yourself', scene: 'The lobby darkens like a summoning circle.', dialogue: 'Before a duel can wound you, it must know what to call you.', objective: 'Enter or confirm your display name.', hint: 'Your name appears in games and logs.', anchor: 'lobby-name-input' },
+  { id: 'laws', title: 'L1 — Choose the Laws of the Duel', scene: 'Two rule-stones burn: Regular and Commander.', dialogue: 'Twenty life is a duel. Forty life is a declaration of stubbornness.', objective: 'Find Regular and Commander mode.', hint: 'Regular starts at 20 life. Commander starts at 40 and adds command-zone tools.', anchor: 'lobby-game-mode' },
+  { id: 'title', title: 'L1b — Title the Duel', scene: 'A blank banner waits above the table.', dialogue: 'A battle with a title is easier to find when your memory has failed you.', objective: 'Find Game Title.', hint: 'Titles make rooms easier to recognize in My Games.', anchor: 'lobby-game-title' },
+  { id: 'create', title: 'L2 — Create a Game', scene: 'The room folds itself into existence.', dialogue: 'A battle is not found. It is authored.', objective: 'Learn Create Game.', hint: 'Create Game starts a new room you can share with a friend. The tutorial will not create a normal game here.', anchor: 'lobby-create-game' },
+  { id: 'join_watch', title: 'L3 — Join or Watch', scene: 'Two doors appear: one with a blade, one with an eye.', dialogue: 'Enter to fight. Watch to judge. Both are dangerous hobbies.', objective: 'Learn Join Game and Watch Game.', hint: 'Join Game is for players. Watch Game is for spectators.', anchor: 'lobby-join-watch' },
+  { id: 'room_code', title: 'L4 — Room Code', scene: 'A six-character sigil burns into the air.', dialogue: 'This code is the doorway. Send it to the friend you wish to inconvenience.', objective: 'Learn the room code.', hint: 'Give a room code to a friend so they can join or watch.', anchor: 'lobby-room-code-example' },
+  { id: 'my_games', title: 'L5 — My Games', scene: 'Recent rooms whisper from the bottom of the lobby.', dialogue: 'Abandoned games breed in the dark. Find them before they unionize.', objective: 'Find My Games.', hint: 'My Games lists rooms you recently hosted, joined, or watched.', anchor: 'lobby-my-games' },
+  { id: 'cleanup', title: 'L5b — Old Game Cleanup', scene: 'Old rooms rattle their bones.', dialogue: 'Sweep them away before they unionize.', objective: 'Find Clean up old games.', hint: 'Hosts can permanently remove old or zombie games they own.', anchor: 'lobby-cleanup-games' },
+  { id: 'deck', title: 'L5c — Deck Import Preview', scene: 'A decklist scroll seals itself for later.', dialogue: 'The duel will lend you cards. Real games expect you to bring your own doom.', objective: 'Learn the import deck concept.', hint: 'Inside a game, Import Deck lets you paste regular or Commander lists; Delete Deck lets you re-import safely.', anchor: 'lobby-tutorial-start' },
+  { id: 'begin', title: 'L6 — Tutorial Duel Begins', scene: 'The lobby cracks open. A second seat fills itself.', dialogue: 'Enough doors. Sit. Draw. Learn.', objective: 'Start the guided duel.', hint: 'The tutorial now creates a normal-looking game with a scripted Nicol Bolas opponent.', anchor: 'lobby-tutorial-start', final: true }
+];
+
 const TUTORIAL_FALLBACK_STEP = {
   id: 'intro',
   chapter: 'Tutorial',
@@ -989,15 +430,63 @@ const ZONES = {
   COMMAND: 'command'
 };
 
+const TUTORIAL_DELVER_CARD = {
+  name: 'Delver of Secrets // Insectile Aberration',
+  mana_cost: '{U}',
+  type_line: 'Creature — Human Wizard // Creature — Human Insect',
+  oracle_text: 'At the beginning of your upkeep, look at the top card of your library. You may reveal that card. If an instant or sorcery card is revealed this way, transform Delver of Secrets.',
+  layout: 'transform',
+  colors: ['U'],
+  color_identity: ['U'],
+  power: '1',
+  toughness: '1',
+  card_faces: [
+    {
+      name: 'Delver of Secrets',
+      mana_cost: '{U}',
+      type_line: 'Creature — Human Wizard',
+      oracle_text: 'At the beginning of your upkeep, look at the top card of your library. You may reveal that card. If an instant or sorcery card is revealed this way, transform Delver of Secrets.',
+      colors: ['U'],
+      power: '1',
+      toughness: '1',
+      image_uris: { normal: 'https://cards.scryfall.io/normal/front/7/9/79c24d7c-5c4b-4989-b25f-b168e5dfd861.jpg' }
+    },
+    {
+      name: 'Insectile Aberration',
+      type_line: 'Creature — Human Insect',
+      oracle_text: 'Flying',
+      colors: ['U'],
+      color_indicator: ['U'],
+      power: '3',
+      toughness: '2',
+      image_uris: { normal: 'https://cards.scryfall.io/normal/back/7/9/79c24d7c-5c4b-4989-b25f-b168e5dfd861.jpg' }
+    }
+  ],
+  activeFaceIndex: 0
+};
+
 const TUTORIAL_STARTER_CARD_SEED = [
-  { name: 'Lightning Bolt', mana_cost: '{R}', type_line: 'Instant', oracle_text: 'Lightning Bolt deals 3 damage to any target.', colors: ['R'], color_identity: ['R'] },
   { name: 'Mountain', type_line: 'Basic Land — Mountain', oracle_text: '({T}: Add {R}.)', color_identity: ['R'] },
+  { name: 'Lightning Bolt', mana_cost: '{R}', type_line: 'Instant', oracle_text: 'Lightning Bolt deals 3 damage to any target.', colors: ['R'], color_identity: ['R'] },
+  { name: 'Reverberate', mana_cost: '{R}{R}', type_line: 'Instant', oracle_text: 'Copy target instant or sorcery spell. You may choose new targets for the copy.', colors: ['R'], color_identity: ['R'] },
+  TUTORIAL_DELVER_CARD,
+  { name: 'Island', type_line: 'Basic Land — Island', oracle_text: '({T}: Add {U}.)', color_identity: ['U'] },
   { name: 'Llanowar Elves', mana_cost: '{G}', type_line: 'Creature — Elf Druid', oracle_text: '{T}: Add {G}.', colors: ['G'], color_identity: ['G'], power: '1', toughness: '1' },
-  { name: 'Delver of Secrets', mana_cost: '{U}', type_line: 'Creature — Human Wizard', oracle_text: 'At the beginning of your upkeep, look at the top card of your library. You may reveal that card. If an instant or sorcery card is revealed this way, transform Delver of Secrets.', colors: ['U'], color_identity: ['U'], power: '1', toughness: '1' },
-  { name: 'Nicol Bolas, Planeswalker', mana_cost: '{4}{U}{B}{B}{R}', type_line: 'Legendary Planeswalker — Bolas', oracle_text: '+3: Destroy target noncreature permanent. −2: Gain control of target creature. −9: Nicol Bolas, Planeswalker deals 7 damage to target player. That player discards seven cards, then sacrifices seven permanents.', colors: ['U', 'B', 'R'], color_identity: ['U', 'B', 'R'], loyalty: '5' },
   { name: 'Dragon Fodder', mana_cost: '{1}{R}', type_line: 'Sorcery', oracle_text: 'Create two 1/1 red Goblin creature tokens.', colors: ['R'], color_identity: ['R'] },
-  { name: 'Cancel', mana_cost: '{1}{U}{U}', type_line: 'Instant', oracle_text: 'Counter target spell.', colors: ['U'], color_identity: ['U'] },
-  { name: 'Forest', type_line: 'Basic Land — Forest', oracle_text: '({T}: Add {G}.)', color_identity: ['G'] }
+  { name: 'Forest', type_line: 'Basic Land — Forest', oracle_text: '({T}: Add {G}.)', color_identity: ['G'] },
+  { name: 'Ponder', mana_cost: '{U}', type_line: 'Sorcery', oracle_text: 'Look at the top three cards of your library, then put them back in any order. You may shuffle. Draw a card.', colors: ['U'], color_identity: ['U'] },
+  { name: 'Giant Growth', mana_cost: '{G}', type_line: 'Instant', oracle_text: 'Target creature gets +3/+3 until end of turn.', colors: ['G'], color_identity: ['G'] },
+  { name: 'Slip Out the Back', mana_cost: '{U}', type_line: 'Instant', oracle_text: 'Put a +1/+1 counter on target creature. It phases out.', colors: ['U'], color_identity: ['U'] },
+  { name: 'Young Pyromancer', mana_cost: '{1}{R}', type_line: 'Creature — Human Shaman', oracle_text: 'Whenever you cast an instant or sorcery spell, create a 1/1 red Elemental creature token.', colors: ['R'], color_identity: ['R'], power: '2', toughness: '1' },
+  { name: 'Rancor', mana_cost: '{G}', type_line: 'Enchantment — Aura', oracle_text: 'Enchant creature. Enchanted creature gets +2/+0 and has trample.', colors: ['G'], color_identity: ['G'] },
+  { name: 'Curse of the Pierced Heart', mana_cost: '{1}{R}', type_line: 'Enchantment — Aura Curse', oracle_text: 'Enchant player. At the beginning of enchanted player’s upkeep, Curse of the Pierced Heart deals 1 damage to that player.', colors: ['R'], color_identity: ['R'] },
+  { name: 'Act of Treason', mana_cost: '{2}{R}', type_line: 'Sorcery', oracle_text: 'Gain control of target creature until end of turn. Untap that creature. It gains haste until end of turn.', colors: ['R'], color_identity: ['R'] },
+  { name: 'Clone', mana_cost: '{3}{U}', type_line: 'Creature — Shapeshifter', oracle_text: 'You may have Clone enter as a copy of any creature on the battlefield.', colors: ['U'], color_identity: ['U'], power: '0', toughness: '0' },
+  { name: 'Portent', mana_cost: '{U}', type_line: 'Sorcery', oracle_text: 'Look at the top three cards of target player’s library, then put them back in any order. That player shuffles. Draw a card at the beginning of the next turn’s upkeep.', colors: ['U'], color_identity: ['U'] },
+  { name: 'Nicol Bolas, Planeswalker', mana_cost: '{4}{U}{B}{B}{R}', type_line: 'Legendary Planeswalker — Bolas', oracle_text: '+3: Destroy target noncreature permanent. −2: Gain control of target creature. −9: Nicol Bolas, Planeswalker deals 7 damage to target player. That player discards seven cards, then sacrifices seven permanents.', colors: ['U', 'B', 'R'], color_identity: ['U', 'B', 'R'], loyalty: '5' },
+  { name: 'Negate', mana_cost: '{1}{U}', type_line: 'Instant', oracle_text: 'Counter target noncreature spell.', colors: ['U'], color_identity: ['U'] },
+  { name: 'Doom Blade', mana_cost: '{1}{B}', type_line: 'Instant', oracle_text: 'Destroy target nonblack creature.', colors: ['B'], color_identity: ['B'] },
+  { name: 'Zombie Token', type_line: 'Token Creature — Zombie', oracle_text: '', colors: ['B'], color_identity: ['B'], power: '2', toughness: '2' }
 ];
 
 const buildTutorialStarterCards = (playerId) => TUTORIAL_STARTER_CARD_SEED.map((card, index) => sanitizeScryfallCardForGame(card, {
@@ -1005,7 +494,7 @@ const buildTutorialStarterCards = (playerId) => TUTORIAL_STARTER_CARD_SEED.map((
   instanceId: generateCardId(),
   ownerId: playerId,
   controllerId: playerId,
-  zone: index === 0 ? ZONES.HAND : ZONES.LIBRARY,
+  zone: index < 7 ? ZONES.HAND : ZONES.LIBRARY,
   tapped: false,
   counters: {},
   tempDamage: 0,
@@ -3909,12 +3398,32 @@ const Lobby = ({
   const [deletingCleanupIds, setDeletingCleanupIds] = useState(() => new Set());
   const [failedCleanupMessages, setFailedCleanupMessages] = useState({});
   const [cleanupConfirmText, setCleanupConfirmText] = useState('');
+  const [lobbyTutorialOpen, setLobbyTutorialOpen] = useState(false);
+  const [lobbyTutorialIndex, setLobbyTutorialIndex] = useState(0);
   const isInitLoading = !currentUser;
   const isGoogleConnected = currentUser?.isAnonymous === false;
   const effectiveName = name || suggestedName || '';
   const selectedCleanupGames = cleanupGames.filter((game) => selectedCleanupIds.has(game.id));
   const requiresDeleteText = selectedCleanupGames.length > 1;
   const canConfirmCleanup = selectedCleanupGames.length > 0 && (!requiresDeleteText || cleanupConfirmText === 'DELETE') && !isCleanupDeleting;
+  const lobbyTutorialScene = TUTORIAL_LOBBY_SCENES[Math.min(lobbyTutorialIndex, TUTORIAL_LOBBY_SCENES.length - 1)];
+
+  const focusLobbyTutorialTarget = () => {
+    if (!lobbyTutorialScene?.anchor || typeof document === 'undefined') return;
+    const target = document.querySelector(`[data-tutorial-anchor="${lobbyTutorialScene.anchor}"]`);
+    target?.scrollIntoView?.({ behavior: 'smooth', block: 'center', inline: 'center' });
+    target?.classList?.add('tutorial-target-pulse');
+    setTimeout(() => target?.classList?.remove('tutorial-target-pulse'), 1600);
+  };
+
+  const advanceLobbyTutorial = () => {
+    if (lobbyTutorialScene?.final) {
+      setLobbyTutorialOpen(false);
+      onStartTutorial(effectiveName);
+      return;
+    }
+    setLobbyTutorialIndex((current) => Math.min(current + 1, TUTORIAL_LOBBY_SCENES.length - 1));
+  };
 
   const openCleanup = async () => {
     setIsCleanupOpen(true);
@@ -4024,6 +3533,7 @@ const Lobby = ({
           <div>
             <label className="block text-sm font-medium text-slate-400 mb-1">Your Name</label>
             <input
+              data-tutorial-anchor="lobby-name-input"
               type="text"
               value={effectiveName}
               onChange={(e) => setName(e.target.value)}
@@ -4036,6 +3546,7 @@ const Lobby = ({
             <div className="space-y-3">
               <div className="grid grid-cols-2 gap-3">
                 <button
+                  data-tutorial-anchor="lobby-create-game"
                   onClick={() => onCreate(effectiveName, gameTitle, gameMode)}
                   disabled={!effectiveName.trim() || isInitLoading || isActionLoading}
                   className="bg-purple-600 hover:bg-purple-700 disabled:opacity-50 disabled:cursor-wait text-white p-3 rounded-lg font-bold transition-colors flex justify-center items-center gap-2"
@@ -4043,6 +3554,7 @@ const Lobby = ({
                   {isActionLoading ? <Loader2 className="animate-spin" size={18}/> : 'Create Game'}
                 </button>
                 <button
+                  data-tutorial-anchor="lobby-join-watch"
                   onClick={() => setMode('join')}
                   disabled={!effectiveName.trim() || isInitLoading || isActionLoading}
                   className="bg-slate-700 hover:bg-slate-600 disabled:opacity-50 disabled:cursor-wait text-white p-3 rounded-lg font-bold transition-colors flex justify-center items-center gap-2"
@@ -4055,6 +3567,7 @@ const Lobby = ({
                 <input
                   type="text"
                   value={gameTitle}
+                  data-tutorial-anchor="lobby-game-title"
                   onChange={(e) => setGameTitle(e.target.value)}
                   className="w-full bg-slate-900 border border-slate-700 rounded p-3 text-white focus:ring-2 focus:ring-purple-500 outline-none"
                   placeholder="e.g. 'Mono-Red vs Elves'"
@@ -4063,7 +3576,7 @@ const Lobby = ({
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-400 mb-1">Game Mode</label>
-                <div className="grid grid-cols-2 gap-2">
+                <div data-tutorial-anchor="lobby-game-mode" className="grid grid-cols-2 gap-2">
                   {[
                     { id: GAME_MODES.REGULAR, label: 'Regular', detail: '20 life' },
                     { id: GAME_MODES.COMMANDER, label: 'Commander', detail: '40 life' }
@@ -4080,7 +3593,9 @@ const Lobby = ({
                   ))}
                 </div>
               </div>
+              <div data-tutorial-anchor="lobby-room-code-example" className="rounded-lg border border-slate-700 bg-slate-900/70 p-2 text-xs text-slate-400">Example room code: <span className="font-mono tracking-widest text-slate-200">A7X92B</span></div>
               <button
+                data-tutorial-anchor="lobby-join-watch"
                 onClick={() => setMode('watch')}
                 disabled={!effectiveName.trim() || isInitLoading || isActionLoading}
                 className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-wait text-white p-3 rounded-lg font-bold transition-colors flex justify-center items-center gap-2"
@@ -4089,7 +3604,8 @@ const Lobby = ({
               </button>
               <button
                 type="button"
-                onClick={() => onStartTutorial(effectiveName)}
+                data-tutorial-anchor="lobby-tutorial-start"
+                onClick={() => { setLobbyTutorialIndex(0); setLobbyTutorialOpen(true); }}
                 disabled={!effectiveName.trim() || isInitLoading || isActionLoading}
                 className="w-full rounded-lg border border-amber-500/40 bg-gradient-to-r from-amber-950/80 to-purple-950/70 p-3 text-left text-amber-50 transition-colors hover:border-amber-300/70 hover:from-amber-900/80 hover:to-purple-900/80 disabled:cursor-wait disabled:opacity-50"
               >
@@ -4199,10 +3715,11 @@ const Lobby = ({
             {isGoogleConnected && <span className="text-emerald-300">(Google)</span>}
           </div>
 
-          <div className="border border-slate-700 rounded-lg p-3 space-y-2">
+          <div data-tutorial-anchor="lobby-my-games" className="border border-slate-700 rounded-lg p-3 space-y-2">
             <div className="flex items-center justify-between gap-2">
               <div className="text-sm font-semibold text-slate-300">My Games</div>
               <button
+                data-tutorial-anchor="lobby-cleanup-games"
                 onClick={openCleanup}
                 disabled={isInitLoading || isActionLoading || isCleanupLoading}
                 className="text-[11px] bg-slate-900 hover:bg-slate-700 disabled:opacity-50 text-slate-300 border border-slate-700 rounded px-2 py-1 flex items-center gap-1"
@@ -4272,6 +3789,31 @@ const Lobby = ({
               >
                 Confirm
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {lobbyTutorialOpen && lobbyTutorialScene && (
+        <div className="fixed inset-0 z-[100] flex items-end justify-center bg-black/70 p-3 sm:items-center" onClick={() => setLobbyTutorialOpen(false)}>
+          <div className="w-full max-w-md rounded-2xl border border-amber-400/40 bg-slate-950 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+            <div className="border-b border-amber-500/20 bg-gradient-to-r from-amber-950/80 to-purple-950/80 p-4">
+              <div className="text-[10px] font-black uppercase tracking-[0.2em] text-amber-200">Lobby Tutorial · {lobbyTutorialIndex + 1}/{TUTORIAL_LOBBY_SCENES.length}</div>
+              <h2 className="mt-1 text-lg font-black text-white">{lobbyTutorialScene.title}</h2>
+            </div>
+            <div className="space-y-3 p-4">
+              <p className="text-sm text-slate-300">{lobbyTutorialScene.scene}</p>
+              <p className="rounded-xl border border-purple-500/20 bg-purple-950/30 p-3 text-sm italic text-purple-100"><span className="font-black not-italic text-purple-200">Bolas:</span> “{lobbyTutorialScene.dialogue}”</p>
+              <div className="rounded-xl border border-slate-700 bg-slate-900/80 p-3 text-sm"><div className="text-[10px] font-black uppercase tracking-widest text-emerald-300">Objective</div><div className="mt-1 text-slate-100">{lobbyTutorialScene.objective}</div></div>
+              <div className="rounded-xl border border-slate-700 bg-slate-900/70 p-3 text-sm"><div className="text-[10px] font-black uppercase tracking-widest text-sky-300">Hint</div><div className="mt-1 text-slate-300">{lobbyTutorialScene.hint}</div></div>
+              <div className="flex flex-wrap justify-between gap-2 pt-1">
+                <button type="button" onClick={() => setLobbyTutorialIndex((current) => Math.max(current - 1, 0))} disabled={lobbyTutorialIndex === 0} className="min-h-10 rounded-lg border border-slate-700 px-3 text-sm font-bold text-slate-300 disabled:opacity-40">Back</button>
+                <div className="ml-auto flex gap-2">
+                  <button type="button" onClick={focusLobbyTutorialTarget} className="min-h-10 rounded-lg border border-amber-500/40 px-3 text-sm font-black text-amber-100">Show me</button>
+                  <button type="button" onClick={() => setLobbyTutorialOpen(false)} className="min-h-10 rounded-lg border border-slate-700 px-3 text-sm font-bold text-slate-300">Exit</button>
+                  <button type="button" onClick={advanceLobbyTutorial} className="min-h-10 rounded-lg bg-amber-500 px-4 text-sm font-black text-slate-950">{lobbyTutorialScene.final ? 'Start duel' : 'Next'}</button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -5456,7 +4998,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const buildTutorialCardInstance = useCallback((cardName, ownerId, zone = ZONES.HAND, controllerId = ownerId) => {
     const safeName = String(cardName || 'Tutorial Card');
     const safeOwnerId = ownerId || userId || 'tutorial-player';
-    const seed = TUTORIAL_STARTER_CARD_SEED.find((card) => card.name === safeName) || { name: safeName, type_line: 'Card', oracle_text: '', layout: 'normal' };
+    const seed = TUTORIAL_STARTER_CARD_SEED.find((card) => card.name === safeName || card.card_faces?.some((face) => face?.name === safeName)) || { name: safeName, type_line: 'Card', oracle_text: '', layout: 'normal' };
     return sanitizeScryfallCardForGame({ layout: 'normal', ...seed }, {
       id: `tutorial-${safeName.toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'card'}`,
       instanceId: generateCardId(),
@@ -5480,21 +5022,60 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       undo_play_land: [{ name: 'Mountain', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId }],
       cast_spell_to_stack: [{ name: 'Lightning Bolt', zone: ZONES.HAND, ownerId: userId, controllerId: userId }],
       inspect_stack: [{ name: 'Lightning Bolt', zone: 'stack_zone', ownerId: userId, controllerId: userId, stack: true }],
-      copy_stack_item: [{ name: 'Lightning Bolt', zone: 'stack_zone', ownerId: userId, controllerId: userId, stack: true }],
+      bolas_negate: [
+        { name: 'Lightning Bolt', zone: 'stack_zone', ownerId: userId, controllerId: userId, stack: true },
+        { name: 'Negate', zone: 'stack_zone', ownerId: opponent?.id || userId, controllerId: opponent?.id || userId, stack: true, targetName: 'Lightning Bolt' }
+      ],
+      copy_stack_item: [
+        { name: 'Lightning Bolt', zone: 'stack_zone', ownerId: userId, controllerId: userId, stack: true },
+        { name: 'Negate', zone: 'stack_zone', ownerId: opponent?.id || userId, controllerId: opponent?.id || userId, stack: true, targetName: 'Lightning Bolt' }
+      ],
       resolve_stack_item: [{ name: 'Lightning Bolt', zone: 'stack_zone', ownerId: userId, controllerId: userId, stack: true }],
       counter_stack_item: [{ name: 'Lightning Bolt', zone: 'stack_zone', ownerId: userId, controllerId: userId, stack: true }],
+      cast_delver: [{ name: 'Delver of Secrets', zone: ZONES.HAND, ownerId: userId, controllerId: userId }],
+      reveal_top_delver: [{ name: 'Lightning Bolt', zone: ZONES.LIBRARY, ownerId: userId, controllerId: userId }],
+      transform_card: [{ name: 'Delver of Secrets', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId, activeFaceIndex: 0 }],
+      bolas_removal: [
+        { name: 'Delver of Secrets', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId, activeFaceIndex: 1 },
+        { name: 'Doom Blade', zone: 'stack_zone', ownerId: opponent?.id || userId, controllerId: opponent?.id || userId, stack: true, targetName: 'Insectile Aberration' }
+      ],
+      phase_card: [{ name: 'Delver of Secrets', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId, activeFaceIndex: 1 }],
+      add_counter: [{ name: 'Delver of Secrets', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId, activeFaceIndex: 1 }],
+      add_reminder: [{ name: 'Delver of Secrets', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId, activeFaceIndex: 1 }],
+      tap_card: [{ name: 'Delver of Secrets', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId, activeFaceIndex: 1 }],
+      face_down_reveal: [{ name: 'Delver of Secrets', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId, activeFaceIndex: 1 }],
+      set_attackers_phase: [{ name: 'Llanowar Elves', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId }],
       declare_attacker_player: [{ name: 'Llanowar Elves', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId }],
-      attack_planeswalker_battle_note: [{ name: 'Nicol Bolas, Planeswalker', zone: ZONES.BATTLEFIELD, ownerId: opponent?.id || userId, controllerId: opponent?.id || userId }],
-      tap_card: [{ name: 'Llanowar Elves', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId }],
-      add_counter: [{ name: 'Llanowar Elves', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId }],
-      add_reminder: [{ name: 'Llanowar Elves', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId }],
-      phase_card: [{ name: 'Llanowar Elves', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId }],
-      transform_card: [{ name: 'Delver of Secrets', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId }],
-      face_down_reveal: [{ name: 'Delver of Secrets', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId }],
-      create_token: [],
-      target_system: [{ name: 'Llanowar Elves', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId }],
-      attach_to_permanent: [{ name: 'Llanowar Elves', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId }],
-      clone_control: [{ name: 'Llanowar Elves', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId }]
+      attack_planeswalker_battle_note: [
+        { name: 'Llanowar Elves', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId },
+        { name: 'Nicol Bolas, Planeswalker', zone: ZONES.BATTLEFIELD, ownerId: opponent?.id || userId, controllerId: opponent?.id || userId }
+      ],
+      declare_blocker_note: [{ name: 'Zombie Token', zone: ZONES.BATTLEFIELD, ownerId: opponent?.id || userId, controllerId: opponent?.id || userId }],
+      damage_markers: [{ name: 'Llanowar Elves', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId }],
+      create_token: [{ name: 'Dragon Fodder', zone: ZONES.HAND, ownerId: userId, controllerId: userId }],
+      deck_tokens_note: [{ name: 'Dragon Fodder', zone: ZONES.HAND, ownerId: userId, controllerId: userId }],
+      custom_token_note: [],
+      target_system: [{ name: 'Giant Growth', zone: 'stack_zone', ownerId: userId, controllerId: userId, stack: true }],
+      attach_to_permanent: [
+        { name: 'Rancor', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId },
+        { name: 'Llanowar Elves', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId }
+      ],
+      attach_to_player_note: [{ name: 'Curse of the Pierced Heart', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId }],
+      clone_control: [
+        { name: 'Clone', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId },
+        { name: 'Act of Treason', zone: ZONES.HAND, ownerId: userId, controllerId: userId }
+      ],
+      private_hand_peek: [{ name: 'Doom Blade', zone: ZONES.HAND, ownerId: opponent?.id || userId, controllerId: opponent?.id || userId }],
+      opponent_library_tools: [{ name: 'Portent', zone: ZONES.HAND, ownerId: userId, controllerId: userId }],
+      final_spell: [{ name: 'Lightning Bolt', zone: ZONES.HAND, ownerId: userId, controllerId: userId }],
+      final_bolas_response: [
+        { name: 'Lightning Bolt', zone: 'stack_zone', ownerId: userId, controllerId: userId, stack: true },
+        { name: 'Negate', zone: 'stack_zone', ownerId: opponent?.id || userId, controllerId: opponent?.id || userId, stack: true, targetName: 'Lightning Bolt' }
+      ],
+      final_in_response: [
+        { name: 'Reverberate', zone: 'stack_zone', ownerId: userId, controllerId: userId, stack: true, targetName: 'Negate' },
+        { name: 'Negate', zone: 'stack_zone', ownerId: opponent?.id || userId, controllerId: opponent?.id || userId, stack: true, targetName: 'Lightning Bolt' }
+      ]
     }[stepId];
     if (!needs) return;
 
@@ -5504,15 +5085,15 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
     try {
     needs.forEach((need) => {
-      const matching = nextCards.find((card) => card.name === need.name && card.ownerId === need.ownerId) || nextCards.find((card) => card.name === need.name);
+      const matching = nextCards.find((card) => (card.name === need.name || card.card_faces?.some((face) => face?.name === need.name)) && card.ownerId === need.ownerId) || nextCards.find((card) => card.name === need.name || card.card_faces?.some((face) => face?.name === need.name));
       let card = matching;
       if (!card) {
         card = buildTutorialCardInstance(need.name, need.ownerId || userId, need.zone, need.controllerId || need.ownerId || userId);
         nextCards.push(card);
         changed = true;
       }
-      if (card.zone !== need.zone || card.controllerId !== need.controllerId || (need.zone === ZONES.BATTLEFIELD && card.tapped)) {
-        nextCards = nextCards.map((candidate) => candidate.instanceId === card.instanceId ? { ...candidate, zone: need.zone, controllerId: need.controllerId, tapped: false, phasedOut: false } : candidate);
+      if (card.zone !== need.zone || card.controllerId !== need.controllerId || (Number.isInteger(need.activeFaceIndex) && card.activeFaceIndex !== need.activeFaceIndex) || (need.zone === ZONES.BATTLEFIELD && card.tapped)) {
+        nextCards = nextCards.map((candidate) => candidate.instanceId === card.instanceId ? { ...candidate, zone: need.zone, controllerId: need.controllerId, ...(Number.isInteger(need.activeFaceIndex) ? { activeFaceIndex: need.activeFaceIndex } : {}), tapped: false, phasedOut: false } : candidate);
         card = nextCards.find((candidate) => candidate.instanceId === card.instanceId) || card;
         changed = true;
       }
@@ -5525,13 +5106,14 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           ownerId: need.ownerId,
           itemType: 'SPELL',
           type: 'SPELL',
-          createdAt: Date.now()
+          createdAt: Date.now(),
+          ...(need.targetName ? { targets: [{ name: need.targetName, label: need.targetName }] } : {})
         });
         changed = true;
       }
     });
 
-    if (['declare_attacker_player', 'first_strike_step', 'regular_damage_step'].includes(stepId) && game.phase !== 'combat_attackers') {
+    if (['set_attackers_phase', 'declare_attacker_player', 'first_strike_step', 'regular_damage_step'].includes(stepId) && game.phase !== 'combat_attackers') {
       await updateDoc(doc(db, 'games_v3', gameId), { phase: 'combat_attackers', combat: normalizeCombatState(game.combat), cards: nextCards, stack: nextStack, updatedAt: serverTimestamp() });
       setTutorialOverlayError(null);
       return;

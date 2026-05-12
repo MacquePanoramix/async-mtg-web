@@ -200,6 +200,15 @@ const PHASES = [
   { id: 'cleanup', label: 'Cleanup' }
 ];
 
+const COMBAT_DAMAGE_STEPS = {
+  FIRST_STRIKE: 'firstStrike',
+  REGULAR: 'regular'
+};
+const COMBAT_DAMAGE_STEP_LABELS = {
+  [COMBAT_DAMAGE_STEPS.FIRST_STRIKE]: 'First-strike damage',
+  [COMBAT_DAMAGE_STEPS.REGULAR]: 'Regular combat damage'
+};
+
 const ZONES = {
   LIBRARY: 'library',
   HAND: 'hand',
@@ -1586,6 +1595,7 @@ const UNDO_FIELDS_BY_ACTION_TYPE = {
   MANA_POOL_CLEAR: PLAYERS_ONLY_UNDO_STATE_FIELDS,
   SET_DAY_NIGHT: DAY_NIGHT_ONLY_UNDO_STATE_FIELDS,
   CLEAR_CLEANUP_REMINDERS: ({ updates } = {}) => ['cards', 'players'].filter((field) => updates && Object.prototype.hasOwnProperty.call(updates, field)),
+  SET_COMBAT_DAMAGE_STEP: COMBAT_ONLY_UNDO_STATE_FIELDS,
   SET_ATTACK_TARGET: COMBAT_ONLY_UNDO_STATE_FIELDS,
   TOGGLE_BLOCK_TARGET: COMBAT_ONLY_UNDO_STATE_FIELDS,
   TARGET: TARGETS_ONLY_UNDO_STATE_FIELDS,
@@ -1644,6 +1654,7 @@ const UNDOABLE_ACTION_TYPES = new Set([
   'GO_EXTRA_MAIN',
   'START_EXTRA_TURN',
   'SET_ACTIVE_PLAYER',
+  'SET_COMBAT_DAMAGE_STEP',
   'PASS',
   'PASS_PRIORITY',
   'SET_COMMANDER',
@@ -2431,7 +2442,21 @@ const buildTurnStartEvent = (currentGame) => {
   };
 };
 
-const getEmptyCombatState = () => ({ attackers: {}, blockers: {} });
+const normalizeCombatDamageStep = (step) => (
+  step === COMBAT_DAMAGE_STEPS.FIRST_STRIKE || step === COMBAT_DAMAGE_STEPS.REGULAR ? step : null
+);
+const getCombatDamageStepLabel = (step) => COMBAT_DAMAGE_STEP_LABELS[normalizeCombatDamageStep(step)] || null;
+const getCombatDamageStep = (combatState = {}) => normalizeCombatDamageStep(combatState?.combatDamageStep);
+const getEmptyCombatState = () => ({ attackers: {}, blockers: {}, combatDamageStep: null });
+const normalizeCombatState = (combatState = getEmptyCombatState()) => ({
+  attackers: combatState?.attackers || {},
+  blockers: combatState?.blockers || {},
+  combatDamageStep: getCombatDamageStep(combatState)
+});
+const withCombatDamageStep = (combatState = getEmptyCombatState(), step = null) => ({
+  ...normalizeCombatState(combatState),
+  combatDamageStep: normalizeCombatDamageStep(step)
+});
 
 const isCombatPhase = (phase) => typeof phase === 'string' && phase.startsWith('combat_');
 const shouldClearCombatState = (fromPhase, toPhase) => fromPhase?.startsWith('combat_') && !toPhase?.startsWith('combat_');
@@ -2453,7 +2478,7 @@ const clearCombatAssignmentsForCard = (combatState = getEmptyCombatState(), inst
     }
   });
 
-  return { attackers: nextAttackers, blockers: nextBlockers };
+  return { ...normalizeCombatState(combatState), attackers: nextAttackers, blockers: nextBlockers };
 };
 
 
@@ -2743,7 +2768,7 @@ const getNextCombatState = (currentGame, nextPhase, turnChanged = false) => {
   if (!isCombatPhase(nextPhase) || turnChanged || shouldClearCombatState(currentGame.phase, nextPhase)) {
     return getEmptyCombatState();
   }
-  return currentGame.combat || getEmptyCombatState();
+  return normalizeCombatState(currentGame.combat || getEmptyCombatState());
 };
 
 const advancePassPriorityState = (currentGame, logEntry, onTurnStart, layoutOptions = {}) => {
@@ -5388,6 +5413,78 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       return;
     }
 
+    if (actionType === 'SET_COMBAT_DAMAGE_STEP') {
+      const nextDamageStep = normalizeCombatDamageStep(payload.combatDamageStep);
+      const currentDamageStep = getCombatDamageStep(game.combat);
+      const nextCombatState = withCombatDamageStep(game.combat || getEmptyCombatState(), nextDamageStep);
+
+      if (nextDamageStep !== currentDamageStep) {
+        const optimisticMessage = nextDamageStep
+          ? `${actorName} set combat damage step to ${nextDamageStep === COMBAT_DAMAGE_STEPS.FIRST_STRIKE ? 'first strike' : 'regular damage'}.`
+          : `${actorName} cleared the combat damage step.`;
+        const optimisticUndoEntry = {
+          ...buildUndoEntry({
+            currentGame: game,
+            actorId: userId,
+            actorName,
+            actionLabel: normalizeUndoActionLabel(optimisticMessage, actorName),
+            fields: COMBAT_ONLY_UNDO_STATE_FIELDS,
+            actionType,
+            clientActionId
+          }),
+          pendingSync: true
+        };
+        applyOptimisticGamePatch({
+          actionType,
+          payload: { ...payload, clientActionId },
+          perfActionId,
+          patch: { combat: nextCombatState, undoStack: appendOptimisticUndoEntry(game, optimisticUndoEntry) }
+        });
+      }
+
+      await perfRunTransaction('runTransaction', async (transaction) => {
+        const snap = await transaction.get(gameRef);
+        if (!snap.exists()) return;
+        const currentGame = snap.data();
+        const currentPlayers = currentGame.players || [];
+        const currentPlayer = currentPlayers.find(p => p.id === userId);
+        if (!currentPlayer) return;
+
+        const transactionDamageStep = normalizeCombatDamageStep(payload.combatDamageStep);
+        if (transactionDamageStep === getCombatDamageStep(currentGame.combat)) return;
+        const transactionActorName = currentPlayer.name || actorName;
+        const message = transactionDamageStep
+          ? `${transactionActorName} set combat damage step to ${transactionDamageStep === COMBAT_DAMAGE_STEPS.FIRST_STRIKE ? 'first strike' : 'regular damage'}.`
+          : `${transactionActorName} cleared the combat damage step.`;
+        const transactionCombat = withCombatDamageStep(currentGame.combat || getEmptyCombatState(), transactionDamageStep);
+
+        transaction.update(gameRef, normalizeGameUpdatesForFirestore({
+          combat: transactionCombat,
+          log: arrayUnion(buildGameLogEntry({
+            currentGame,
+            playerId: userId,
+            playerName: transactionActorName,
+            type: 'SET_COMBAT_DAMAGE_STEP',
+            category: 'combat',
+            message,
+            combatDamageStep: transactionDamageStep,
+            clientActionId
+          })),
+          undoStack: appendUndoEntry(currentGame, buildUndoEntry({
+            currentGame,
+            actorId: userId,
+            actorName: transactionActorName,
+            actionLabel: normalizeUndoActionLabel(message, transactionActorName),
+            fields: COMBAT_ONLY_UNDO_STATE_FIELDS,
+            actionType,
+            clientActionId
+          })),
+          updatedAt: serverTimestamp()
+        }, actionType));
+      });
+      return;
+    }
+
     if (['MANUAL_SET_STEP', 'START_EXTRA_COMBAT', 'GO_EXTRA_MAIN', 'START_EXTRA_TURN', 'SET_ACTIVE_PLAYER'].includes(actionType)) {
       await perfRunTransaction('runTransaction', async (transaction) => {
         const snap = await transaction.get(gameRef);
@@ -6300,6 +6397,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       const nextAttackers = { ...(game.combat?.attackers || {}) };
       nextAttackers[payload.cardId] = attackTarget;
       updates.combat = {
+        ...normalizeCombatState(game.combat || getEmptyCombatState()),
         attackers: nextAttackers,
         blockers: game.combat?.blockers || {}
       };
@@ -6314,6 +6412,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       if (nextBlocking.length === 0) delete nextBlockers[payload.cardId];
       else nextBlockers[payload.cardId] = nextBlocking;
       updates.combat = {
+        ...normalizeCombatState(game.combat || getEmptyCombatState()),
         attackers: game.combat?.attackers || {},
         blockers: nextBlockers
       };
@@ -8072,6 +8171,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     : priorityHolderName;
   const activeTurnPlayer = (game.players || []).find((player) => player.id === game.turnPlayerId) || game.players?.[game.activePlayerIndex] || null;
   const currentPhase = PHASES.find((phase) => phase.id === game.phase) || { id: game.phase, label: getPhaseLabel(game.phase) };
+  const currentCombatDamageStep = getCombatDamageStep(combat);
+  const currentCombatDamageStepLabel = getCombatDamageStepLabel(currentCombatDamageStep);
   const confirmTimeControl = (message) => (typeof window === 'undefined' ? true : window.confirm(message));
   const handleSetManualStep = (phaseId) => {
     const targetPhase = PHASES.find((phase) => phase.id === phaseId);
@@ -8082,6 +8183,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     if (isFarJump && !confirmTimeControl(`Set step to ${targetPhase.label}?`)) return;
     handleAction('MANUAL_SET_STEP', { phaseId });
   };
+  const handleSetCombatDamageStep = (combatDamageStep) => handleAction('SET_COMBAT_DAMAGE_STEP', { combatDamageStep });
   const handleStartExtraCombat = () => handleAction('START_EXTRA_COMBAT');
   const handleGoExtraMain = () => handleAction('GO_EXTRA_MAIN');
   const handleStartExtraTurn = (playerId) => {
@@ -8247,6 +8349,11 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             {getDayNightValue(game) && (
               <span className={`mt-1 w-fit rounded-full border px-2 py-0.5 text-[10px] font-black uppercase tracking-wider ${getDayNightValue(game) === 'day' ? 'border-amber-300/50 bg-amber-900/50 text-amber-100' : 'border-indigo-300/50 bg-indigo-950/70 text-indigo-100'}`}>
                 {DAY_NIGHT_LABELS[getDayNightValue(game)]}
+              </span>
+            )}
+            {currentCombatDamageStepLabel && (
+              <span className="mt-1 w-fit rounded-full border border-red-400/50 bg-red-950/60 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-red-100">
+                {currentCombatDamageStepLabel}
               </span>
             )}
           </div>
@@ -8619,6 +8726,14 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
             <div className="bg-slate-900/90 border border-slate-700 rounded-lg p-3 text-xs space-y-2">
               <div className="font-bold text-slate-200 uppercase tracking-wider">Combat Summary</div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-semibold text-slate-300">Damage step:</span>
+                {currentCombatDamageStepLabel ? (
+                  <span className="rounded-full border border-red-400/50 bg-red-950/50 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-red-100">{currentCombatDamageStepLabel}</span>
+                ) : (
+                  <span className="text-slate-400">None</span>
+                )}
+              </div>
               <div>
                 <div className="text-red-300 font-semibold">Attackers</div>
                 {attackSummaryGroups.length === 0 ? <div className="text-slate-400">None</div> : attackSummaryGroups.map((group) => (
@@ -9193,6 +9308,11 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                 <div className="space-y-1 text-sm">
                   <div className="text-slate-100 font-bold">Turn {Number.isFinite(game.turnNumber) ? game.turnNumber : '?'} — {activeTurnPlayer?.name || 'Unknown'}</div>
                   <div className="text-purple-200 text-lg font-black">{currentPhase.label}</div>
+                  {currentCombatDamageStepLabel && (
+                    <div className="inline-flex w-fit rounded-full border border-red-400/50 bg-red-950/50 px-2 py-1 text-xs font-black uppercase tracking-wider text-red-100">
+                      {currentCombatDamageStepLabel}
+                    </div>
+                  )}
                   <div className="text-slate-300">Priority: <span className="font-bold text-white">{priorityHolderName}</span></div>
                 </div>
               </section>
@@ -9213,6 +9333,39 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                       </button>
                     );
                   })}
+                </div>
+              </section>
+
+              <section className="rounded-xl border border-red-500/30 bg-red-950/20 p-4">
+                <h3 className="text-sm font-black uppercase tracking-wider text-red-200 mb-2">Combat damage step</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleSetCombatDamageStep(COMBAT_DAMAGE_STEPS.FIRST_STRIKE)}
+                    className={`min-h-12 rounded-xl border px-3 py-2 text-left text-sm font-bold ${currentCombatDamageStep === COMBAT_DAMAGE_STEPS.FIRST_STRIKE ? 'border-red-300 bg-red-700 text-white' : 'border-red-500/40 bg-red-950/40 text-red-100 hover:bg-red-900/50'}`}
+                    aria-pressed={currentCombatDamageStep === COMBAT_DAMAGE_STEPS.FIRST_STRIKE}
+                  >
+                    First-strike damage
+                    <div className="text-xs font-normal opacity-80">Manual shortcut</div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSetCombatDamageStep(COMBAT_DAMAGE_STEPS.REGULAR)}
+                    className={`min-h-12 rounded-xl border px-3 py-2 text-left text-sm font-bold ${currentCombatDamageStep === COMBAT_DAMAGE_STEPS.REGULAR ? 'border-red-300 bg-red-700 text-white' : 'border-red-500/40 bg-red-950/40 text-red-100 hover:bg-red-900/50'}`}
+                    aria-pressed={currentCombatDamageStep === COMBAT_DAMAGE_STEPS.REGULAR}
+                  >
+                    Regular damage
+                    <div className="text-xs font-normal opacity-80">Manual shortcut</div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSetCombatDamageStep(null)}
+                    className="min-h-12 rounded-xl border border-slate-700 bg-slate-800 px-3 py-2 text-left text-sm font-bold text-slate-100 hover:bg-slate-700"
+                    disabled={!currentCombatDamageStep}
+                  >
+                    Clear damage step
+                    <div className="text-xs font-normal opacity-80">No damage step</div>
+                  </button>
                 </div>
               </section>
 

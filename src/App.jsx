@@ -33,7 +33,7 @@ const GAME_MODES = {
   COMMANDER: 'commander'
 };
 
-const TUTORIAL_SCRIPT_VERSION = 7;
+const TUTORIAL_SCRIPT_VERSION = 8;
 const TUTORIAL_RULES_BY_STEP_ID = {
   intro: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Inspect room code', sourceCardOrEffect: 'Async room setup', boardPrecondition: 'Tutorial duel exists', stackPrecondition: 'Stack may be empty', completionCondition: 'Room code tapped', tutorialTargetAnchor: 'room-code' },
   room_code: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Copy room code', sourceCardOrEffect: 'Async room setup', boardPrecondition: 'Tutorial duel exists', stackPrecondition: 'Stack may be empty', completionCondition: 'Room code tapped', tutorialTargetAnchor: 'room-code' },
@@ -102,7 +102,7 @@ const TUTORIAL_RULES_BY_STEP_ID = {
   tutorial_complete: { actor: 'system', turnOwner: 'player', activePlayer: 'player', phase: 'end', requiredAction: 'Finish tutorial', sourceCardOrEffect: 'Tutorial complete', boardPrecondition: 'Final step reached', stackPrecondition: 'No tutorial stack required', completionCondition: 'Finish/continue selected', tutorialTargetAnchor: null }
 };
 
-const withTutorialRules = (steps) => steps.map((step) => ({ ...step, rules: TUTORIAL_RULES_BY_STEP_ID[step.id] || {} }));
+const withTutorialRules = (steps) => steps.map((step) => ({ ...step, rules: { ...(TUTORIAL_RULES_BY_STEP_ID[step.id] || {}), ...(step.rules || {}) } }));
 
 const TUTORIAL_RESOURCE_REQUIREMENTS_BY_STEP_ID = {
   tap_mountain_red: { card: 'Mountain', cost: 'tap', expectedZone: 'battlefield', requiredSources: { R: 1 }, sourceCards: ['Mountain'] },
@@ -158,84 +158,209 @@ const validateTutorialScriptRules = (steps = []) => {
       if (resourceRequirement.scriptedMana && !/scripted|grants|boss mana|lesson mana|setup/i.test(metadata)) warn(`${resourceRequirement.card} relies on scripted mana, but the step text does not say so`);
     }
   });
-  if (stepById.get('declare_blocker_note')?.rules?.turnOwner !== 'bolas') console.warn('[Tutorial rules] declare_blocker_note must occur on Bolas turn');
-  const undoIndex = steps.findIndex((step) => step.id === 'undo_play_land');
-  const replayIndex = steps.findIndex((step) => step.id === 'replay_mountain');
-  const tapMountainIndex = steps.findIndex((step) => step.id === 'tap_mountain_red');
-  const addRedManaIndex = steps.findIndex((step) => step.id === 'add_red_mana');
-  const boltIndex = steps.findIndex((step) => step.id === 'cast_spell_to_stack');
-  if (!(undoIndex >= 0 && replayIndex > undoIndex && tapMountainIndex > replayIndex && addRedManaIndex > tapMountainIndex && boltIndex > addRedManaIndex)) console.warn('[Tutorial rules] Lightning Bolt must come after Undo, replay_mountain, tap_mountain_red, and add_red_mana');
-  if (!/Mountain.*battlefield/i.test(stepById.get('cast_spell_to_stack')?.rules?.boardPrecondition || '')) console.warn('[Tutorial rules] cast_spell_to_stack must require Mountain on the battlefield');
-  if (!/Mountain.*hand/i.test(stepById.get('replay_mountain')?.rules?.boardPrecondition || '')) console.warn('[Tutorial rules] replay_mountain must require Mountain in hand after Undo');
+  const requireOrder = (ids, label) => {
+    const indexes = ids.map((id) => steps.findIndex((step) => step.id === id));
+    if (indexes.some((index) => index < 0) || !indexes.every((index, i) => i === 0 || index > indexes[i - 1])) console.warn(`[Tutorial rules] ${label} order is invalid: ${ids.join(' → ')}`);
+  };
+  requireOrder(['P1_01_play_mountain', 'P1_02_undo_mountain', 'P1_03_replay_mountain', 'P1_04_tap_mountain', 'P1_05_add_r', 'P1_08_target_bolas', 'P1_10_resolve_bolt'], 'first Bolt');
+  requireOrder(['B2_02_bolas_swamp', 'B2_03_bolas_cast_knight', 'B2_04_resolve_knight'], 'Bolas Knight with mana');
+  requireOrder(['B3_02_bolas_doom_blade', 'B3_03_tap_island_slip', 'B3_05_cast_slip', 'B3_06_resolve_slip', 'B3_09_fizzle_doom_blade'], 'Doom Blade / Slip Out stack');
+  requireOrder(['F1_tap_mountain_bolt', 'F2_add_r', 'F3_cast_bolt_bolas', 'F4_bolas_negate_real_mana', 'F5_tap_two_mountains', 'F6_add_rr', 'F7_reverberate_bolt', 'F8_resolve_reverberate', 'F9_resolve_bolt_copy_lethal', 'F10_resolve_negate_original', 'F11_victory_complete'], 'final lethal');
+  if (!/life is 17/i.test(stepById.get('P1_10_resolve_bolt')?.completionCondition || '')) console.warn('[Tutorial rules] first Lightning Bolt must complete on Bolas life 17');
+  if (!/Island.*Swamp/i.test(`${stepById.get('F4_bolas_negate_real_mana')?.manaPayment || ''} ${stepById.get('F4_bolas_negate_real_mana')?.legalPreconditions || ''}`)) console.warn('[Tutorial rules] Negate must document visible Island + Swamp payment');
+  if (!/RR|\{R\}\{R\}/i.test(`${stepById.get('F6_add_rr')?.completionCondition || ''} ${stepById.get('F7_reverberate_bolt')?.manaPayment || ''}`)) console.warn('[Tutorial rules] Reverberate must document RR payment');
+  if (!/Bolas life <= 0/i.test(stepById.get('F11_victory_complete')?.completionCondition || '')) console.warn('[Tutorial rules] final tutorial completion must require Bolas life <= 0');
+  steps.filter((step) => /^tool_/.test(step.id)).forEach((step) => {
+    if (!step.sourceCard || /some effect|scripted tutorial duel/i.test(step.sourceCard)) console.warn(`[Tutorial rules] ${step.id}: tool step lacks a specific source card/effect`);
+    if (!step.manaPayment) console.warn(`[Tutorial rules] ${step.id}: tool step lacks visible payment/snapshot payment`);
+  });
 };
 
-const TUTORIAL_SCRIPT_STEPS = withTutorialRules([
-  { id: 'intro', chapter: 'Act 1 / Turn 1 — Main Phase', title: 'Nicol Bolas and the Board of Doom', scene: 'The lobby has cracked open into an arena. Seven cards wait at the edge of your battlefield.', dialogue: 'Enough doors. Sit. Draw. Learn.', objective: 'Tap the room code so you know where a duel lives.', hint: 'Tap the room code in the header. Real games use this code for players and watchers.', anchor: 'room-code', completion: 'detect' },
-  { id: 'room_code', chapter: 'Act 1 / Turn 1 — Main Phase', title: 'The Doorway Sigil', scene: 'A six-character room code burns above the battlefield.', dialogue: 'This code is the doorway. Send it to the friend you wish to inconvenience.', objective: 'Tap the room code to copy the doorway sigil.', hint: 'The tap copies the code and advances the tutorial.', anchor: 'room-code', completion: 'detect' },
-  { id: 'battlefields', chapter: 'Act 1 / Turn 1 — Main Phase', title: 'Two Battlefields', scene: 'Two battlefields rise: yours below, mine above.', dialogue: 'Know the geography before you begin losing territory.', objective: 'Tap your battlefield to inspect your side of the arena.', hint: 'Your battlefield is near the bottom. Nicol Bolas is above.', anchor: 'own-battlefield', completion: 'detect' },
-  { id: 'hand_area', chapter: 'Act 1 / Turn 1 — Main Phase', title: 'Opening Hand', scene: 'Seven cards fan out like possible futures.', dialogue: 'Seven choices. Most mortals need only one to disappoint me.', objective: 'Tap a card in your hand to open its detail panel.', hint: 'Your hand is at the bottom. Scroll sideways, then tap Lightning Bolt to open its detail panel.', anchor: 'hand-area', completion: 'detect' },
-  { id: 'import_deck', chapter: 'Act 1 / Turn 1 — Before the First Spell', title: 'The Deck You Brought', scene: 'Your prepared tutorial deck waits, but the import altar is visible beside your hand.', dialogue: 'Before a real duel, bring a real deck. Commander lists may even declare their Commander before the Deck.', objective: 'Open Import Deck.', hint: 'Tap Import Deck. The tutorial opens a demo list without replacing your scripted duel deck.', anchor: 'import-deck-button', completion: 'detect' },
-  { id: 'play_land', chapter: 'Act 1 / Turn 1 — Main Phase', title: 'Play Mountain', scene: 'The floor splits into red stone.', dialogue: 'Put a place beneath your power.', objective: 'Play Mountain.', hint: 'Tap Mountain in your hand, then choose Play Land.', anchor: 'hand-area', completion: 'detect' },
-  { id: 'undo_play_land', chapter: 'Act 1 / Turn 1 — Main Phase', title: 'Undo the Mountain', scene: 'Time stutters around the Mountain.', dialogue: 'Regret is the first spell every player learns.', objective: 'Undo the Mountain so it returns to your hand.', hint: 'Tap Undo and confirm. Undo rewinds mistakes before your opponent responds; after this, your red source is no longer on the battlefield.', anchor: 'undo-button', completion: 'detect' },
-  { id: 'replay_mountain', chapter: 'Act 1 / Turn 1 — Main Phase', title: 'Replay Mountain', scene: 'The red stone returns, this time on purpose.', dialogue: 'A lesson undone is not a resource restored. Put the Mountain back before you spend red mana.', objective: 'Play Mountain again before casting Lightning Bolt.', hint: 'Tap Mountain in your hand, then choose Play Land. The app does not enforce payment, but your Mountain is the honest red source for Bolt.', anchor: 'hand-area', completion: 'detect' },
-  { id: 'tap_mountain_red', chapter: 'Act 1 / Turn 1 — Main Phase', title: 'Tap Mountain', scene: 'The restored Mountain waits to become red mana.', dialogue: 'Resources first. Even destruction files receipts.', objective: 'Tap Mountain for red mana.', hint: 'Tap Mountain on your battlefield, then choose Tap.', anchor: 'own-battlefield', completion: 'detect' },
-  { id: 'add_red_mana', chapter: 'Act 1 / Turn 1 — Main Phase', title: 'Record Red Mana', scene: 'A red spark moves from land to ledger.', dialogue: 'The app is manual. Make the payment visible before the spell flies.', objective: 'Add {R} to your mana pool.', hint: 'Open Player Counters & Statuses, then press + beside R in the Mana Pool row.', anchor: 'mana-pool-panel', completion: 'detect' },
-  { id: 'cast_spell_to_stack', chapter: 'Act 1 / Turn 1 — Main Phase', title: 'Lightning Bolt Enters the Stack', scene: 'A red spell ignites above your tapped Mountain.', dialogue: 'Your red source is tapped and recorded. Now aim the paperwork.', objective: 'Cast Lightning Bolt targeting Nicol Bolas.', hint: 'Tap Lightning Bolt in your hand, choose Cast + Target, tap Nicol Bolas as the target, then press Done.', anchor: 'hand-area', completion: 'detect' },
-  { id: 'inspect_stack', chapter: 'Act 1 / Turn 1 — Main Phase', title: 'Open the Stack', scene: 'The bolt freezes in the air.', dialogue: 'The stack: where intentions become paperwork before becoming pain.', objective: 'Open the Stack panel.', hint: 'Tap the Stack button near the top of the screen.', anchor: 'stack-button', completion: 'detect' },
-  { id: 'bolas_negate', chapter: 'Act 1 / Turn 1 — Main Phase', title: 'Bolas Responds with Negate', scene: 'Blue light wraps around your spell.', dialogue: 'Denied? Not yet. Merely contested.', objective: 'Open the Stack and inspect Bolas’s Negate above Lightning Bolt.', hint: 'Tap the Stack button, then inspect Negate above Lightning Bolt. The newest stack item resolves first.', anchor: 'stack-button', completion: 'detect' },
-  { id: 'copy_stack_item', chapter: 'Act 1 / Turn 1 — Main Phase', title: 'Copy the Bolt', scene: 'Your spell casts a second shadow as Bolas floods the lesson with borrowed red mana.', dialogue: 'Ah. Multiplication. Dangerous when discovered by the desperate.', objective: 'Represent Reverberate targeting Lightning Bolt by copying Lightning Bolt on the stack.', hint: 'Reverberate normally costs {R}{R}; this scripted stack lesson explicitly grants {R}{R}. Open the Lightning Bolt stack item and press Copy stack item.', anchor: 'stack-panel', completion: 'detect' },
-  { id: 'resolve_stack_item', chapter: 'Act 1 / Turn 1 — Main Phase', title: 'Resolve the Copy', scene: 'The copied bolt slips past the counterspell.', dialogue: 'The imitation wounds first. How vulgar.', objective: 'Resolve the top Lightning Bolt copy.', hint: 'Use Resolve Top Stack Item. The top object resolves first.', anchor: 'stack-panel', completion: 'detect' },
-  { id: 'counter_stack_item', chapter: 'Act 1 / Turn 1 — Main Phase', title: 'Negate Closes', scene: 'Negate counters the original spell after the copy has resolved.', dialogue: 'The first future dies. Remember: the top resolves first.', objective: 'Resolve Negate targeting the original Lightning Bolt, then clear the original Bolt so the stack is empty.', hint: 'Open the stack. Resolve the top Negate to counter the original Lightning Bolt; if the original remains, use Counter / Fizzle on that Lightning Bolt.', anchor: 'stack-panel', completion: 'detect' },
-  { id: 'pass_priority', chapter: 'Act 1 / Turn 1 — End Step', title: 'Pass Priority', scene: 'Silence returns to the battlefield.', dialogue: 'In async Magic, silence must be announced.', objective: 'Pass priority.', hint: 'Tap Pass when you are done acting.', anchor: 'pass-button', completion: 'detect' },
-  { id: 'game_log', chapter: 'Act 1 / Turn 1 — End Step', title: 'The Arena Remembers', scene: 'The arena wall records every insult.', dialogue: 'Memory is a weapon. The log is where your excuses go to die.', objective: 'Open the log/chat.', hint: 'Use the chat/log icon near the top to review actions and leave clear async notes.', anchor: 'chat-button', completion: 'detect' },
-  { id: 'beginning_phase_draw', chapter: 'Act 2 / Turn 2 — Untap, Upkeep, Draw', title: 'The Ritual of a Turn', scene: 'A new turn opens like a blade.', dialogue: 'Untap. Upkeep. Draw. The ritual matters because mistakes love shortcuts.', objective: 'Set the phase to Draw, then draw one card.', hint: 'Tap the phase indicator, choose Draw, open your library tools, then press Draw once.', anchor: 'phase-indicator', completion: 'detect' },
-  { id: 'cast_delver', chapter: 'Act 2 / Turn 2 — Main Phase', title: 'Cast Delver of Secrets', scene: 'An Island rises before a small wizard steps onto the board carrying a terrible secret.', dialogue: 'Small creatures are often containers for larger problems.', objective: 'Play Island, cast Delver of Secrets, then resolve Delver onto the battlefield.', hint: 'Delver costs {U}. Tap Island in your hand and choose Play Land, tap Delver, choose Cast Spell, open the stack, then resolve Delver.', anchor: 'hand-area', completion: 'detect' },
-  { id: 'reveal_top_delver', chapter: 'Act 3 / Turn 3 — Upkeep Trigger', title: 'Reveal the Top Card', scene: 'The top of your library glows with instant magic.', dialogue: 'Show the insect what it wants to become.', objective: 'Use Library tools to reveal the top card for Delver’s trigger.', hint: 'Tap the book/library icon and reveal the top card.', anchor: 'library-menu-button', completion: 'detect' },
-  { id: 'transform_card', chapter: 'Act 3 / Turn 3 — Upkeep Trigger', title: 'Transform Delver', scene: 'The wizard’s shadow unfolds into wings.', dialogue: 'Identity is just a face with ambition.', objective: 'Transform Delver into Insectile Aberration.', hint: 'Open Delver’s card detail and choose Transform / Switch face.', anchor: 'card-detail', completion: 'detect' },
-  { id: 'bolas_removal', chapter: 'Act 2 / Bolas Turn — Main Phase', title: 'Doom Blade on the Stack', scene: 'Black fire forms around the insect.', dialogue: 'Now let us see whether your little revelation survives contact with removal.', objective: 'Open the Stack and inspect Bolas’s Doom Blade targeting Delver.', hint: 'The scripted Doom Blade demonstrates targets and why protection/phase-out tools matter.', anchor: 'stack-button', completion: 'detect' },
-  { id: 'phase_card', chapter: 'Act 2 / Bolas Turn — In Response', title: 'Slip Out the Back', scene: 'Delver folds sideways out of reality while Doom Blade waits on the stack.', dialogue: 'Annoying. You have found the door marked not here.', objective: 'Resolve Slip Out the Back by phasing out Delver.', hint: 'Your Island is the blue source for Slip Out the Back. Doom Blade targets Delver; open Delver details and use Phase Out because Slip Out resolves first.', anchor: 'card-detail', completion: 'detect' },
-  { id: 'add_counter', chapter: 'Act 2 / Bolas Turn — In Response', title: '+1/+1 Counter', scene: 'A counter remains where the spell touched your creature.', dialogue: 'A number appears. Soon it will demand respect.', objective: 'Add the +1/+1 counter from Slip Out the Back to Delver.', hint: 'Slip Out the Back phases the creature out and puts a +1/+1 counter on it.', anchor: 'card-detail', completion: 'detect' },
-  { id: 'add_reminder', chapter: 'Act 2 / Turn 2 — Cleanup Memory', title: 'Until End of Turn Reminder', scene: 'A temporary note clings to the creature’s outline.', dialogue: 'Until end of turn is where memory goes to be betrayed.', objective: 'Add a reminder marker.', hint: 'Open Delver, choose Add Reminder, and type “Can’t block until EOT”.', anchor: 'card-detail', completion: 'detect' },
-  { id: 'tap_card', chapter: 'Act 3 / Turn 3 — Untap Step', title: 'Tap and Untap', scene: 'The phased-out creature returns as your untap step begins.', dialogue: 'Turn it sideways. The oldest gesture of usefulness.', objective: 'Tap Delver, then untap Delver.', hint: 'Open Delver’s card detail, choose Tap, reopen Delver, then choose Untap.', anchor: 'card-detail', completion: 'detect' },
-  { id: 'face_down_reveal', chapter: 'Act 4 / Turn 4 — Hidden Information', title: 'Face Down and Reveal', scene: 'Bolas places a blank mask over a card.', dialogue: 'Sometimes a card is a secret with corners.', objective: 'Turn Delver face down, then reveal it for a Cloak-style effect.', hint: 'This is legal only when an effect creates hidden information; the tutorial frames it as a resolved Cloak-style effect.', anchor: 'card-detail', completion: 'detect' },
-  { id: 'set_attackers_phase', chapter: 'Act 3 / Turn 3 — Beginning of Combat', title: 'Scheduled Violence', scene: 'The arena lowers its walls.', dialogue: 'Combat is not violence. It is scheduled violence.', objective: 'Move through Beginning of Combat to the attackers step with an empty stack.', hint: 'Tap the phase indicator and choose Attackers after Beginning of Combat. Combat actions wait for the correct step.', anchor: 'phase-indicator', completion: 'detect' },
-  { id: 'declare_attacker_player', chapter: 'Act 3 / Turn 3 — Declare Attackers', title: 'Attack Bolas', scene: 'Your creature crosses the line.', dialogue: 'Very well. Aim your little rebellion.', objective: 'Declare Llanowar Elves as an attacker against Nicol Bolas.', hint: 'Tap Llanowar Elves, choose Attack, then choose Nicol Bolas.', anchor: 'card-detail', completion: 'detect' },
-  { id: 'attack_planeswalker_battle_note', chapter: 'Act 3 / Turn 3 — Declare Attackers', title: 'Not Every Attack Seeks a Face', scene: 'Bolas places a false throne between you and him.', dialogue: 'Some attacks seek a planeswalker. Some seek a battle.', objective: 'Open the attack target picker and choose Nicol Bolas, Planeswalker.', hint: 'Tap Llanowar Elves, choose Attack, then choose Nicol Bolas, Planeswalker from the picker.', anchor: 'card-detail', completion: 'detect' },
-  { id: 'bolas_blocks_summary', chapter: 'Act 3 / Turn 3 — Declare Blockers', title: 'Bolas Blocks Automatically', scene: 'A Zombie lurches between your attacker and its target.', dialogue: 'You attacked. Therefore I, the defending player, choose blockers. Watch carefully.', objective: 'Tap Combat Summary to inspect Bolas’s scripted Zombie blocker.', hint: 'Do not declare blockers for Bolas. The defending player blocks, so the tutorial assigns Bolas’s blocker and lets you inspect it.', anchor: 'combat-summary', completion: 'detect' },
-  { id: 'first_strike_step', chapter: 'Act 3 / Turn 3 — First-Strike Damage', title: 'The Early Wound', scene: 'One blade lands before time catches up.', dialogue: 'First strike is violence arriving early.', objective: 'Set combat damage to First-strike damage.', hint: 'Open phase/combat controls and choose First-strike damage.', anchor: 'phase-indicator', completion: 'detect' },
-  { id: 'regular_damage_step', chapter: 'Act 3 / Turn 3 — Regular Damage', title: 'Damage on Schedule', scene: 'The second wound arrives on schedule.', dialogue: 'Then time remembers the rest of the damage.', objective: 'Set combat damage to Regular damage.', hint: 'Use combat damage step controls for the normal damage step.', anchor: 'phase-indicator', completion: 'detect' },
-  { id: 'damage_markers', chapter: 'Act 3 / Turn 3 — End of Combat', title: 'Damage Markers', scene: 'Red marks flare on damaged creatures.', dialogue: 'Damage fades at cleanup. Arguments do not.', objective: 'Open a creature detail panel and add temporary damage.', hint: 'Use the damage controls; damage clears at cleanup.', anchor: 'card-detail', completion: 'detect' },
-  { id: 'combat_summary_note', chapter: 'Act 3 / Turn 3 — End Combat', title: 'Combat Summary', scene: 'The arena writes down who is trying to hurt whom.', dialogue: 'The combat summary exists because memory is not a legal game object.', objective: 'Tap Combat Summary to inspect the war record.', hint: 'It lists attackers, blockers, attack targets, and damage-step state.', anchor: 'combat-summary', completion: 'detect' },
-  { id: 'bolas_declares_attacker', chapter: 'Act 3 / Bolas Turn — Declare Attackers', title: 'Bolas Attacks', scene: 'A Dragon token dives across the arena toward you.', dialogue: 'Now the roles reverse. I attack; you defend.', objective: 'Tap Combat Summary to inspect Bolas’s scripted attacker.', hint: 'Bolas is the active player and has declared an attacker. You will block only after the game reaches Declare Blockers.', anchor: 'combat-summary', completion: 'detect' },
-  { id: 'declare_blocker_note', chapter: 'Act 3 / Bolas Turn — Declare Blockers', title: 'Your Legal Block', scene: 'Your creature steps between the Dragon and your life total.', dialogue: 'Now it is your turn to block. Not before. Not when you are attacking.', objective: 'Declare one of your creatures as a blocker for Bolas’s attacker.', hint: 'You are the defending player in the Declare Blockers step. Tap your creature and use blocker controls to block the attacking Dragon.', anchor: 'combat-summary', completion: 'detect' },
-  { id: 'private_hand_peek', chapter: 'Act 4 / Turn 4 — Duress', title: 'Duress the Dragon', scene: 'A thought-spell slips behind Bolas’s eyes.', dialogue: 'Public knowledge is vulgar. Private knowledge wins games.', objective: 'After a Duress-style effect resolves, use Private hand peek on Nicol Bolas.', hint: 'Private peek is justified here by a hand-inspection spell; do not use it without that effect.', anchor: 'private-hand-peek-button', completion: 'detect' },
-  { id: 'reveal_hand_note', chapter: 'Act 4 / Turn 4 — Public Knowledge', title: 'Reveal and Hide Hand', scene: 'Bolas opens one hand to the arena, then closes it.', dialogue: 'Public reveal is not the same as private knowledge. Do not confuse theatre with espionage.', objective: 'Use Reveal tools to reveal Nicol Bolas’s hand publicly.', hint: 'Public reveal is justified only by an effect that tells everyone to see the hand.', anchor: 'reveal-tools', completion: 'detect' },
-  { id: 'open_library_tools', chapter: 'Act 4 / Turn 4 — Your Library', title: 'Ponder the Library Labyrinth', scene: 'Your next draws appear as floating cards.', dialogue: 'The future is fragile. Rearrange it before it notices.', objective: 'Open Library tools for a Ponder/Preordain-style effect.', hint: 'Tap the book/library icon because a library-manipulation spell is resolving. Swipe the bottom toolbar if it is off-screen.', anchor: 'library-menu-button', completion: 'detect' },
-  { id: 'batch_library_actions', chapter: 'Act 4 / Turn 4 — Batch Actions', title: 'One Card, Ten Cards', scene: 'Several cards fall from the top of a library at once.', dialogue: 'One card is a choice. Ten cards is weather.', objective: 'Open Batch Actions for a mill/reveal/exile/scry/surveil effect.', hint: 'Open your library tools, choose Batch Actions, and use the scripted mill/reveal/exile/scry/surveil controls for your own library.', anchor: 'library-menu-button', completion: 'detect' },
-  { id: 'opponent_library_tools', chapter: 'Act 4 / Turn 4 — Portent', title: 'Trespass with Permission', scene: 'Portent points at Bolas’s library instead of yours.', dialogue: 'Permission to trespass is still trespassing.', objective: 'Open Library tools and inspect the opponent library section for Portent.', hint: 'Portent/fateseal-style effects are why you may touch Bolas’s library here.', anchor: 'library-menu-button', completion: 'detect' },
-  { id: 'create_token', chapter: 'Act 5 / Turn 5 — Main Phase', title: 'Dragon Fodder', scene: 'Two goblins crawl out of a spell-shaped hole.', dialogue: 'Some creatures were never cards. Still, they insist on standing there.', objective: 'Create Goblin tokens after Dragon Fodder resolves.', hint: 'Dragon Fodder costs {1}{R}; the tutorial keeps Mountain plus another source available before this token lesson.', anchor: 'token-tools', completion: 'detect' },
-  { id: 'deck_tokens_note', chapter: 'Act 5 / Turn 5 — Main Phase', title: 'Deck-Derived Templates', scene: 'Dragon Fodder remembers what it usually creates.', dialogue: 'Your deck has habits. The app can remember them.', objective: 'Open Token Tools and tap a From Your Deck token template if one is present.', hint: 'Open Token Tools, then tap the first From Your Deck token template if the deck supplied one.', anchor: 'token-tools', completion: 'detect' },
-  { id: 'custom_token_note', chapter: 'Act 5 / Turn 5 — Main Phase', title: 'Custom Monster', scene: 'Bolas names a creature no preset has prepared for.', dialogue: 'When reality lacks the correct monster, fill out the form.', objective: 'Open Token Tools and edit the Custom Token form.', hint: 'Open Token Tools, type a custom Goblin token name, set 1/1 red, and create it.', anchor: 'token-tools', completion: 'detect' },
-  { id: 'target_system', chapter: 'Act 5 / Turn 5 — Main Phase', title: 'A Promise with Consequences', scene: 'A green line connects spell and creature.', dialogue: 'A target is a promise with consequences.', objective: 'Mark Giant Growth’s creature target.', hint: 'Forest is available for Giant Growth’s {G}. Open Giant Growth on the stack, choose Target, tap Llanowar Elves, then press Done.', anchor: 'target-tools', completion: 'detect' },
-  { id: 'attach_to_permanent', chapter: 'Act 5 / Turn 5 — Main Phase', title: 'Rancor Finds a Body', scene: 'Rancor coils around a creature.', dialogue: 'Attachments are relationships with rules text.', objective: 'Attach Rancor to Llanowar Elves.', hint: 'Forest is available for Rancor’s {G}. Open Rancor, choose Attach to permanent, then tap Llanowar Elves.', anchor: 'card-detail', completion: 'detect' },
-  { id: 'attach_to_player_note', chapter: 'Act 5 / Turn 5 — Main Phase', title: 'Curse the Dragon', scene: 'Curse of the Pierced Heart hangs behind Bolas like a bad moon.', dialogue: 'Why curse a creature when you can curse the person making decisions?', objective: 'Attach Curse of the Pierced Heart to Nicol Bolas.', hint: 'Open Curse of the Pierced Heart, choose Attach to player, then choose Nicol Bolas.', anchor: 'card-detail', completion: 'detect' },
-  { id: 'clone_control', chapter: 'Act 5 / Turn 5 — Main Phase', title: 'Clone and Betrayal', scene: 'A creature looks at itself and makes a tactical error.', dialogue: 'Copies are lies that learned anatomy. Control changes are betrayal with timestamps.', objective: 'Open Clone and use Clone to represent copying Bolas’s Zombie Token.', hint: 'Late-game scripted setup has already paid for and resolved Clone. Tap Clone on your battlefield, then choose Clone.', anchor: 'card-detail', completion: 'detect' },
-  { id: 'player_panel', chapter: 'Act 6 / Turn 6 — The Player Becomes the Battlefield', title: 'Open Player Panel', scene: 'Bolas points at you instead of your cards.', dialogue: 'The battlefield is not only where creatures stand. Sometimes it is you.', objective: 'Open Player Counters & Statuses.', hint: 'Tap the player/status/counter button near your battlefield.', anchor: 'player-counters-button', completion: 'detect' },
-  { id: 'mana_pool', chapter: 'Act 6 / Turn 6 — Mana Pool', title: 'Floating Mana', scene: 'Green mana floats like a captured firefly.', dialogue: 'Mana unspent is a threat looking for a sentence.', objective: 'Add {G} to your mana pool, then clear it.', hint: 'Tap Llanowar Elves as the visible green source, open Player Counters & Statuses, press + beside G, then clear the mana pool.', anchor: 'mana-pool-panel', completion: 'detect' },
-  { id: 'player_counters', chapter: 'Act 6 / Turn 6 — Player Counters', title: 'Invisible Ledgers', scene: 'Poison, energy, and experience ledgers open beside your name.', dialogue: 'Some numbers sit on players because cards are too fragile to hold them.', objective: 'Add one poison counter to yourself, then remove it.', hint: 'Open Player Counters & Statuses. Press + beside your Poison counter, then press - beside that same Poison counter.', anchor: 'player-counters-panel', completion: 'detect' },
-  { id: 'statuses', chapter: 'Act 6 / Turn 6 — Statuses', title: 'Crowns and Nightfall', scene: 'A crown, a dungeon door, a city seal, and a changing sky appear.', dialogue: 'Titles are counters with better costumes.', objective: 'Toggle Monarch status for yourself.', hint: 'Open Player Counters & Statuses, then toggle Monarch for yourself to represent becoming the monarch.', anchor: 'status-panel', completion: 'detect' },
-  { id: 'emblems', chapter: 'Act 6 / Turn 6 — Emblems', title: 'A Scar the Rules Remember', scene: 'A planeswalker’s threat remains after the planeswalker is gone.', dialogue: 'An emblem is a scar the rules refuse to forget.', objective: 'Add an emblem after a planeswalker ultimate resolves.', hint: 'Open Player Counters & Statuses, choose Add Emblem, and add a custom planeswalker emblem for yourself.', anchor: 'player-counters-panel', completion: 'detect' },
-  { id: 'dungeons_note', chapter: 'Act 6 / Turn 6 — Dungeons', title: 'Checklist with Walls', scene: 'A map appears beneath the turn order.', dialogue: 'Dungeons are not places. They are checklists with walls.', objective: 'Open the dungeon reference for a venture effect.', hint: 'Open Player Counters & Statuses, then open the dungeon reference to represent a card telling you to venture. Progress is manual.', anchor: 'player-counters-panel', completion: 'detect' },
-  { id: 'commander_note', chapter: 'Act 6 / Turn 6 — Commander', title: 'The Command Zone', scene: 'A command zone opens like a throne room.', dialogue: 'In Commander, death is merely a tax increase.', objective: 'Open the commander/player tools panel and inspect commander status.', hint: 'Commander games start at 40 life and add command zone, commander tax, and commander damage tools.', anchor: 'player-counters-panel', completion: 'detect' },
-  { id: 'final_spell', chapter: 'Act 7 / Final Turn — Main Phase', title: 'The Final Spell', scene: 'Your battlefield has become a weapon with several moving parts.', dialogue: 'Show me the oldest phrase in Magic. Show me you know when to answer.', objective: 'Cast the final Lightning Bolt targeting Nicol Bolas.', hint: 'Mountain is restored as the red source for the final Bolt. Tap Lightning Bolt in your hand, choose Cast + Target, tap Nicol Bolas, then press Done.', anchor: 'hand-area', completion: 'detect' },
-  { id: 'final_bolas_response', chapter: 'Act 7 / Final Turn — In Response', title: 'Bolas Responds', scene: 'Bolas places one last spell above yours.', dialogue: 'Victory is adorable when it believes the stack is empty.', objective: 'Open the stack and inspect Bolas’s response.', hint: 'The newest spell is on top.', anchor: 'stack-button', completion: 'detect' },
-  { id: 'final_in_response', chapter: 'Act 7 / Final Turn — In Response', title: 'In Response', scene: 'Your answer appears above his answer.', dialogue: 'Ah. There it is. The phrase that ruins kings.', objective: 'Copy Bolas’s top stack item as your final response.', hint: 'Open the top stack item and press Copy stack item.', anchor: 'stack-panel', completion: 'detect' },
-  { id: 'final_trial', chapter: 'Act 7 / Final Turn — Pass Priority', title: 'Let the Future Happen', scene: 'The arena waits.', dialogue: 'No more tricks? Then pass. Let the future happen.', objective: 'Pass priority.', hint: 'Tap Pass to finish the duel.', anchor: 'pass-button', completion: 'detect' },
-  { id: 'async_oath', chapter: 'Act 8 / After the Duel — Async Survival', title: 'The Async Oath', scene: 'The dragon’s shadow cracks, but its smile remains.', dialogue: 'Leave clear board states. Pass priority. Use the log. Do not make your friends solve archaeology.', objective: 'Open log/chat, then pass priority so the async state is clear.', hint: 'Use pass, logs, and clear markers so friends can understand the game later.', anchor: 'chat-button', completion: 'detect' },
-  { id: 'watch_cleanup_note', chapter: 'Act 8 / After the Duel — Async Survival', title: 'Watchers and Cleanup', scene: 'The arena folds back toward the lobby.', dialogue: 'Some will watch. Some rooms will rot. Know the difference.', objective: 'Tap the room code again to practice sharing a room before cleanup later.', hint: 'Watch and cleanup live in the lobby; in-game, copying the room code is the real table action.', anchor: 'room-code', completion: 'detect' },
-  { id: 'manual_toolbox_note', chapter: 'Act 8 / After the Duel — Async Survival', title: 'The Manual Toolbox', scene: 'Bolas hands you a toolbox and pointedly not a judge.', dialogue: 'This machine is not a judge. It is a table, a memory, and a knife drawer.', objective: 'Open the log/chat and focus the message field as your table note scratchpad.', hint: 'Players are responsible for legal play; the app helps represent paper Magic.', anchor: 'chat-button', completion: 'detect' },
-  { id: 'tutorial_complete', chapter: 'Victory, Temporarily', title: 'Nicol Bolas Defeated', scene: 'The dragon’s shadow cracks, but its smile remains.', dialogue: 'You have not defeated me. You have merely become inconvenient.', objective: 'Finish the tutorial duel.', hint: 'Tap Finish Tutorial to close the guided duel.', anchor: null, completion: 'finish' },
-]);
+const makeDuelStep = ({
+  id,
+  act,
+  title,
+  turnOwner = 'Luis',
+  activePlayer = turnOwner,
+  phase = 'main1',
+  sourceCard = 'Scripted tutorial duel',
+  sourceEffect = '',
+  requiredAction,
+  exactUiAction,
+  manaPayment = null,
+  legalPreconditions = '',
+  completionCondition,
+  showMeAnchor = null,
+  expectedLifeTotals = null,
+  expectedDamage = null,
+  storyText = '',
+  bolasLine = '',
+  completion = 'detect'
+}) => ({
+  id,
+  chapter: act,
+  act,
+  title,
+  scene: storyText || `${turnOwner} ${phase}.`,
+  dialogue: bolasLine || 'Play the board state exactly as it exists.',
+  objective: requiredAction,
+  hint: exactUiAction,
+  anchor: showMeAnchor,
+  completion,
+  turnOwner,
+  activePlayer,
+  phase,
+  sourceCard,
+  sourceEffect,
+  requiredAction,
+  exactUiAction,
+  manaPayment,
+  legalPreconditions,
+  completionCondition,
+  showMeAnchor,
+  expectedLifeTotals,
+  expectedDamage,
+  rules: {
+    actor: /Bolas/i.test(turnOwner) && !/^B4-04|^B4-05|^B4-06|^B4-07|^B4-08/.test(id) ? 'bolas' : 'player',
+    turnOwner: /Bolas/i.test(turnOwner) ? 'bolas' : 'player',
+    activePlayer: /Bolas/i.test(activePlayer) ? 'bolas' : 'player',
+    phase,
+    requiredAction,
+    sourceCardOrEffect: `${sourceCard}${sourceEffect ? ` — ${sourceEffect}` : ''}`,
+    boardPrecondition: legalPreconditions,
+    stackPrecondition: /stack/i.test(legalPreconditions) ? legalPreconditions : 'Stack state specified by duel ledger.',
+    completionCondition,
+    tutorialTargetAnchor: showMeAnchor,
+    manaPayment,
+    expectedLifeTotals,
+    expectedDamage
+  }
+});
+
+const TUTORIAL_OPENING_HAND_LUIS = ['Mountain', 'Mountain', 'Island', 'Forest', 'Lightning Bolt', 'Delver of Secrets // Insectile Aberration', 'Ponder'];
+const TUTORIAL_LIBRARY_LUIS = ['Slip Out the Back', 'Mountain', 'Reverberate', 'Dragon Fodder', 'Rancor', 'Giant Growth', 'Gitaxian Probe', 'Portent', 'Thought Scour', 'Plains', 'Throne of the High City', 'The Celestus', 'Birthday Escape', 'Attune with Aether', 'Curse of the Pierced Heart', 'Act of Treason', 'Clone', 'Nadaar, Selfless Paladin', 'Lightning Bolt', 'Reverberate'];
+const TUTORIAL_OPENING_HAND_BOLAS = ['Island', 'Swamp', 'Swamp', 'Negate', 'Doom Blade', 'Knight of Malice', 'Vraska’s Fall'];
+const TUTORIAL_LIBRARY_BOLAS = ['Mountain', 'Cancel', 'Bonecrusher Giant', 'Swamp', 'Island'];
+const TUTORIAL_TOOL_SOURCES = [
+  ['tool_dragon_fodder', 'Act 9 / Tools — Dragon Fodder', 'Dragon Fodder tokens', 'Dragon Fodder', 'Luis taps Mountain plus another land, casts Dragon Fodder, resolves it, then opens Token Tools to create two 1/1 red Goblins.', '{1}{R}: Mountain + one land', 'Two Goblin tokens exist.', 'token-tools'],
+  ['tool_goblin_template', 'Act 9 / Tools — Deck Token Template', 'Use Goblin token template', 'Dragon Fodder', 'Use the deck-derived Goblin token template created by Dragon Fodder.', 'Resolved Dragon Fodder', 'Goblin template used.', 'token-tools'],
+  ['tool_mirror_cell', 'Act 9 / Tools — Custom Token', 'Mirror-Cell Experiment custom token', 'Mirror-Cell Experiment', 'Luis taps two lands, casts Mirror-Cell Experiment, resolves it, then creates a custom 0/1 Reflection artifact creature token.', '{2}: two lands', 'Reflection token exists.', 'token-tools'],
+  ['tool_rancor_attach', 'Act 9 / Tools — Rancor', 'Attach Rancor to a creature', 'Rancor', 'Tap Forest for {G}, cast Rancor with Cast + Target, target a creature, resolve, then Attach to Permanent.', '{G}: Forest', 'Rancor is attached to target creature.', 'card-detail'],
+  ['tool_curse_attach', 'Act 9 / Tools — Curse', 'Attach Curse to Nicol Bolas', 'Curse of the Pierced Heart', 'Tap Mountain plus another land, cast Curse with Cast + Target targeting Nicol Bolas, resolve, then Attach to Player.', '{1}{R}: Mountain + one land', 'Curse is attached to Nicol Bolas.', 'card-detail'],
+  ['tool_gitaxian_probe', 'Act 9 / Tools — Gitaxian Probe', 'Private hand peek', 'Gitaxian Probe', 'Luis pays 2 life for Phyrexian mana, casts Gitaxian Probe, resolves it, opens Private Hand Peek for Bolas hand, then draws.', '2 life instead of {U}', 'Private peek opened and Luis life decreased by 2.', 'private-hand-peek-button'],
+  ['tool_open_book_hex', 'Act 9 / Tools — Open-Book Hex', 'Public hand reveal', 'Open-Book Hex', 'Tap Island for {U}, cast Open-Book Hex targeting Nicol Bolas, resolve, then publicly reveal Bolas hand.', '{U}: Island', 'Bolas hand publicly revealed.', 'reveal-tools'],
+  ['tool_ponder_reorder', 'Act 9 / Tools — Ponder', 'Own library reorder', 'Ponder', 'Tap Island for {U}, cast and resolve Ponder, reorder top three cards, then draw one.', '{U}: Island', 'Top cards reordered and a card drawn.', 'library-menu-button'],
+  ['tool_opt_scry', 'Act 9 / Tools — Opt', 'Scry 1', 'Opt', 'Tap Island for {U}, cast Opt, resolve, Scry 1, then draw.', '{U}: Island', 'Scry action performed.', 'library-menu-button'],
+  ['tool_consider_surveil', 'Act 9 / Tools — Consider', 'Surveil 1', 'Consider', 'Tap Island for {U}, cast Consider, resolve, Surveil 1, then draw.', '{U}: Island', 'Surveil action performed.', 'library-menu-button'],
+  ['tool_portent_bolas_library', 'Act 9 / Tools — Portent', 'Reorder Bolas library', 'Portent', 'Tap Island for {U}, cast Portent targeting Nicol Bolas, resolve, then reorder Bolas top three cards.', '{U}: Island', 'Bolas top cards reordered.', 'library-menu-button'],
+  ['tool_praetors_grasp', 'Act 9 / Tools — Praetor’s Grasp', 'Search Bolas library', 'Praetor’s Grasp', 'Tap Swamp plus two lands, cast Praetor’s Grasp targeting Nicol Bolas, resolve, then search Bolas library and exile a card.', '{2}{B}: Swamp + two lands', 'Opponent library searched and a card exiled.', 'library-menu-button'],
+  ['tool_thought_scour', 'Act 9 / Tools — Thought Scour', 'Mill Bolas for two', 'Thought Scour', 'Tap Island for {U}, cast Thought Scour with Cast + Target targeting Nicol Bolas, resolve, then mill Bolas top two cards.', '{U}: Island', 'Bolas mills two cards.', 'library-menu-button'],
+  ['tool_light_up_stage', 'Act 9 / Tools — Light Up the Stage', 'Exile top two', 'Light Up the Stage', 'Tap Mountain and other lands, cast Light Up the Stage, resolve, then exile top two from Luis library.', 'Visible red/generic lands', 'Top two cards exiled.', 'library-menu-button'],
+  ['tool_act_of_treason', 'Act 9 / Tools — Act of Treason', 'Gain control of Knight', 'Act of Treason', 'Tap Mountain plus two lands, cast Act of Treason targeting Knight of Malice, resolve, give control to Luis, add until-end reminder.', '{2}{R}: Mountain + two lands', 'Knight controller is Luis and reminder exists.', 'card-detail'],
+  ['tool_clone', 'Act 9 / Tools — Clone', 'Clone a creature', 'Clone', 'Tap Island plus three lands, cast Clone, resolve, then mark Clone as a copy of Knight or Insectile.', '{3}{U}: Island + three lands', 'Clone marked as copy.', 'card-detail'],
+  ['tool_throne_monarch', 'Act 9 / Tools — Throne', 'Become the monarch', 'Throne of the High City', 'Tap four lands, tap and sacrifice Throne of the High City, resolve the ability, then toggle Monarch for Luis.', '{4}, tap, sacrifice Throne', 'Luis has Monarch.', 'status-panel'],
+  ['tool_nadaar_dungeon', 'Act 9 / Tools — Nadaar', 'Venture into dungeon', 'Nadaar, Selfless Paladin', 'Tap Plains plus two lands, cast Nadaar, resolve, its ETB ventures, then mark the first dungeon room.', '{2}{W}: Plains + two lands', 'Dungeon/venture state marked.', 'player-counters-panel'],
+  ['tool_celestus_day', 'Act 9 / Tools — Celestus', 'Make it day', 'The Celestus', 'Tap three lands, cast The Celestus, resolve, then set Day in Player Counters & Statuses.', '{3}: three lands', 'Day status active.', 'status-panel'],
+  ['tool_birthday_escape_ring', 'Act 9 / Tools — Birthday Escape', 'The Ring tempts you', 'Birthday Escape', 'Tap Island for {U}, cast Birthday Escape, resolve, draw a card, then increase Ring temptation to 1.', '{U}: Island', 'Ring temptation = 1.', 'status-panel'],
+  ['tool_vraskas_fall_poison', 'Act 9 / Tools — Vraska’s Fall', 'Bolas gives Luis poison', 'Vraska’s Fall', 'Bolas taps Swamp plus two lands, casts Vraska’s Fall, resolves it, Luis sacrifices if needed, then adds one poison counter.', '{2}{B}: Bolas Swamp + two lands', 'Luis poison = 1.', 'player-counters-panel'],
+  ['tool_attune_energy', 'Act 9 / Tools — Attune', 'Gain energy', 'Attune with Aether', 'Tap Forest for {G}, cast Attune with Aether, resolve, search/reveal a basic if desired, then add two Energy.', '{G}: Forest', 'Luis energy increased by 2.', 'player-counters-panel'],
+  ['tool_ezuri_experience', 'Act 9 / Tools — Ezuri', 'Gain experience', 'Ezuri, Claw of Progress', 'Snapshot: Ezuri is on battlefield. Cast or create a small creature; Ezuri triggers; add one Experience.', 'Snapshot legal mana already logged', 'Luis experience = 1.', 'player-counters-panel'],
+  ['tool_chandra_emblem', 'Act 9 / Tools — Chandra', 'Add Chandra emblem', 'Chandra, Torch of Defiance', 'Snapshot: Chandra survived to ultimate. Activate ultimate, resolve, then add Chandra emblem.', 'Planeswalker loyalty snapshot', 'Luis has Chandra emblem.', 'player-counters-panel'],
+  ['tool_citys_blessing', 'Act 9 / Tools — Ascend', 'Gain city’s blessing', 'Tendershoot Dryad / ascend', 'Snapshot: Luis controls ten permanents and an ascend card; ascend condition is met; toggle City’s Blessing.', 'Ten permanents snapshot', 'Luis has City’s Blessing.', 'status-panel']
+];
+
+const TUTORIAL_DUEL_STEPS = [
+  makeDuelStep({ id: 'G01_room_code', act: 'Act 0 / Entering the Table', title: 'Inspect Room Code', requiredAction: 'Tap/copy the room code.', exactUiAction: 'Tap the room code in the header.', legalPreconditions: 'Tutorial duel exists; no turn actions have begun.', completionCondition: 'Room code tapped/copied after step activation.', showMeAnchor: 'room-code' }),
+  makeDuelStep({ id: 'G02_opponent_area', act: 'Act 0 / Entering the Table', title: 'Inspect Nicol Bolas', requiredAction: 'Inspect Nicol Bolas’s player area.', exactUiAction: 'Tap Nicol Bolas’s name, battlefield, or life area.', legalPreconditions: 'Nicol Bolas is seated as the scripted opponent at 20 life.', completionCondition: 'Opponent panel inspected.', showMeAnchor: 'opponent-battlefield' }),
+  makeDuelStep({ id: 'G03_own_battlefield', act: 'Act 0 / Entering the Table', title: 'Inspect Your Battlefield', requiredAction: 'Tap your battlefield.', exactUiAction: 'Tap the empty lower battlefield.', legalPreconditions: 'Luis battlefield is empty before turn one.', completionCondition: 'Own battlefield inspected.', showMeAnchor: 'own-battlefield' }),
+  makeDuelStep({ id: 'G04_open_bolt', act: 'Act 0 / Entering the Table', title: 'Open Lightning Bolt', sourceCard: 'Lightning Bolt', requiredAction: 'Open Lightning Bolt from hand.', exactUiAction: 'Tap Lightning Bolt in your hand.', legalPreconditions: 'Lightning Bolt starts in Luis opening hand.', completionCondition: 'Lightning Bolt detail opens from hand after step activation.', showMeAnchor: 'hand-area' }),
+  makeDuelStep({ id: 'G05_mulligan_7', act: 'Act 0 / Entering the Table', title: 'Mulligan Tool', sourceCard: 'Opening hand procedure', requiredAction: 'Use Mulligan (7), then restore the scripted opening hand.', exactUiAction: 'Open Library tools and use Mulligan (7).', legalPreconditions: 'Pre-game mulligans happen before turns begin.', completionCondition: 'Mulligan clicked; Luis hand restored to Mountain, Mountain, Island, Forest, Lightning Bolt, Delver, Ponder.', showMeAnchor: 'library-menu-button' }),
+  makeDuelStep({ id: 'P1_01_play_mountain', act: 'Act 1 / Luis Turn 1 — Main 1', title: 'Play Mountain', sourceCard: 'Mountain', requiredAction: 'Play Mountain from hand.', exactUiAction: 'Tap Mountain in hand → Play Land.', legalPreconditions: 'Luis Turn 1 Main 1; stack empty; Mountain in hand; Luis has not played a land this turn.', completionCondition: 'Mountain moves hand → battlefield.', showMeAnchor: 'hand-area' }),
+  makeDuelStep({ id: 'P1_02_undo_mountain', act: 'Act 1 / Luis Turn 1 — Main 1', title: 'Undo Mountain', sourceCard: 'Undo table correction', requiredAction: 'Undo the Mountain play.', exactUiAction: 'Tap Undo → confirm.', legalPreconditions: 'Mountain was just played and no opponent response happened.', completionCondition: 'Mountain returns battlefield → hand.', showMeAnchor: 'undo-button' }),
+  makeDuelStep({ id: 'P1_03_replay_mountain', act: 'Act 1 / Luis Turn 1 — Main 1', title: 'Replay Mountain', sourceCard: 'Mountain', requiredAction: 'Replay Mountain.', exactUiAction: 'Tap Mountain in hand → Play Land.', legalPreconditions: 'Mountain is in hand after Undo; stack empty.', completionCondition: 'Mountain moves hand → battlefield.', showMeAnchor: 'hand-area' }),
+  makeDuelStep({ id: 'P1_04_tap_mountain', act: 'Act 1 / Luis Turn 1 — Main 1', title: 'Tap Mountain', sourceCard: 'Mountain', sourceEffect: '{T}: add {R}', requiredAction: 'Tap Mountain for red mana.', exactUiAction: 'Tap Mountain on battlefield → Tap.', manaPayment: 'Source is Mountain; produces {R}.', legalPreconditions: 'Mountain is untapped on battlefield.', completionCondition: 'Mountain is tapped.', showMeAnchor: 'own-battlefield' }),
+  makeDuelStep({ id: 'P1_05_add_r', act: 'Act 1 / Luis Turn 1 — Main 1', title: 'Add Red Mana', sourceCard: 'Mountain', sourceEffect: 'manual mana pool tracking', requiredAction: 'Record {R} in Luis mana pool.', exactUiAction: 'Open Player Counters & Statuses → Mana Pool → + beside R.', manaPayment: 'Luis mana pool becomes R1.', legalPreconditions: 'Mountain is tapped as the visible red source.', completionCondition: 'Luis mana pool has R1.', showMeAnchor: 'mana-pool-panel' }),
+  makeDuelStep({ id: 'P1_06_open_bolt', act: 'Act 1 / Luis Turn 1 — Main 1', title: 'Open Bolt to Cast', sourceCard: 'Lightning Bolt', requiredAction: 'Open Lightning Bolt from hand.', exactUiAction: 'Tap Lightning Bolt in hand.', manaPayment: '{R} available from Mountain.', legalPreconditions: 'Lightning Bolt in hand; {R} recorded.', completionCondition: 'Lightning Bolt detail opens from hand.', showMeAnchor: 'hand-area' }),
+  makeDuelStep({ id: 'P1_07_bolt_cast_target', act: 'Act 1 / Luis Turn 1 — Main 1', title: 'Choose Cast + Target', sourceCard: 'Lightning Bolt', requiredAction: 'Choose Cast + Target.', exactUiAction: 'In Lightning Bolt detail, tap Cast + Target.', manaPayment: 'Spend the recorded {R} when Bolt resolves.', legalPreconditions: 'Targeting mode must be used because Bolt targets.', completionCondition: 'Targeting mode active for Lightning Bolt.', showMeAnchor: 'card-detail' }),
+  makeDuelStep({ id: 'P1_08_target_bolas', act: 'Act 1 / Luis Turn 1 — Main 1', title: 'Target Nicol Bolas', sourceCard: 'Lightning Bolt', requiredAction: 'Choose Nicol Bolas as Lightning Bolt’s target.', exactUiAction: 'Tap Nicol Bolas/opponent player panel → Done.', manaPayment: '{R} paid from Mountain.', legalPreconditions: 'Nicol Bolas is a legal player target; Done is disabled with 0 targets.', completionCondition: 'Lightning Bolt is on stack targeting Nicol Bolas.', showMeAnchor: 'opponent-player-target' }),
+  makeDuelStep({ id: 'P1_09_inspect_stack', act: 'Act 1 / Luis Turn 1 — Main 1', title: 'Inspect Stack', sourceCard: 'Lightning Bolt', requiredAction: 'Open the stack.', exactUiAction: 'Tap Stack.', legalPreconditions: 'Lightning Bolt is on stack targeting Nicol Bolas.', completionCondition: 'Stack panel opened with Lightning Bolt visible.', showMeAnchor: 'stack-button' }),
+  makeDuelStep({ id: 'P1_10_resolve_bolt', act: 'Act 1 / Luis Turn 1 — Main 1', title: 'Resolve Bolt for Real Damage', sourceCard: 'Lightning Bolt', sourceEffect: '3 damage to any target', requiredAction: 'Resolve Lightning Bolt and apply damage.', exactUiAction: 'Resolve top stack item.', manaPayment: 'Clear/spend Luis {R}.', legalPreconditions: 'Bolas has no lands yet and cannot cast Negate; Bolt targets Nicol Bolas.', completionCondition: 'Stack empty; Lightning Bolt in Luis graveyard; Bolas life is 17.', showMeAnchor: 'stack-panel', expectedLifeTotals: { bolasBefore: 20, bolasAfter: 17 }, expectedDamage: 'Lightning Bolt deals 3 damage to Nicol Bolas.' }),
+  makeDuelStep({ id: 'P1_11_pass', act: 'Act 1 / Luis Turn 1 — End', title: 'Pass Turn', requiredAction: 'Pass/end turn.', exactUiAction: 'Tap Pass with stack empty.', legalPreconditions: 'Main phase with stack empty after Bolt resolved.', completionCondition: 'Pass action with stack empty.', showMeAnchor: 'pass-button' }),
+  makeDuelStep({ id: 'B1_01_bolas_island', act: 'Act 2 / Bolas Turn 1', title: 'Bolas Plays Island', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', sourceCard: 'Island', requiredAction: 'Inspect Bolas’s land play in the log.', exactUiAction: 'Open log/chat.', legalPreconditions: 'Bolas Turn 1; Island in Bolas opening hand.', completionCondition: 'Log/chat opened after setup logs “Nicol Bolas plays Island.”', showMeAnchor: 'chat-button' }),
+  makeDuelStep({ id: 'B1_02_bolas_pass', act: 'Act 2 / Bolas Turn 1', title: 'Bolas Passes', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', requiredAction: 'Acknowledge Bolas passing.', exactUiAction: 'Tap Pass.', legalPreconditions: 'Bolas controls Island and takes no further action.', completionCondition: 'Pass tapped.', showMeAnchor: 'pass-button' }),
+  makeDuelStep({ id: 'P2_01_untap', act: 'Act 3 / Luis Turn 2', title: 'Untap', phase: 'untap', requiredAction: 'Set phase to Untap.', exactUiAction: 'Use phase controls → Untap.', legalPreconditions: 'Luis Turn 2 begins; Mountain untaps.', completionCondition: 'Phase is Untap.', showMeAnchor: 'phase-controls' }),
+  makeDuelStep({ id: 'P2_02_draw_slip', act: 'Act 3 / Luis Turn 2', title: 'Draw Slip Out', phase: 'draw', sourceCard: 'Draw step', requiredAction: 'Move to Draw and draw Slip Out the Back.', exactUiAction: 'Phase controls → Draw → Draw.', legalPreconditions: 'Top Luis library card is Slip Out the Back.', completionCondition: 'Slip Out the Back moves library → hand.', showMeAnchor: 'library-menu-button' }),
+  makeDuelStep({ id: 'P2_03_main1', act: 'Act 3 / Luis Turn 2', title: 'Main 1', requiredAction: 'Move to Main 1.', exactUiAction: 'Use phase controls → Main 1.', legalPreconditions: 'Draw step complete.', completionCondition: 'Phase Main 1.', showMeAnchor: 'phase-controls' }),
+  makeDuelStep({ id: 'P2_04_play_island', act: 'Act 3 / Luis Turn 2', title: 'Play Island', sourceCard: 'Island', requiredAction: 'Play Island from hand.', exactUiAction: 'Tap Island → Play Land.', legalPreconditions: 'Island in hand; no land played this turn.', completionCondition: 'Island moves hand → battlefield.', showMeAnchor: 'hand-area' }),
+  makeDuelStep({ id: 'P2_05_tap_island', act: 'Act 3 / Luis Turn 2', title: 'Tap Island', sourceCard: 'Island', sourceEffect: '{T}: add {U}', requiredAction: 'Tap Island for {U}.', exactUiAction: 'Tap Island → Tap.', legalPreconditions: 'Island is untapped on battlefield.', completionCondition: 'Island tapped.', showMeAnchor: 'own-battlefield' }),
+  makeDuelStep({ id: 'P2_06_add_u', act: 'Act 3 / Luis Turn 2', title: 'Add Blue Mana', sourceCard: 'Island', requiredAction: 'Add {U} to mana pool.', exactUiAction: 'Open Player Counters & Statuses → Mana Pool → + beside U.', manaPayment: 'Luis mana pool U1.', legalPreconditions: 'Island is tapped as the visible blue source.', completionCondition: 'Luis mana pool has U1.', showMeAnchor: 'mana-pool-panel' }),
+  makeDuelStep({ id: 'P2_07_open_delver', act: 'Act 3 / Luis Turn 2', title: 'Open Delver', sourceCard: 'Delver of Secrets', requiredAction: 'Open Delver of Secrets from hand.', exactUiAction: 'Tap Delver in hand.', manaPayment: '{U} available.', legalPreconditions: 'Delver in hand.', completionCondition: 'Delver detail opened from hand.', showMeAnchor: 'hand-area' }),
+  makeDuelStep({ id: 'P2_08_cast_delver', act: 'Act 3 / Luis Turn 2', title: 'Cast Delver', sourceCard: 'Delver of Secrets', requiredAction: 'Cast Delver of Secrets.', exactUiAction: 'Tap Cast Spell, not Cast + Target.', manaPayment: '{U} from Island.', legalPreconditions: 'Delver costs {U} and has no target.', completionCondition: 'Delver is on stack.', showMeAnchor: 'card-detail' }),
+  makeDuelStep({ id: 'P2_09_resolve_delver', act: 'Act 3 / Luis Turn 2', title: 'Resolve Delver', sourceCard: 'Delver of Secrets', requiredAction: 'Resolve Delver from stack.', exactUiAction: 'Open Stack → Resolve top item.', manaPayment: 'Clear/spend {U}.', legalPreconditions: 'Delver is a creature spell on stack.', completionCondition: 'Delver on battlefield and stack empty.', showMeAnchor: 'stack-panel' }),
+  makeDuelStep({ id: 'P2_10_pass', act: 'Act 3 / Luis Turn 2', title: 'Pass Turn', requiredAction: 'Pass/end turn.', exactUiAction: 'Tap Pass.', legalPreconditions: 'Stack empty after Delver resolves.', completionCondition: 'Pass action.', showMeAnchor: 'pass-button' }),
+  makeDuelStep({ id: 'B2_01_bolas_draw_mountain', act: 'Act 4 / Bolas Turn 2', title: 'Bolas Draws', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', phase: 'draw', sourceCard: 'Draw step', requiredAction: 'Inspect Bolas turn note.', exactUiAction: 'Open log/chat.', legalPreconditions: 'Bolas untaps Island and draws Mountain.', completionCondition: 'Log/chat opened.', showMeAnchor: 'chat-button' }),
+  makeDuelStep({ id: 'B2_02_bolas_swamp', act: 'Act 4 / Bolas Turn 2', title: 'Bolas Plays Swamp', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', sourceCard: 'Swamp', requiredAction: 'Inspect Bolas battlefield.', exactUiAction: 'Open/inspect Bolas battlefield.', legalPreconditions: 'Swamp in Bolas opening hand; visible Bolas battlefield is Island + Swamp.', completionCondition: 'Bolas battlefield inspected.', showMeAnchor: 'opponent-battlefield' }),
+  makeDuelStep({ id: 'B2_03_bolas_cast_knight', act: 'Act 4 / Bolas Turn 2', title: 'Bolas Casts Knight', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', sourceCard: 'Knight of Malice', requiredAction: 'Inspect Knight of Malice on stack.', exactUiAction: 'Open Stack and inspect Knight.', manaPayment: 'Bolas taps Swamp for {B} and Island for {1}.', legalPreconditions: 'Knight in Bolas hand; Island and Swamp untapped.', completionCondition: 'Stack opened / Knight inspected.', showMeAnchor: 'stack-button' }),
+  makeDuelStep({ id: 'B2_04_resolve_knight', act: 'Act 4 / Bolas Turn 2', title: 'Resolve Knight', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', sourceCard: 'Knight of Malice', requiredAction: 'Resolve Knight of Malice.', exactUiAction: 'Resolve top stack item.', legalPreconditions: 'Knight is on stack.', completionCondition: 'Knight on Bolas battlefield and stack empty.', showMeAnchor: 'stack-panel' }),
+  makeDuelStep({ id: 'B2_05_bolas_pass', act: 'Act 4 / Bolas Turn 2', title: 'Bolas Passes', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', requiredAction: 'Tap Pass.', exactUiAction: 'Tap Pass.', legalPreconditions: 'Stack empty.', completionCondition: 'Pass tapped.', showMeAnchor: 'pass-button' }),
+  makeDuelStep({ id: 'P3_01_untap', act: 'Act 5 / Luis Turn 3', title: 'Untap', phase: 'untap', requiredAction: 'Move to Untap.', exactUiAction: 'Use phase controls → Untap.', legalPreconditions: 'Luis untaps Mountain and Island.', completionCondition: 'Phase Untap.', showMeAnchor: 'phase-controls' }),
+  makeDuelStep({ id: 'P3_02_upkeep', act: 'Act 5 / Luis Turn 3', title: 'Upkeep', phase: 'upkeep', requiredAction: 'Move to Upkeep.', exactUiAction: 'Use phase controls → Upkeep.', legalPreconditions: 'Delver trigger happens at upkeep.', completionCondition: 'Phase Upkeep.', showMeAnchor: 'phase-controls' }),
+  makeDuelStep({ id: 'P3_03_delver_reveal_ponder', act: 'Act 5 / Luis Turn 3', title: 'Reveal Ponder', phase: 'upkeep', sourceCard: 'Delver of Secrets', sourceEffect: 'upkeep reveal trigger', requiredAction: 'Reveal top card for Delver.', exactUiAction: 'Open Library Tools → Reveal top 1.', legalPreconditions: 'Top card is Ponder, a sorcery.', completionCondition: 'Ponder revealed from top library.', showMeAnchor: 'library-menu-button' }),
+  makeDuelStep({ id: 'P3_04_transform_delver', act: 'Act 5 / Luis Turn 3', title: 'Transform Delver', phase: 'upkeep', sourceCard: 'Delver of Secrets', requiredAction: 'Transform Delver into Insectile Aberration.', exactUiAction: 'Open Delver detail → Transform / switch face.', legalPreconditions: 'Ponder was revealed for Delver trigger.', completionCondition: 'Delver face is Insectile Aberration.', showMeAnchor: 'card-detail' }),
+  makeDuelStep({ id: 'P3_05_draw_ponder', act: 'Act 5 / Luis Turn 3', title: 'Draw Ponder', phase: 'draw', requiredAction: 'Move to Draw and draw Ponder.', exactUiAction: 'Phase → Draw → Draw.', legalPreconditions: 'Ponder remains on top after Delver reveal.', completionCondition: 'Ponder moves library → hand.', showMeAnchor: 'library-menu-button' }),
+  makeDuelStep({ id: 'P3_06_main1', act: 'Act 5 / Luis Turn 3', title: 'Main 1', requiredAction: 'Move to Main 1.', exactUiAction: 'Phase controls → Main 1.', legalPreconditions: 'Draw step complete.', completionCondition: 'Phase Main 1.', showMeAnchor: 'phase-controls' }),
+  makeDuelStep({ id: 'P3_07_play_mountain', act: 'Act 5 / Luis Turn 3', title: 'Play Second Mountain', sourceCard: 'Mountain', requiredAction: 'Play second Mountain.', exactUiAction: 'Tap Mountain → Play Land.', legalPreconditions: 'Second Mountain in hand; keep Island untapped for Slip Out next turn.', completionCondition: 'Second Mountain on battlefield.', showMeAnchor: 'hand-area' }),
+  makeDuelStep({ id: 'P3_08_pass', act: 'Act 5 / Luis Turn 3', title: 'Pass Without Ponder', requiredAction: 'Pass.', exactUiAction: 'Tap Pass.', legalPreconditions: 'Island remains untapped; Ponder stays in hand.', completionCondition: 'Pass tapped.', showMeAnchor: 'pass-button' }),
+  makeDuelStep({ id: 'B3_01_bolas_swamp', act: 'Act 6 / Bolas Turn 3', title: 'Bolas Plays Second Swamp', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', sourceCard: 'Swamp', requiredAction: 'Inspect Bolas land play.', exactUiAction: 'Open log/chat.', legalPreconditions: 'Bolas untaps Island and Swamp, then plays second Swamp.', completionCondition: 'Log/chat opened.', showMeAnchor: 'chat-button' }),
+  makeDuelStep({ id: 'B3_02_bolas_doom_blade', act: 'Act 6 / Bolas Turn 3', title: 'Bolas Casts Doom Blade', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', sourceCard: 'Doom Blade', requiredAction: 'Inspect Doom Blade on stack.', exactUiAction: 'Open stack and inspect Doom Blade.', manaPayment: 'Bolas taps Swamp for {B} and Island for {1}.', legalPreconditions: 'Doom Blade in Bolas hand; Insectile Aberration is a legal nonblack creature target.', completionCondition: 'Doom Blade inspected.', showMeAnchor: 'stack-button' }),
+  makeDuelStep({ id: 'B3_03_tap_island_slip', act: 'Act 6 / Bolas Turn 3', title: 'Tap Island for Slip Out', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', sourceCard: 'Island', requiredAction: 'Tap Island for {U}.', exactUiAction: 'Tap Luis’s untapped Island.', manaPayment: 'Island produces {U}.', legalPreconditions: 'Luis kept Island untapped.', completionCondition: 'Island tapped.', showMeAnchor: 'own-battlefield' }),
+  makeDuelStep({ id: 'B3_04_add_u_slip', act: 'Act 6 / Bolas Turn 3', title: 'Add Blue for Slip Out', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', sourceCard: 'Island', requiredAction: 'Add {U}.', exactUiAction: 'Player Counters & Statuses → Mana Pool → +U.', manaPayment: 'Luis mana pool U1.', legalPreconditions: 'Island tapped.', completionCondition: 'Luis mana pool U1.', showMeAnchor: 'mana-pool-panel' }),
+  makeDuelStep({ id: 'B3_05_cast_slip', act: 'Act 6 / Bolas Turn 3', title: 'Cast Slip Out', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', sourceCard: 'Slip Out the Back', requiredAction: 'Cast Slip Out targeting Insectile.', exactUiAction: 'Tap Slip Out → Cast + Target → select Insectile → Done.', manaPayment: '{U} from Island.', legalPreconditions: 'Slip Out in hand; Doom Blade is on stack targeting Insectile.', completionCondition: 'Slip Out on stack targeting Insectile.', showMeAnchor: 'hand-area' }),
+  makeDuelStep({ id: 'B3_06_resolve_slip', act: 'Act 6 / Bolas Turn 3', title: 'Resolve Slip Out', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', sourceCard: 'Slip Out the Back', requiredAction: 'Resolve Slip Out.', exactUiAction: 'Resolve top stack item.', legalPreconditions: 'Slip Out is above Doom Blade on stack.', completionCondition: 'Slip leaves stack.', showMeAnchor: 'stack-panel' }),
+  makeDuelStep({ id: 'B3_07_add_counter', act: 'Act 6 / Bolas Turn 3', title: 'Add +1/+1 Counter', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', sourceCard: 'Slip Out the Back', requiredAction: 'Add +1/+1 counter to Insectile.', exactUiAction: 'Open Insectile detail → add +1/+1 counter.', legalPreconditions: 'Slip Out resolved on Insectile.', completionCondition: 'Insectile has +1/+1 counter.', showMeAnchor: 'card-detail' }),
+  makeDuelStep({ id: 'B3_08_phase_insectile', act: 'Act 6 / Bolas Turn 3', title: 'Phase Out Insectile', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', sourceCard: 'Slip Out the Back', requiredAction: 'Phase out Insectile.', exactUiAction: 'Open Insectile detail → Phase Out.', legalPreconditions: 'Slip Out resolved on Insectile.', completionCondition: 'Insectile phased out.', showMeAnchor: 'card-detail' }),
+  makeDuelStep({ id: 'B3_09_fizzle_doom_blade', act: 'Act 6 / Bolas Turn 3', title: 'Fizzle Doom Blade', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', sourceCard: 'Doom Blade', requiredAction: 'Counter/fizzle Doom Blade.', exactUiAction: 'Open stack → Counter/Fizzle Doom Blade.', legalPreconditions: 'Doom Blade target is phased out and illegal.', completionCondition: 'Doom Blade leaves stack.', showMeAnchor: 'stack-panel' }),
+  makeDuelStep({ id: 'B3_10_add_phase_reminder', act: 'Act 6 / Bolas Turn 3', title: 'Add Phasing Reminder', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', sourceCard: 'Slip Out the Back', requiredAction: 'Add reminder “Phased out — returns at your next untap.”', exactUiAction: 'Open Insectile → Add Reminder.', legalPreconditions: 'Insectile is phased out.', completionCondition: 'Reminder added.', showMeAnchor: 'card-detail' }),
+  makeDuelStep({ id: 'B3_11_bolas_pass', act: 'Act 6 / Bolas Turn 3', title: 'Bolas Passes', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', requiredAction: 'Tap Pass.', exactUiAction: 'Tap Pass.', legalPreconditions: 'Stack empty after Doom Blade fizzles.', completionCondition: 'Pass tapped.', showMeAnchor: 'pass-button' }),
+  makeDuelStep({ id: 'P4_01_untap_phase_in', act: 'Act 7 / Luis Turn 4', title: 'Untap and Phase In', phase: 'untap', sourceCard: 'Phasing rules', requiredAction: 'Move to Untap and phase Insectile back in.', exactUiAction: 'Phase → Untap; open Insectile → toggle Phase Out off if needed.', legalPreconditions: 'Phased-out permanents phase in during their controller’s untap.', completionCondition: 'Insectile is phased in.', showMeAnchor: 'phase-controls' }),
+  makeDuelStep({ id: 'P4_02_draw_mountain', act: 'Act 7 / Luis Turn 4', title: 'Draw Mountain', phase: 'draw', requiredAction: 'Move to Draw and draw.', exactUiAction: 'Phase → Draw → Draw.', legalPreconditions: 'Expected draw is Mountain.', completionCondition: 'Draw action.', showMeAnchor: 'library-menu-button' }),
+  makeDuelStep({ id: 'P4_03_main1', act: 'Act 7 / Luis Turn 4', title: 'Main 1', requiredAction: 'Move to Main 1.', exactUiAction: 'Phase → Main 1.', legalPreconditions: 'Draw complete.', completionCondition: 'Phase Main 1.', showMeAnchor: 'phase-controls' }),
+  makeDuelStep({ id: 'P4_04_play_third_mountain', act: 'Act 7 / Luis Turn 4', title: 'Play Third Mountain', sourceCard: 'Mountain', requiredAction: 'Play third Mountain.', exactUiAction: 'Tap Mountain → Play Land.', legalPreconditions: 'Mountain in hand.', completionCondition: 'Third Mountain on battlefield.', showMeAnchor: 'hand-area' }),
+  makeDuelStep({ id: 'P4_05_cast_ponder', act: 'Act 7 / Luis Turn 4', title: 'Cast Ponder', sourceCard: 'Ponder', requiredAction: 'Tap Island, add U, cast Ponder, resolve Ponder.', exactUiAction: 'Tap Island → +U → open Ponder → Cast Spell → Resolve.', manaPayment: '{U}: Island.', legalPreconditions: 'Ponder in hand; Island available.', completionCondition: 'Ponder resolved.', showMeAnchor: 'hand-area' }),
+  makeDuelStep({ id: 'P4_06_reorder_ponder', act: 'Act 7 / Luis Turn 4', title: 'Reorder Top Cards', sourceCard: 'Ponder', requiredAction: 'Reorder your top cards.', exactUiAction: 'Open Library Tools → Reorder Top.', legalPreconditions: 'Ponder resolved and allows top-card manipulation.', completionCondition: 'Top cards reordered.', showMeAnchor: 'library-menu-button' }),
+  makeDuelStep({ id: 'P4_07_draw_ponder', act: 'Act 7 / Luis Turn 4', title: 'Draw from Ponder', sourceCard: 'Ponder', requiredAction: 'Draw one card from Ponder.', exactUiAction: 'Use Draw.', legalPreconditions: 'Ponder reorder completed.', completionCondition: 'Draw action.', showMeAnchor: 'library-menu-button' }),
+  makeDuelStep({ id: 'P4_08_begin_combat', act: 'Act 7 / Luis Turn 4', title: 'Beginning of Combat', phase: 'combat_begin', requiredAction: 'Move to Beginning of Combat.', exactUiAction: 'Phase → Beginning of Combat.', legalPreconditions: 'Main 1 complete and stack empty.', completionCondition: 'Phase Begin Combat.', showMeAnchor: 'phase-controls' }),
+  makeDuelStep({ id: 'P4_09_attackers_step', act: 'Act 7 / Luis Turn 4', title: 'Attackers Step', phase: 'combat_attackers', requiredAction: 'Move to Attackers step.', exactUiAction: 'Phase → Declare Attackers.', legalPreconditions: 'Beginning of Combat complete.', completionCondition: 'Phase Attackers.', showMeAnchor: 'phase-controls' }),
+  makeDuelStep({ id: 'P4_10_attack_bolas', act: 'Act 7 / Luis Turn 4', title: 'Attack Bolas with Insectile', phase: 'combat_attackers', sourceCard: 'Insectile Aberration', requiredAction: 'Declare Insectile attacking Nicol Bolas.', exactUiAction: 'Tap Insectile → Attack → choose Nicol Bolas.', legalPreconditions: 'Insectile has been controlled since previous turn, is phased in, has flying, and Knight cannot block flying.', completionCondition: 'Insectile marked attacking Bolas.', showMeAnchor: 'own-battlefield' }),
+  makeDuelStep({ id: 'P4_11_combat_summary', act: 'Act 7 / Luis Turn 4', title: 'Inspect Combat Summary', phase: 'combat_attackers', sourceCard: 'Combat assignment', requiredAction: 'Open Combat Summary.', exactUiAction: 'Open Combat Summary.', legalPreconditions: 'Insectile attacking Bolas; no blockers.', completionCondition: 'Combat Summary opened.', showMeAnchor: 'combat-summary' }),
+  makeDuelStep({ id: 'P4_12_regular_damage', act: 'Act 7 / Luis Turn 4', title: 'Regular Combat Damage', phase: 'combat_damage', sourceCard: 'Combat rules', requiredAction: 'Set Regular Combat Damage.', exactUiAction: 'Set damage step to Regular Combat Damage.', legalPreconditions: 'No first/double strike combatants in this combat.', completionCondition: 'Regular combat damage active.', showMeAnchor: 'combat-summary' }),
+  makeDuelStep({ id: 'P4_13_apply_insectile_damage', act: 'Act 7 / Luis Turn 4', title: 'Apply Combat Damage', phase: 'combat_damage', sourceCard: 'Insectile Aberration', requiredAction: 'Apply Insectile combat damage to Nicol Bolas.', exactUiAction: 'Use the guided damage application / adjust Bolas life to 13.', legalPreconditions: 'Insectile is 4 power because of +1/+1 counter; unblocked.', completionCondition: 'Bolas life is 13.', showMeAnchor: 'opponent-player-target', expectedLifeTotals: { bolasBefore: 17, bolasAfter: 13 }, expectedDamage: 'Insectile Aberration deals 4 combat damage to Nicol Bolas.' }),
+  makeDuelStep({ id: 'P4_14_end_combat', act: 'Act 7 / Luis Turn 4', title: 'End Combat', phase: 'combat_end', requiredAction: 'Move to End Combat.', exactUiAction: 'Phase → End Combat.', legalPreconditions: 'Combat damage applied and logged.', completionCondition: 'Phase End Combat.', showMeAnchor: 'phase-controls' }),
+  makeDuelStep({ id: 'P4_15_pass', act: 'Act 7 / Luis Turn 4', title: 'Pass Turn', requiredAction: 'Pass.', exactUiAction: 'Tap Pass.', legalPreconditions: 'Stack empty.', completionCondition: 'Pass tapped.', showMeAnchor: 'pass-button' }),
+  makeDuelStep({ id: 'B4_01_bolas_untaps', act: 'Act 8 / Bolas Turn 4', title: 'Bolas Untaps', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', phase: 'untap', sourceCard: 'Chapter snapshot', requiredAction: 'Inspect legal snapshot log.', exactUiAction: 'Open log/chat.', legalPreconditions: 'Snapshot logs Luis played Forest, cast Llanowar Elves, and both players passed to Bolas combat.', completionCondition: 'Log opened.', showMeAnchor: 'chat-button' }),
+  makeDuelStep({ id: 'B4_02_bolas_combat', act: 'Act 8 / Bolas Turn 4', title: 'Bolas Moves to Combat', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', phase: 'combat_begin', requiredAction: 'Open Combat Summary.', exactUiAction: 'Open Combat Summary.', legalPreconditions: 'Bolas moves through beginning of combat to attackers.', completionCondition: 'Combat Summary opened.', showMeAnchor: 'combat-summary' }),
+  makeDuelStep({ id: 'B4_03_knight_attacks', act: 'Act 8 / Bolas Turn 4', title: 'Knight Attacks Luis', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', phase: 'combat_attackers', sourceCard: 'Knight of Malice', requiredAction: 'Inspect Knight attacking Luis.', exactUiAction: 'Inspect Combat Summary.', legalPreconditions: 'Knight has been controlled since a prior turn and can attack.', completionCondition: 'Combat Summary shows Knight attacking Luis.', showMeAnchor: 'combat-summary' }),
+  makeDuelStep({ id: 'B4_04_block_with_llanowar', act: 'Act 8 / Bolas Turn 4', title: 'Block with Llanowar', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', phase: 'combat_blockers', sourceCard: 'Llanowar Elves', requiredAction: 'Declare Llanowar blocking Knight of Malice.', exactUiAction: 'Tap Llanowar Elves → Block → choose attacking Knight.', legalPreconditions: 'Luis is defending player; Llanowar is untapped and can block.', completionCondition: 'Llanowar blocks Knight.', showMeAnchor: 'own-battlefield' }),
+  makeDuelStep({ id: 'B4_05_first_strike_damage', act: 'Act 8 / Bolas Turn 4', title: 'First Strike Damage', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', phase: 'combat_damage', sourceCard: 'Knight of Malice', requiredAction: 'Set First Strike Damage.', exactUiAction: 'Set damage step to First Strike Damage.', legalPreconditions: 'Knight of Malice has first strike.', completionCondition: 'First Strike Damage active.', showMeAnchor: 'combat-summary' }),
+  makeDuelStep({ id: 'B4_06_mark_llanowar_damage', act: 'Act 8 / Bolas Turn 4', title: 'Mark Lethal Damage', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', phase: 'combat_damage', sourceCard: 'Knight of Malice', requiredAction: 'Add 2 temporary damage to Llanowar Elves.', exactUiAction: 'Open Llanowar → add 2 temporary damage.', legalPreconditions: 'Knight deals first-strike damage before Llanowar can deal regular damage.', completionCondition: 'Llanowar has 2 damage marked.', showMeAnchor: 'card-detail', expectedDamage: 'Knight of Malice deals 2 first-strike damage to Llanowar Elves.' }),
+  makeDuelStep({ id: 'B4_07_llanowar_graveyard', act: 'Act 8 / Bolas Turn 4', title: 'Move Llanowar to Graveyard', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', phase: 'combat_damage', sourceCard: 'State-based actions', requiredAction: 'Move Llanowar Elves to graveyard.', exactUiAction: 'Open Llanowar → Move to Graveyard.', legalPreconditions: 'Llanowar is 1/1 with 2 damage marked; lethal damage destroys it.', completionCondition: 'Llanowar zone battlefield → graveyard.', showMeAnchor: 'card-detail', expectedDamage: 'Llanowar Elves is destroyed by lethal damage.' }),
+  makeDuelStep({ id: 'B4_08_regular_damage', act: 'Act 8 / Bolas Turn 4', title: 'Regular Damage', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', phase: 'combat_damage', sourceCard: 'Combat rules', requiredAction: 'Set Regular Damage.', exactUiAction: 'Set Regular Damage.', legalPreconditions: 'Llanowar is gone and deals no regular damage.', completionCondition: 'Regular Damage active.', showMeAnchor: 'combat-summary' }),
+  makeDuelStep({ id: 'B4_09_bolas_pass', act: 'Act 8 / Bolas Turn 4', title: 'Bolas Passes', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', requiredAction: 'Tap Pass.', exactUiAction: 'Tap Pass.', legalPreconditions: 'Combat complete and stack empty.', completionCondition: 'Pass tapped.', showMeAnchor: 'pass-button' }),
+  ...TUTORIAL_TOOL_SOURCES.map(([id, act, title, sourceCard, exactUiAction, manaPayment, completionCondition, showMeAnchor]) => makeDuelStep({ id, act, title, sourceCard, requiredAction: title, exactUiAction, manaPayment, legalPreconditions: `${sourceCard} is in the specified zone, visible mana/payment exists, and the log records the chapter snapshot before the tool is used.`, completionCondition, showMeAnchor })),
+  makeDuelStep({ id: 'F1_tap_mountain_bolt', act: 'Act 10 / Final Stack Lesson', title: 'Tap Mountain for Final Bolt', sourceCard: 'Mountain', requiredAction: 'Tap one Mountain for {R}.', exactUiAction: 'Tap an untapped Mountain.', manaPayment: 'Mountain produces {R}.', legalPreconditions: 'Bolas life is exactly 3; Luis controls three untapped Mountains; stack empty.', completionCondition: 'One Mountain tapped.', showMeAnchor: 'own-battlefield', expectedLifeTotals: { bolasBefore: 3 } }),
+  makeDuelStep({ id: 'F2_add_r', act: 'Act 10 / Final Stack Lesson', title: 'Add Red for Bolt', sourceCard: 'Mountain', requiredAction: 'Add {R}.', exactUiAction: 'Player Counters & Statuses → Mana Pool → +R.', manaPayment: 'Luis mana pool R1.', legalPreconditions: 'One Mountain tapped for red.', completionCondition: 'Mana pool R1.', showMeAnchor: 'mana-pool-panel' }),
+  makeDuelStep({ id: 'F3_cast_bolt_bolas', act: 'Act 10 / Final Stack Lesson', title: 'Cast Final Bolt', sourceCard: 'Lightning Bolt', requiredAction: 'Cast Lightning Bolt targeting Nicol Bolas.', exactUiAction: 'Open Lightning Bolt → Cast + Target → select Nicol Bolas → Done.', manaPayment: '{R} from Mountain.', legalPreconditions: 'Lightning Bolt in Luis hand; Nicol Bolas is a legal player target at 3 life.', completionCondition: 'Lightning Bolt on stack targeting Bolas.', showMeAnchor: 'hand-area' }),
+  makeDuelStep({ id: 'F4_bolas_negate_real_mana', act: 'Act 10 / Final Stack Lesson', title: 'Bolas Casts Negate with Real Mana', turnOwner: 'Nicol Bolas', activePlayer: 'Luis', sourceCard: 'Negate', requiredAction: 'Inspect Negate on stack.', exactUiAction: 'Open stack and inspect Negate.', manaPayment: 'Bolas taps Island for {U} and Swamp for {1}.', legalPreconditions: 'Negate in Bolas hand; Island and Swamp untapped; Lightning Bolt is a noncreature spell on stack.', completionCondition: 'Negate inspected on stack.', showMeAnchor: 'stack-button' }),
+  makeDuelStep({ id: 'F5_tap_two_mountains', act: 'Act 10 / Final Stack Lesson', title: 'Tap Two Mountains for Reverberate', sourceCard: 'Mountain', requiredAction: 'Tap two Mountains.', exactUiAction: 'Tap the remaining two untapped Mountains.', manaPayment: 'Two Mountains produce {R}{R}.', legalPreconditions: 'Luis has two untapped Mountains remaining.', completionCondition: 'Two more Mountains tapped.', showMeAnchor: 'own-battlefield' }),
+  makeDuelStep({ id: 'F6_add_rr', act: 'Act 10 / Final Stack Lesson', title: 'Add RR', sourceCard: 'Mountain', requiredAction: 'Add {R}{R}.', exactUiAction: 'Press +R twice in mana pool.', manaPayment: 'Luis mana pool has RR for Reverberate.', legalPreconditions: 'Two Mountains tapped for red.', completionCondition: 'Mana pool has RR for Reverberate.', showMeAnchor: 'mana-pool-panel' }),
+  makeDuelStep({ id: 'F7_reverberate_bolt', act: 'Act 10 / Final Stack Lesson', title: 'Cast Reverberate Targeting Bolt', sourceCard: 'Reverberate', requiredAction: 'Cast Reverberate targeting Lightning Bolt.', exactUiAction: 'Open Reverberate → Cast + Target → target Lightning Bolt on stack → Done.', manaPayment: '{R}{R} from two Mountains.', legalPreconditions: 'Reverberate in Luis hand; Lightning Bolt instant spell is on stack.', completionCondition: 'Reverberate on stack targeting Lightning Bolt.', showMeAnchor: 'hand-area' }),
+  makeDuelStep({ id: 'F8_resolve_reverberate', act: 'Act 10 / Final Stack Lesson', title: 'Resolve Reverberate', sourceCard: 'Reverberate', requiredAction: 'Resolve Reverberate.', exactUiAction: 'Resolve top stack item.', legalPreconditions: 'Reverberate is on top of stack targeting Lightning Bolt.', completionCondition: 'Lightning Bolt copy exists on stack targeting Nicol Bolas.', showMeAnchor: 'stack-panel' }),
+  makeDuelStep({ id: 'F9_resolve_bolt_copy_lethal', act: 'Act 10 / Final Stack Lesson', title: 'Resolve Bolt Copy for Lethal', sourceCard: 'Lightning Bolt copy', requiredAction: 'Resolve Lightning Bolt copy.', exactUiAction: 'Resolve top Lightning Bolt copy.', legalPreconditions: 'Bolas life is 3 and copy targets Nicol Bolas.', completionCondition: 'Bolas life <= 0; log says Nicol Bolas is defeated.', showMeAnchor: 'stack-panel', expectedLifeTotals: { bolasBefore: 3, bolasAfter: 0 }, expectedDamage: 'Lightning Bolt copy deals 3 damage to Nicol Bolas.' }),
+  makeDuelStep({ id: 'F10_resolve_negate_original', act: 'Act 10 / Final Stack Lesson', title: 'Resolve Negate and Original Bolt', sourceCard: 'Negate', requiredAction: 'Resolve remaining stack.', exactUiAction: 'Resolve Negate; it counters original Lightning Bolt.', legalPreconditions: 'Copy has already dealt lethal; Negate still targets original Lightning Bolt.', completionCondition: 'Stack empty; original Bolt in graveyard; Negate in Bolas graveyard.', showMeAnchor: 'stack-panel' }),
+  makeDuelStep({ id: 'F11_victory_complete', act: 'Act 10 / Final Stack Lesson', title: 'Victory: Nicol Bolas Defeated', sourceCard: 'Lightning Bolt copy', requiredAction: 'Inspect final log and finish tutorial.', exactUiAction: 'Open log/chat, then Finish Tutorial.', legalPreconditions: 'Bolas life <= 0; stack empty; log includes “Nicol Bolas is defeated.”', completionCondition: 'Victory/tutorial-complete screen appears only after Bolas life <= 0.', showMeAnchor: 'chat-button', completion: 'finish' })
+];
+
+const TUTORIAL_SCRIPT_STEPS = withTutorialRules(TUTORIAL_DUEL_STEPS);
 validateTutorialScriptRules(TUTORIAL_SCRIPT_STEPS);
 const TUTORIAL_LOBBY_SCENES = [
   { id: 'name', completion: 'NAME_CONFIRMED', title: 'L0 — Name Yourself', scene: 'The lobby darkens like a summoning circle.', dialogue: 'Before a duel can wound you, it must know what to call you.', objective: 'Tap your name field and confirm the name you will use in the duel.', hint: 'Do it now: focus or edit Your Name. The name must not be empty.', anchor: 'lobby-name-input', reaction: 'Good. Now the room knows what to blame.' },
@@ -627,22 +752,63 @@ const TUTORIAL_STARTER_CARD_SEED = [
   { name: 'Nicol Bolas, Planeswalker', mana_cost: '{4}{U}{B}{B}{R}', type_line: 'Legendary Planeswalker — Bolas', oracle_text: '+3: Destroy target noncreature permanent. −2: Gain control of target creature. −9: Nicol Bolas, Planeswalker deals 7 damage to target player. That player discards seven cards, then sacrifices seven permanents.', colors: ['U', 'B', 'R'], color_identity: ['U', 'B', 'R'], loyalty: '5' },
   { name: 'Negate', mana_cost: '{1}{U}', type_line: 'Instant', oracle_text: 'Counter target noncreature spell.', colors: ['U'], color_identity: ['U'] },
   { name: 'Doom Blade', mana_cost: '{1}{B}', type_line: 'Instant', oracle_text: 'Destroy target nonblack creature.', colors: ['B'], color_identity: ['B'] },
-  { name: 'Zombie Token', type_line: 'Token Creature — Zombie', oracle_text: '', colors: ['B'], color_identity: ['B'], power: '2', toughness: '2' }
+  { name: 'Zombie Token', type_line: 'Token Creature — Zombie', oracle_text: '', colors: ['B'], color_identity: ['B'], power: '2', toughness: '2' },
+  { name: 'Swamp', type_line: 'Basic Land — Swamp', oracle_text: '({T}: Add {B}.)', color_identity: ['B'] },
+  { name: 'Plains', type_line: 'Basic Land — Plains', oracle_text: '({T}: Add {W}.)', color_identity: ['W'] },
+  { name: 'Knight of Malice', mana_cost: '{1}{B}', type_line: 'Creature — Human Knight', oracle_text: 'First strike, hexproof from white. Knight of Malice gets +1/+0 as long as any player controls a white permanent.', colors: ['B'], color_identity: ['B'], power: '2', toughness: '2' },
+  { name: 'Vraska’s Fall', mana_cost: '{2}{B}', type_line: 'Instant', oracle_text: 'Each opponent sacrifices a creature or planeswalker and gets a poison counter.', colors: ['B'], color_identity: ['B'] },
+  { name: 'Cancel', mana_cost: '{1}{U}{U}', type_line: 'Instant', oracle_text: 'Counter target spell.', colors: ['U'], color_identity: ['U'] },
+  { name: 'Bonecrusher Giant', mana_cost: '{2}{R}', type_line: 'Creature — Giant', oracle_text: 'Stomp deals 2 damage to any target. Damage can’t be prevented this turn.', colors: ['R'], color_identity: ['R'], power: '4', toughness: '3' },
+  { name: 'Gitaxian Probe', mana_cost: '{U/P}', type_line: 'Sorcery', oracle_text: 'Look at target player’s hand. Draw a card.', colors: ['U'], color_identity: ['U'] },
+  { name: 'Open-Book Hex', mana_cost: '{U}', type_line: 'Sorcery', oracle_text: 'Target opponent reveals their hand.', colors: ['U'], color_identity: ['U'] },
+  { name: 'Mirror-Cell Experiment', mana_cost: '{2}', type_line: 'Sorcery', oracle_text: 'Create a 0/1 colorless Reflection artifact creature token.', colors: [], color_identity: [] },
+  { name: 'Opt', mana_cost: '{U}', type_line: 'Instant', oracle_text: 'Scry 1. Draw a card.', colors: ['U'], color_identity: ['U'] },
+  { name: 'Consider', mana_cost: '{U}', type_line: 'Instant', oracle_text: 'Surveil 1. Draw a card.', colors: ['U'], color_identity: ['U'] },
+  { name: 'Praetor’s Grasp', mana_cost: '{1}{B}{B}', type_line: 'Sorcery', oracle_text: 'Search target opponent’s library for a card and exile it face down.', colors: ['B'], color_identity: ['B'] },
+  { name: 'Thought Scour', mana_cost: '{U}', type_line: 'Instant', oracle_text: 'Target player mills two cards. Draw a card.', colors: ['U'], color_identity: ['U'] },
+  { name: 'Light Up the Stage', mana_cost: '{2}{R}', type_line: 'Sorcery', oracle_text: 'Exile the top two cards of your library. Until the end of your next turn, you may play those cards.', colors: ['R'], color_identity: ['R'] },
+  { name: 'Throne of the High City', type_line: 'Land', oracle_text: '{T}: Add {C}. {4}, {T}, Sacrifice Throne of the High City: You become the monarch.', color_identity: [] },
+  { name: 'The Celestus', mana_cost: '{3}', type_line: 'Legendary Artifact', oracle_text: 'If it is neither day nor night, it becomes day as The Celestus enters the battlefield.', colors: [], color_identity: [] },
+  { name: 'Birthday Escape', mana_cost: '{U}', type_line: 'Sorcery', oracle_text: 'Draw a card. The Ring tempts you.', colors: ['U'], color_identity: ['U'] },
+  { name: 'Attune with Aether', mana_cost: '{G}', type_line: 'Sorcery', oracle_text: 'Search your library for a basic land card, reveal it, put it into your hand, then shuffle. You get {E}{E}.', colors: ['G'], color_identity: ['G'] },
+  { name: 'Nadaar, Selfless Paladin', mana_cost: '{2}{W}', type_line: 'Legendary Creature — Dragon Knight', oracle_text: 'Vigilance. When Nadaar enters the battlefield, venture into the dungeon.', colors: ['W'], color_identity: ['W'], power: '3', toughness: '3' },
+  { name: 'Ezuri, Claw of Progress', mana_cost: '{2}{G}{U}', type_line: 'Legendary Creature — Phyrexian Elf Warrior', oracle_text: 'Whenever a creature with power 2 or less enters the battlefield under your control, you get an experience counter.', colors: ['G', 'U'], color_identity: ['G', 'U'], power: '3', toughness: '3' },
+  { name: 'Chandra, Torch of Defiance', mana_cost: '{2}{R}{R}', type_line: 'Legendary Planeswalker — Chandra', oracle_text: '−7: You get an emblem with “Whenever you cast a spell, this emblem deals 5 damage to any target.”', colors: ['R'], color_identity: ['R'], loyalty: '4' },
+  { name: 'Tendershoot Dryad', mana_cost: '{4}{G}', type_line: 'Creature — Dryad', oracle_text: 'Ascend. At the beginning of each upkeep, create a 1/1 green Saproling creature token.', colors: ['G'], color_identity: ['G'], power: '2', toughness: '2' }
 ];
 
-const buildTutorialStarterCards = (playerId) => TUTORIAL_STARTER_CARD_SEED.map((card, index) => sanitizeScryfallCardForGame(card, {
-  id: `tutorial-seed-${card.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
-  instanceId: generateCardId(),
-  ownerId: playerId,
-  controllerId: playerId,
-  zone: index < 7 ? ZONES.HAND : ZONES.LIBRARY,
-  tapped: false,
-  counters: {},
-  tempDamage: 0,
-  faceDown: false,
-  x: 5 + (index * 5),
-  y: 5
-}));
+const getTutorialSeedByName = (cardName) => {
+  const safeName = String(cardName || 'Tutorial Card');
+  return TUTORIAL_STARTER_CARD_SEED.find((card) => card.name === safeName || card.card_faces?.some((face) => face?.name === safeName)) || { name: safeName, type_line: 'Card', oracle_text: '', layout: 'normal' };
+};
+
+const buildTutorialCardsForZoneList = (cardNames, ownerId, zone, controllerId = ownerId, idPrefix = 'tutorial') => cardNames.map((cardName, index) => {
+  const seed = getTutorialSeedByName(cardName);
+  return sanitizeScryfallCardForGame(seed, {
+    id: `${idPrefix}-${seed.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${index}`,
+    instanceId: generateCardId(),
+    ownerId,
+    controllerId,
+    zone,
+    tapped: false,
+    counters: {},
+    tempDamage: 0,
+    faceDown: false,
+    x: 5 + (index * 5),
+    y: 5
+  });
+});
+
+const buildTutorialStarterCards = (playerId) => [
+  ...buildTutorialCardsForZoneList(TUTORIAL_OPENING_HAND_LUIS, playerId, ZONES.HAND, playerId, 'tutorial-luis-hand'),
+  ...buildTutorialCardsForZoneList(TUTORIAL_LIBRARY_LUIS, playerId, ZONES.LIBRARY, playerId, 'tutorial-luis-library')
+];
+
+const buildTutorialDuelCards = (playerId, bolasId) => [
+  ...buildTutorialStarterCards(playerId),
+  ...buildTutorialCardsForZoneList(TUTORIAL_OPENING_HAND_BOLAS, bolasId, ZONES.HAND, bolasId, 'tutorial-bolas-hand'),
+  ...buildTutorialCardsForZoneList(TUTORIAL_LIBRARY_BOLAS, bolasId, ZONES.LIBRARY, bolasId, 'tutorial-bolas-library')
+];
 
 const hydrateTutorialCardPreviewData = (card = {}) => {
   const seed = TUTORIAL_STARTER_CARD_SEED.find((candidate) => candidate.name === card.name || candidate.card_faces?.some((face) => face?.name === card.name || card.card_faces?.some((cardFace) => cardFace?.name === face?.name)));
@@ -2353,6 +2519,57 @@ const buildCopiedStackItem = (item = {}) => {
     if (item[field] !== undefined && item[field] !== null) copiedItem[field] = item[field];
   });
   return copiedItem;
+};
+
+const applyTutorialResolutionEffect = ({ currentGame, topItem, actionType, currentStack, updatedCards, currentPlayers, userId, buildLogEntry }) => {
+  if (!currentGame?.isTutorial || actionType !== 'RESOLVE_STACK_TOP' || !topItem) return { players: currentPlayers, stack: currentStack, cards: updatedCards, extraLogEntries: [], cardsChanged: false };
+  const itemName = String(topItem.name || '').replace(/\s*\(copy\)$/i, '');
+  const extraLogEntries = [];
+  let nextPlayers = currentPlayers.map((player) => ({ ...player }));
+  let nextCards = updatedCards;
+  let cardsChanged = false;
+  const addLog = (message, extra = {}) => extraLogEntries.push(buildLogEntry(message, extra));
+  const findPlayerIndex = (pattern) => nextPlayers.findIndex((player) => pattern.test(player?.name || ''));
+  const bolasIndex = findPlayerIndex(/Nicol Bolas/i);
+  const luisIndex = nextPlayers.findIndex((player) => player?.id === userId);
+  const damagePlayer = (playerIndex, amount, sourceLabel) => {
+    if (playerIndex < 0) return;
+    const before = Number(nextPlayers[playerIndex].life ?? 0);
+    const after = before - amount;
+    nextPlayers[playerIndex] = { ...nextPlayers[playerIndex], life: after };
+    addLog(`${sourceLabel} deals ${amount} damage to ${nextPlayers[playerIndex].name}. ${nextPlayers[playerIndex].name} goes to ${after}.`, { damage: amount, lifeBefore: before, lifeAfter: after, targetPlayerId: nextPlayers[playerIndex].id });
+    if (/Nicol Bolas/i.test(nextPlayers[playerIndex].name || '') && after <= 0) addLog('Nicol Bolas is defeated.', { defeatedPlayerId: nextPlayers[playerIndex].id });
+  };
+  if (itemName === 'Lightning Bolt') {
+    const sourceLabel = topItem.isCopy ? 'Lightning Bolt copy' : 'Lightning Bolt';
+    const targetsBolas = (topItem.targetPlayerIds || []).some((targetId) => nextPlayers[targetId]?.name || targetId) || /Nicol Bolas/i.test(JSON.stringify(topItem.targets || []));
+    damagePlayer(targetsBolas || bolasIndex >= 0 ? bolasIndex : luisIndex, 3, sourceLabel);
+  }
+  if (itemName === 'Reverberate') {
+    const originalBolt = [...currentStack].reverse().find((item) => String(item?.name || '').replace(/\s*\(copy\)$/i, '') === 'Lightning Bolt' && !item?.isCopy);
+    if (originalBolt) {
+      currentStack.push({ ...buildCopiedStackItem(originalBolt), targetPlayerIds: originalBolt.targetPlayerIds || [], targets: originalBolt.targets || [] });
+      addLog('Reverberate resolves and creates a Lightning Bolt copy targeting Nicol Bolas.', { copiedFromName: 'Lightning Bolt' });
+    }
+  }
+  if (itemName === 'Negate') {
+    const originalIndex = currentStack.findLastIndex?.((item) => String(item?.name || '') === 'Lightning Bolt') ?? currentStack.map((item) => String(item?.name || '')).lastIndexOf('Lightning Bolt');
+    if (originalIndex >= 0) {
+      const [countered] = currentStack.splice(originalIndex, 1);
+      const cardIndex = nextCards.findIndex((card) => card.instanceId === countered.sourceId);
+      if (cardIndex >= 0) {
+        nextCards = [...nextCards];
+        nextCards[cardIndex] = { ...nextCards[cardIndex], zone: ZONES.GRAVEYARD, tapped: false };
+        cardsChanged = true;
+      }
+      addLog('Negate counters the original Lightning Bolt.', { cardName: 'Lightning Bolt' });
+    }
+  }
+  if (itemName === 'Slip Out the Back') {
+    addLog('Slip Out the Back resolves: Insectile Aberration gets a +1/+1 counter and phases out.', { cardName: 'Slip Out the Back' });
+  }
+  if (itemName === 'Doom Blade') addLog('Doom Blade fizzles because its target is phased out.', { cardName: 'Doom Blade' });
+  return { players: nextPlayers, stack: currentStack, cards: nextCards, extraLogEntries, cardsChanged };
 };
 
 const buildGameLogEntry = ({ currentGame, playerId, playerName, type, category, message, timestamp = Date.now(), ...extra }) => ({
@@ -4836,7 +5053,7 @@ const TutorialOverlay = ({ game, currentStep, activeAnchor = null, canGoBack, is
   }, [tutorialAnchor]);
 
   if (!game?.isTutorial || game?.tutorial?.inactive) return null;
-  const isFinishedStep = safeCurrentStep.id === 'tutorial_complete';
+  const isFinishedStep = ['tutorial_complete', 'F11_victory_complete'].includes(safeCurrentStep.id);
   const stepNumber = getTutorialStepIndex(safeCurrentStep.id) + 1;
   const isActionStep = ['detect', 'detect-or-manual'].includes(safeCurrentStep.completion);
 
@@ -5124,7 +5341,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const isTutorialGame = Boolean(game?.isTutorial && !displayedTutorialState?.inactive);
   const currentTutorialStep = isTutorialGame ? getTutorialStepById(displayedTutorialState?.stepId || 'intro') : null;
   const currentTutorialAnchor = (() => {
-    if (targetingState && ['cast_spell_to_stack', 'final_spell'].includes(currentTutorialStep?.id)) return 'opponent-player-target';
+    if (targetingState && ['cast_spell_to_stack', 'final_spell', 'P1_08_target_bolas', 'F3_cast_bolt_bolas'].includes(currentTutorialStep?.id)) return 'opponent-player-target';
     if (targetingState && currentTutorialStep?.id === 'target_system') return 'target-tools';
     return currentTutorialStep?.anchor || null;
   })();
@@ -5309,6 +5526,15 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
   const advanceTutorialStepFrom = (expectedStepId, { markCompleted = true, finish = false, actionLabel = 'advance', bypassMinimumDelay = false } = {}) => {
     if (!isTutorialGame || !expectedStepId) return Promise.resolve(false);
+    if (finish) {
+      const bolasLife = Number((game?.players || []).find((player) => /Nicol Bolas/i.test(player?.name || ''))?.life ?? 20);
+      const stackEmpty = (game?.stack || []).length === 0;
+      const defeatLogged = (game?.log || []).some((entry) => /Nicol Bolas is defeated/i.test(entry?.message || ''));
+      if (bolasLife > 0 || !stackEmpty || !defeatLogged) {
+        setTutorialOverlayError('Finish is locked until Nicol Bolas is mechanically at 0 or less, the stack is empty, and the defeat is logged.');
+        return Promise.resolve(false);
+      }
+    }
     const liveStepId = (optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.stepId || 'intro';
     if (liveStepId !== expectedStepId) return Promise.resolve(false);
     const performAdvance = () => {
@@ -5424,26 +5650,26 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     if (!activation || activation.stepId !== stepId) return ignoreActionCompletion('step not armed after activation');
     if (eventAt < activation.enteredAt) return ignoreActionCompletion('action before step activation');
     const actionStepMap = {
-      DRAW_CARD: ['beginning_phase_draw'],
-      PLAY_LAND: ['play_land', 'replay_mountain'],
-      UNDO_LAST_ACTION: ['undo_play_land'],
-      CAST_SPELL: ['cast_spell_to_stack', 'cast_delver', 'final_spell'],
-      COPY_STACK_ITEM: ['copy_stack_item', 'final_in_response'],
-      RESOLVE_STACK_TOP: ['resolve_stack_item', 'counter_stack_item', 'cast_delver', 'final_in_response'],
-      COUNTER_STACK_TOP: ['counter_stack_item', 'final_in_response'],
-      PASS_PRIORITY: ['pass_priority', 'final_trial', 'async_oath'],
-      MANUAL_SET_STEP: payload?.phaseId === 'combat_attackers' ? ['set_attackers_phase'] : [],
-      SET_COMBAT_DAMAGE_STEP: payload?.combatDamageStep === COMBAT_DAMAGE_STEPS.FIRST_STRIKE ? ['first_strike_step'] : (payload?.combatDamageStep === COMBAT_DAMAGE_STEPS.REGULAR ? ['regular_damage_step'] : []),
-      SET_ATTACK_TARGET: ['declare_attacker_player', 'attack_planeswalker_battle_note'],
-      TOGGLE_BLOCK_TARGET: ['declare_blocker_note'],
-      TAP_TOGGLE: ['tap_mountain_red', 'tap_card'],
-      TEMP_DAMAGE: ['damage_markers'],
-      MOD_COUNTER: ['add_counter'],
-      ADD_CARD_REMINDER: ['add_reminder'],
-      PHASE_TOGGLE: ['phase_card'],
-      SWITCH_CARD_FACE: ['transform_card', 'face_down_reveal'],
+      DRAW_CARD: ['beginning_phase_draw', 'P2_02_draw_slip', 'P3_05_draw_ponder', 'P4_02_draw_mountain', 'P4_07_draw_ponder'],
+      PLAY_LAND: ['play_land', 'replay_mountain', 'P1_01_play_mountain', 'P1_03_replay_mountain', 'P2_04_play_island', 'P3_07_play_mountain', 'P4_04_play_third_mountain'],
+      UNDO_LAST_ACTION: ['undo_play_land', 'P1_02_undo_mountain'],
+      CAST_SPELL: ['cast_spell_to_stack', 'cast_delver', 'final_spell', 'P1_08_target_bolas', 'P2_08_cast_delver', 'B3_05_cast_slip', 'F3_cast_bolt_bolas', 'F7_reverberate_bolt'],
+      COPY_STACK_ITEM: ['copy_stack_item', 'final_in_response', 'F8_resolve_reverberate'],
+      RESOLVE_STACK_TOP: ['resolve_stack_item', 'counter_stack_item', 'cast_delver', 'final_in_response', 'P1_10_resolve_bolt', 'P2_09_resolve_delver', 'B2_04_resolve_knight', 'B3_06_resolve_slip', 'P4_05_cast_ponder', 'F8_resolve_reverberate', 'F9_resolve_bolt_copy_lethal', 'F10_resolve_negate_original'],
+      COUNTER_STACK_TOP: ['counter_stack_item', 'final_in_response', 'B3_09_fizzle_doom_blade', 'F10_resolve_negate_original'],
+      PASS_PRIORITY: ['pass_priority', 'final_trial', 'async_oath', 'P1_11_pass', 'B1_02_bolas_pass', 'P2_10_pass', 'B2_05_bolas_pass', 'P3_08_pass', 'B3_11_bolas_pass', 'P4_15_pass', 'B4_09_bolas_pass'],
+      MANUAL_SET_STEP: payload?.phaseId === 'combat_attackers' ? ['set_attackers_phase', 'P4_09_attackers_step'] : (payload?.phaseId === 'untap' ? ['P2_01_untap', 'P3_01_untap', 'P4_01_untap_phase_in'] : (payload?.phaseId === 'upkeep' ? ['P3_02_upkeep'] : (payload?.phaseId === 'draw' ? ['P2_02_draw_slip', 'P3_05_draw_ponder', 'P4_02_draw_mountain'] : (payload?.phaseId === 'main1' ? ['P2_03_main1', 'P3_06_main1', 'P4_03_main1'] : (payload?.phaseId === 'combat_begin' ? ['P4_08_begin_combat'] : (payload?.phaseId === 'combat_end' ? ['P4_14_end_combat'] : [])))))),
+      SET_COMBAT_DAMAGE_STEP: payload?.combatDamageStep === COMBAT_DAMAGE_STEPS.FIRST_STRIKE ? ['first_strike_step', 'B4_05_first_strike_damage'] : (payload?.combatDamageStep === COMBAT_DAMAGE_STEPS.REGULAR ? ['regular_damage_step', 'P4_12_regular_damage', 'B4_08_regular_damage'] : []),
+      SET_ATTACK_TARGET: ['declare_attacker_player', 'attack_planeswalker_battle_note', 'P4_10_attack_bolas'],
+      TOGGLE_BLOCK_TARGET: ['declare_blocker_note', 'B4_04_block_with_llanowar'],
+      TAP_TOGGLE: ['tap_mountain_red', 'tap_card', 'P1_04_tap_mountain', 'P2_05_tap_island', 'B3_03_tap_island_slip', 'F1_tap_mountain_bolt', 'F5_tap_two_mountains'],
+      TEMP_DAMAGE: ['damage_markers', 'B4_06_mark_llanowar_damage'],
+      MOD_COUNTER: ['add_counter', 'B3_07_add_counter'],
+      ADD_CARD_REMINDER: ['add_reminder', 'B3_10_add_phase_reminder'],
+      PHASE_TOGGLE: ['phase_card', 'B3_08_phase_insectile', 'P4_01_untap_phase_in'],
+      SWITCH_CARD_FACE: ['transform_card', 'face_down_reveal', 'P3_04_transform_delver'],
       TOGGLE_FACE: ['face_down_reveal'],
-      REVEAL_CARD: ['reveal_top_delver'],
+      REVEAL_CARD: ['reveal_top_delver', 'P3_03_delver_reveal_ponder'],
       BATCH_REVEAL_LIBRARY: ['reveal_top_delver', 'batch_library_actions', 'opponent_library_tools'],
       BATCH_DRAW_LIBRARY: ['batch_library_actions', 'opponent_library_tools'],
       BATCH_MILL_LIBRARY: ['batch_library_actions', 'opponent_library_tools'],
@@ -5452,23 +5678,23 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       BATCH_SURVEIL_LIBRARY: ['batch_library_actions', 'opponent_library_tools'],
       REORDER_TOP_LIBRARY: ['opponent_library_tools'],
       SHUFFLE_LIBRARY: ['opponent_library_tools'],
-      CREATE_TOKEN: ['create_token', 'deck_tokens_note', 'custom_token_note'],
+      CREATE_TOKEN: ['create_token', 'deck_tokens_note', 'custom_token_note', 'tool_dragon_fodder', 'tool_goblin_template', 'tool_mirror_cell'],
       TARGET: ['target_system'],
       ATTACH_CARD: (payload?.targetPlayerId || payload?.targetType === 'player') ? ['attach_to_player_note'] : ['attach_to_permanent'],
       CLONE_CARD: ['clone_control'],
       CHANGE_CONTROL: [],
-      PRIVATE_PEEK_HAND: ['private_hand_peek'],
-      REVEAL_ALL_HAND: ['reveal_hand_note'],
+      PRIVATE_PEEK_HAND: ['private_hand_peek', 'tool_gitaxian_probe'],
+      REVEAL_ALL_HAND: ['reveal_hand_note', 'tool_open_book_hex'],
       TOGGLE_HAND_REVEAL: ['reveal_hand_note'],
-      PLAYER_COUNTER: ['player_counters'],
-      MANA_POOL_ADJUST: ['add_red_mana', 'mana_pool'],
+      PLAYER_COUNTER: ['player_counters', 'tool_vraskas_fall_poison', 'tool_attune_energy', 'tool_ezuri_experience'],
+      MANA_POOL_ADJUST: ['add_red_mana', 'mana_pool', 'P1_05_add_r', 'P2_06_add_u', 'B3_04_add_u_slip', 'F2_add_r', 'F6_add_rr'],
       MANA_POOL_CLEAR: ['mana_pool'],
-      PLAYER_STATUS_TOGGLE: ['statuses'],
-      RING_TEMPTATION: ['statuses'],
+      PLAYER_STATUS_TOGGLE: ['statuses', 'tool_throne_monarch', 'tool_citys_blessing'],
+      RING_TEMPTATION: ['statuses', 'tool_birthday_escape_ring'],
       TOGGLE_PLAYER_STATUS: ['statuses'],
-      SET_DAY_NIGHT: ['statuses'],
-      ADD_PLAYER_EMBLEM: ['emblems'],
-      ADD_PLAYER_REMINDER: ['dungeons_note'],
+      SET_DAY_NIGHT: ['statuses', 'tool_celestus_day'],
+      ADD_PLAYER_EMBLEM: ['emblems', 'tool_chandra_emblem'],
+      ADD_PLAYER_REMINDER: ['dungeons_note', 'tool_nadaar_dungeon'],
       COMMANDER_TAX: ['commander_note'],
       COMMANDER_DAMAGE: ['commander_note'],
       SET_COMMANDER: ['commander_note']
@@ -5480,12 +5706,13 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     ].filter(Boolean);
     const stackItemForPayload = () => (game?.stack || []).find((item) => item?.id === payload?.stackItemId || item?.sourceId === payload?.stackItemId);
     const tutorialActionMatchesStep = () => {
-      if (stepId === 'tap_mountain_red') {
+      if (['tap_mountain_red', 'P1_04_tap_mountain', 'F1_tap_mountain_bolt', 'F5_tap_two_mountains'].includes(stepId)) {
         const card = getTutorialActionCard(payload?.cardId);
         return actionType === 'TAP_TOGGLE' && getCardDisplayName(card) === 'Mountain' && card?.zone === ZONES.BATTLEFIELD && !card?.tapped;
       }
-      if (stepId === 'add_red_mana') return actionType === 'MANA_POOL_ADJUST' && payload?.color === 'R' && Number(payload?.amount) > 0;
-      if (stepId === 'cast_spell_to_stack') {
+      if (['add_red_mana', 'P1_05_add_r', 'F2_add_r', 'F6_add_rr'].includes(stepId)) return actionType === 'MANA_POOL_ADJUST' && payload?.color === 'R' && Number(payload?.amount) > 0;
+      if (['P2_06_add_u', 'B3_04_add_u_slip'].includes(stepId)) return actionType === 'MANA_POOL_ADJUST' && payload?.color === 'U' && Number(payload?.amount) > 0;
+      if (['cast_spell_to_stack', 'P1_08_target_bolas', 'F3_cast_bolt_bolas'].includes(stepId)) {
         const card = getTutorialActionCard(payload?.cardId);
         const targetsBolas = targetNames.some((name) => /Nicol Bolas/i.test(name)) || (payload?.targetPlayerIds || []).some((targetPlayerId) => targetPlayerId && targetPlayerId !== userId);
         return actionType === 'CAST_SPELL' && getCardDisplayName(card) === 'Lightning Bolt' && targetsBolas;
@@ -5498,6 +5725,10 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         const card = getTutorialActionCard(payload?.cardId);
         const targetsBolas = targetNames.some((name) => /Nicol Bolas/i.test(name)) || (payload?.targetPlayerIds || []).some((targetPlayerId) => targetPlayerId && targetPlayerId !== userId);
         return actionType === 'CAST_SPELL' && getCardDisplayName(card) === 'Lightning Bolt' && targetsBolas;
+      }
+      if (stepId === 'F7_reverberate_bolt') {
+        const card = getTutorialActionCard(payload?.cardId);
+        return actionType === 'CAST_SPELL' && getCardDisplayName(card) === 'Reverberate';
       }
       if (stepId === 'target_system') {
         const source = getTutorialActionCard(payload?.sourceId);
@@ -5519,10 +5750,10 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         const card = getTutorialActionCard(payload?.cardId);
         return actionType === 'CLONE_CARD' && getCardDisplayName(card) === 'Clone';
       }
-      if (stepId === 'declare_blocker_note') {
+      if (['declare_blocker_note', 'B4_04_block_with_llanowar'].includes(stepId)) {
         const blocker = getTutorialActionCard(payload?.cardId);
         const attacker = getTutorialActionCard(payload?.attackerId);
-        return actionType === 'TOGGLE_BLOCK_TARGET' && game?.phase === 'combat_blockers' && getCardDisplayName(blocker) === 'Llanowar Elves' && getCardDisplayName(attacker) === 'Dragon Token';
+        return actionType === 'TOGGLE_BLOCK_TARGET' && game?.phase === 'combat_blockers' && getCardDisplayName(blocker) === 'Llanowar Elves' && ['Dragon Token', 'Knight of Malice'].includes(getCardDisplayName(attacker));
       }
       return true;
     };
@@ -5567,18 +5798,24 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     if (liveStepId === 'hand_area' && selectedCard.zone === ZONES.HAND && selectedCard.controllerId === viewAsPlayerId) {
       maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'selectedCard' });
     }
+    if (['G04_open_bolt', 'P1_06_open_bolt'].includes(liveStepId) && selectedCard.zone === ZONES.HAND && /Lightning Bolt/i.test(getCardDisplayName(selectedCard, ''))) {
+      maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'selectedCard' });
+    }
+    if (liveStepId === 'P2_07_open_delver' && selectedCard.zone === ZONES.HAND && /Delver of Secrets/i.test(getCardDisplayName(selectedCard, ''))) {
+      maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'selectedCard' });
+    }
   }, [isTutorialGame, selectedCard?.instanceId, selectedCard?.zone, selectedCard?.controllerId, viewAsPlayerId]);
 
   useEffect(() => {
     if (!isTutorialGame) return;
     const liveStepId = (optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.stepId || 'intro';
-    if (stackDetailOpen && ['inspect_stack', 'bolas_negate', 'bolas_removal', 'final_bolas_response'].includes(liveStepId)) maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'stackDetailOpen' });
-    if (chatOpen && ['game_log', 'async_oath', 'manual_toolbox_note'].includes(liveStepId)) maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'chatOpen' });
-    if (libraryMenuOpen && ['open_library_tools', 'opponent_library_tools'].includes(liveStepId)) maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'libraryMenuOpen' });
+    if (stackDetailOpen && ['inspect_stack', 'bolas_negate', 'bolas_removal', 'final_bolas_response', 'P1_09_inspect_stack', 'B2_03_bolas_cast_knight', 'B3_02_bolas_doom_blade', 'F4_bolas_negate_real_mana'].includes(liveStepId)) maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'stackDetailOpen' });
+    if (chatOpen && ['game_log', 'async_oath', 'manual_toolbox_note', 'B1_01_bolas_island', 'B2_01_bolas_draw_mountain', 'B3_01_bolas_swamp', 'B4_01_bolas_untaps', 'F11_victory_complete'].includes(liveStepId)) maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'chatOpen' });
+    if (libraryMenuOpen && ['open_library_tools', 'opponent_library_tools', 'G05_mulligan_7', 'P3_03_delver_reveal_ponder', 'P4_06_reorder_ponder', 'tool_ponder_reorder', 'tool_opt_scry', 'tool_consider_surveil', 'tool_portent_bolas_library', 'tool_praetors_grasp', 'tool_thought_scour', 'tool_light_up_stage'].includes(liveStepId)) maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'libraryMenuOpen' });
     if (libraryBatchOpen && liveStepId === 'batch_library_actions') maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'libraryBatchOpen' });
-    if (tokenModal && ['deck_tokens_note', 'custom_token_note'].includes(liveStepId)) maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'tokenModalOpen' });
-    if (playerStatsOpen && ['player_panel', 'dungeons_note', 'commander_note'].includes(liveStepId)) maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'playerStatsOpen' });
-    if (revealsOpen && liveStepId === 'reveal_hand_note') maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'revealsOpen' });
+    if (tokenModal && ['deck_tokens_note', 'custom_token_note', 'tool_dragon_fodder', 'tool_goblin_template', 'tool_mirror_cell'].includes(liveStepId)) maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'tokenModalOpen' });
+    if (playerStatsOpen && ['player_panel', 'dungeons_note', 'commander_note', 'tool_throne_monarch', 'tool_nadaar_dungeon', 'tool_celestus_day', 'tool_birthday_escape_ring', 'tool_vraskas_fall_poison', 'tool_attune_energy', 'tool_ezuri_experience', 'tool_chandra_emblem', 'tool_citys_blessing'].includes(liveStepId)) maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'playerStatsOpen' });
+    if (revealsOpen && ['reveal_hand_note', 'tool_open_book_hex', 'tool_gitaxian_probe'].includes(liveStepId)) maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'revealsOpen' });
   }, [isTutorialGame, stackDetailOpen, chatOpen, libraryMenuOpen, libraryBatchOpen, Boolean(tokenModal), playerStatsOpen, revealsOpen]);
 
   const buildTutorialCardInstance = useCallback((cardName, ownerId, zone = ZONES.HAND, controllerId = ownerId) => {
@@ -5721,7 +5958,77 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         { name: 'Mountain', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId },
         { name: 'Reverberate', zone: 'stack_zone', ownerId: userId, controllerId: userId, stack: true, targetName: 'Negate' },
         { name: 'Negate', zone: 'stack_zone', ownerId: opponent?.id || userId, controllerId: opponent?.id || userId, stack: true, targetName: 'Lightning Bolt' }
-      ]
+      ],
+      P1_01_play_mountain: [{ name: 'Mountain', zone: ZONES.HAND, ownerId: userId, controllerId: userId }],
+      P1_02_undo_mountain: [{ name: 'Mountain', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId }],
+      P1_03_replay_mountain: [{ name: 'Mountain', zone: ZONES.HAND, ownerId: userId, controllerId: userId }],
+      P1_04_tap_mountain: [{ name: 'Mountain', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId, tapped: false }],
+      P1_05_add_r: [{ name: 'Mountain', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId, tapped: true }],
+      P1_06_open_bolt: [{ name: 'Lightning Bolt', zone: ZONES.HAND, ownerId: userId, controllerId: userId }],
+      P1_08_target_bolas: [{ name: 'Lightning Bolt', zone: ZONES.HAND, ownerId: userId, controllerId: userId }],
+      P1_09_inspect_stack: [{ name: 'Lightning Bolt', zone: 'stack_zone', ownerId: userId, controllerId: userId, stack: true, targetName: 'Nicol Bolas' }],
+      P1_10_resolve_bolt: [{ name: 'Lightning Bolt', zone: 'stack_zone', ownerId: userId, controllerId: userId, stack: true, targetName: 'Nicol Bolas' }],
+      P2_04_play_island: [{ name: 'Island', zone: ZONES.HAND, ownerId: userId, controllerId: userId }],
+      P2_05_tap_island: [{ name: 'Island', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId, tapped: false }],
+      P2_06_add_u: [{ name: 'Island', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId, tapped: true }],
+      P2_07_open_delver: [{ name: 'Delver of Secrets', zone: ZONES.HAND, ownerId: userId, controllerId: userId }],
+      P2_08_cast_delver: [{ name: 'Delver of Secrets', zone: ZONES.HAND, ownerId: userId, controllerId: userId }],
+      P2_09_resolve_delver: [{ name: 'Delver of Secrets', zone: 'stack_zone', ownerId: userId, controllerId: userId, stack: true }],
+      B1_01_bolas_island: [{ name: 'Island', zone: ZONES.BATTLEFIELD, ownerId: opponent?.id || userId, controllerId: opponent?.id || userId }],
+      B2_02_bolas_swamp: [{ name: 'Swamp', zone: ZONES.BATTLEFIELD, ownerId: opponent?.id || userId, controllerId: opponent?.id || userId }],
+      B2_03_bolas_cast_knight: [
+        { name: 'Island', zone: ZONES.BATTLEFIELD, ownerId: opponent?.id || userId, controllerId: opponent?.id || userId, tapped: true },
+        { name: 'Swamp', zone: ZONES.BATTLEFIELD, ownerId: opponent?.id || userId, controllerId: opponent?.id || userId, tapped: true },
+        { name: 'Knight of Malice', zone: 'stack_zone', ownerId: opponent?.id || userId, controllerId: opponent?.id || userId, stack: true }
+      ],
+      B2_04_resolve_knight: [{ name: 'Knight of Malice', zone: 'stack_zone', ownerId: opponent?.id || userId, controllerId: opponent?.id || userId, stack: true }],
+      P3_03_delver_reveal_ponder: [{ name: 'Ponder', zone: ZONES.LIBRARY, ownerId: userId, controllerId: userId }],
+      P3_04_transform_delver: [{ name: 'Delver of Secrets', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId, activeFaceIndex: 0 }],
+      B3_01_bolas_swamp: [
+        { name: 'Island', zone: ZONES.BATTLEFIELD, ownerId: opponent?.id || userId, controllerId: opponent?.id || userId },
+        { name: 'Swamp', zone: ZONES.BATTLEFIELD, ownerId: opponent?.id || userId, controllerId: opponent?.id || userId },
+        { name: 'Knight of Malice', zone: ZONES.BATTLEFIELD, ownerId: opponent?.id || userId, controllerId: opponent?.id || userId }
+      ],
+      B3_02_bolas_doom_blade: [
+        { name: 'Doom Blade', zone: 'stack_zone', ownerId: opponent?.id || userId, controllerId: opponent?.id || userId, stack: true, targetName: 'Insectile Aberration' },
+        { name: 'Delver of Secrets', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId, activeFaceIndex: 1 }
+      ],
+      B3_05_cast_slip: [
+        { name: 'Slip Out the Back', zone: ZONES.HAND, ownerId: userId, controllerId: userId },
+        { name: 'Doom Blade', zone: 'stack_zone', ownerId: opponent?.id || userId, controllerId: opponent?.id || userId, stack: true, targetName: 'Insectile Aberration' }
+      ],
+      B3_06_resolve_slip: [{ name: 'Slip Out the Back', zone: 'stack_zone', ownerId: userId, controllerId: userId, stack: true, targetName: 'Insectile Aberration' }],
+      B3_07_add_counter: [{ name: 'Delver of Secrets', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId, activeFaceIndex: 1 }],
+      B3_08_phase_insectile: [{ name: 'Delver of Secrets', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId, activeFaceIndex: 1 }],
+      B3_09_fizzle_doom_blade: [{ name: 'Doom Blade', zone: 'stack_zone', ownerId: opponent?.id || userId, controllerId: opponent?.id || userId, stack: true, targetName: 'Insectile Aberration' }],
+      P4_10_attack_bolas: [{ name: 'Delver of Secrets', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId, activeFaceIndex: 1 }],
+      B4_01_bolas_untaps: [
+        { name: 'Llanowar Elves', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId },
+        { name: 'Knight of Malice', zone: ZONES.BATTLEFIELD, ownerId: opponent?.id || userId, controllerId: opponent?.id || userId }
+      ],
+      B4_04_block_with_llanowar: [
+        { name: 'Llanowar Elves', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId },
+        { name: 'Knight of Malice', zone: ZONES.BATTLEFIELD, ownerId: opponent?.id || userId, controllerId: opponent?.id || userId }
+      ],
+      B4_06_mark_llanowar_damage: [{ name: 'Llanowar Elves', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId }],
+      F1_tap_mountain_bolt: [
+        { name: 'Mountain', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId, tapped: false },
+        { name: 'Lightning Bolt', zone: ZONES.HAND, ownerId: userId, controllerId: userId },
+        { name: 'Reverberate', zone: ZONES.HAND, ownerId: userId, controllerId: userId },
+        { name: 'Island', zone: ZONES.BATTLEFIELD, ownerId: opponent?.id || userId, controllerId: opponent?.id || userId, tapped: false },
+        { name: 'Swamp', zone: ZONES.BATTLEFIELD, ownerId: opponent?.id || userId, controllerId: opponent?.id || userId, tapped: false },
+        { name: 'Negate', zone: ZONES.HAND, ownerId: opponent?.id || userId, controllerId: opponent?.id || userId }
+      ],
+      F3_cast_bolt_bolas: [{ name: 'Lightning Bolt', zone: ZONES.HAND, ownerId: userId, controllerId: userId }],
+      F4_bolas_negate_real_mana: [
+        { name: 'Lightning Bolt', zone: 'stack_zone', ownerId: userId, controllerId: userId, stack: true, targetName: 'Nicol Bolas' },
+        { name: 'Negate', zone: 'stack_zone', ownerId: opponent?.id || userId, controllerId: opponent?.id || userId, stack: true, targetName: 'Lightning Bolt' },
+        { name: 'Island', zone: ZONES.BATTLEFIELD, ownerId: opponent?.id || userId, controllerId: opponent?.id || userId, tapped: true },
+        { name: 'Swamp', zone: ZONES.BATTLEFIELD, ownerId: opponent?.id || userId, controllerId: opponent?.id || userId, tapped: true }
+      ],
+      F7_reverberate_bolt: [{ name: 'Reverberate', zone: ZONES.HAND, ownerId: userId, controllerId: userId }],
+      F8_resolve_reverberate: [{ name: 'Reverberate', zone: 'stack_zone', ownerId: userId, controllerId: userId, stack: true, targetName: 'Lightning Bolt' }],
+      F9_resolve_bolt_copy_lethal: [{ name: 'Lightning Bolt', zone: 'stack_zone', ownerId: userId, controllerId: userId, stack: true, targetName: 'Nicol Bolas' }]
     }[stepId];
     if (!needs) return;
 
@@ -5760,7 +6067,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           itemType: 'SPELL',
           type: 'SPELL',
           createdAt: Date.now(),
-          ...(need.targetName ? { targets: [{ name: need.targetName, label: need.targetName }] } : {})
+          ...(need.targetName ? { targets: [{ name: need.targetName, label: need.targetName }], ...(need.targetName === 'Nicol Bolas' && opponent?.id ? { targetPlayerIds: [opponent.id] } : {}) } : {})
         });
         changed = true;
       }
@@ -5772,6 +6079,46 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     let forcedTurnPlayerId = null;
     let forcedCombat = null;
     let forcedStack = null;
+
+    if (['P1_01_play_mountain', 'P1_02_undo_mountain', 'P1_03_replay_mountain', 'P1_04_tap_mountain', 'P1_05_add_r', 'P1_06_open_bolt', 'P1_07_bolt_cast_target', 'P1_08_target_bolas', 'P1_09_inspect_stack', 'P1_10_resolve_bolt', 'P1_11_pass', 'P2_03_main1', 'P2_04_play_island', 'P2_05_tap_island', 'P2_06_add_u', 'P2_07_open_delver', 'P2_08_cast_delver', 'P2_09_resolve_delver', 'P2_10_pass', 'P3_06_main1', 'P3_07_play_mountain', 'P3_08_pass', 'P4_03_main1', 'P4_04_play_third_mountain', 'P4_05_cast_ponder', 'P4_06_reorder_ponder', 'P4_07_draw_ponder', 'F1_tap_mountain_bolt', 'F2_add_r', 'F3_cast_bolt_bolas', 'F5_tap_two_mountains', 'F6_add_rr', 'F7_reverberate_bolt', 'F8_resolve_reverberate', 'F9_resolve_bolt_copy_lethal', 'F10_resolve_negate_original'].includes(stepId)) {
+      forcedPhase = 'main1';
+      forcedTurnPlayerId = userId;
+    } else if (['P2_01_untap', 'P3_01_untap', 'P4_01_untap_phase_in', 'B4_01_bolas_untaps'].includes(stepId)) {
+      forcedPhase = 'untap';
+      forcedTurnPlayerId = stepId === 'B4_01_bolas_untaps' ? (opponentId || game.turnPlayerId) : userId;
+    } else if (['P2_02_draw_slip', 'P3_05_draw_ponder', 'P4_02_draw_mountain', 'B2_01_bolas_draw_mountain'].includes(stepId)) {
+      forcedPhase = 'draw';
+      forcedTurnPlayerId = stepId === 'B2_01_bolas_draw_mountain' ? (opponentId || game.turnPlayerId) : userId;
+    } else if (['P3_02_upkeep', 'P3_03_delver_reveal_ponder', 'P3_04_transform_delver'].includes(stepId)) {
+      forcedPhase = 'upkeep';
+      forcedTurnPlayerId = userId;
+    } else if (['B1_01_bolas_island', 'B1_02_bolas_pass', 'B2_02_bolas_swamp', 'B2_03_bolas_cast_knight', 'B2_04_resolve_knight', 'B2_05_bolas_pass', 'B3_01_bolas_swamp', 'B3_02_bolas_doom_blade', 'B3_03_tap_island_slip', 'B3_04_add_u_slip', 'B3_05_cast_slip', 'B3_06_resolve_slip', 'B3_07_add_counter', 'B3_08_phase_insectile', 'B3_09_fizzle_doom_blade', 'B3_10_add_phase_reminder', 'B3_11_bolas_pass', 'F4_bolas_negate_real_mana'].includes(stepId)) {
+      forcedPhase = 'main1';
+      forcedTurnPlayerId = opponentId || game.turnPlayerId;
+    } else if (['P4_08_begin_combat', 'B4_02_bolas_combat'].includes(stepId)) {
+      forcedPhase = 'combat_begin';
+      forcedTurnPlayerId = stepId === 'B4_02_bolas_combat' ? (opponentId || game.turnPlayerId) : userId;
+      forcedStack = [];
+    } else if (['P4_09_attackers_step', 'P4_10_attack_bolas', 'P4_11_combat_summary', 'B4_03_knight_attacks'].includes(stepId)) {
+      forcedPhase = 'combat_attackers';
+      forcedTurnPlayerId = stepId === 'B4_03_knight_attacks' ? (opponentId || game.turnPlayerId) : userId;
+      forcedStack = [];
+    } else if (stepId === 'B4_04_block_with_llanowar') {
+      forcedPhase = 'combat_blockers';
+      forcedTurnPlayerId = opponentId || game.turnPlayerId;
+      forcedStack = [];
+      const attacker = findTutorialCard('Knight of Malice', opponentId);
+      const blocker = findTutorialCard('Llanowar Elves', userId);
+      if (attacker?.instanceId && blocker?.instanceId) forcedCombat = normalizeCombatState({ attackers: { [attacker.instanceId]: normalizeAttackTarget({ type: 'player', id: userId, targetId: userId, kind: 'player' }, game, attacker) || { type: 'player', id: userId, targetId: userId, kind: 'player' } }, blockers: {}, combatDamageStep: null });
+    } else if (['P4_12_regular_damage', 'P4_13_apply_insectile_damage', 'B4_05_first_strike_damage', 'B4_06_mark_llanowar_damage', 'B4_07_llanowar_graveyard', 'B4_08_regular_damage'].includes(stepId)) {
+      forcedPhase = 'combat_damage';
+      forcedTurnPlayerId = stepId.startsWith('B4') ? (opponentId || game.turnPlayerId) : userId;
+      forcedStack = [];
+    } else if (['P4_14_end_combat'].includes(stepId)) {
+      forcedPhase = 'combat_end';
+      forcedTurnPlayerId = userId;
+      forcedStack = [];
+    }
 
     if (['replay_mountain', 'tap_mountain_red', 'add_red_mana', 'cast_spell_to_stack', 'inspect_stack', 'bolas_negate', 'copy_stack_item', 'resolve_stack_item', 'counter_stack_item', 'pass_priority'].includes(stepId)) {
       forcedPhase = stepId === 'pass_priority' ? 'end' : 'main1';
@@ -5845,7 +6192,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           combatDamageStep: null
         });
       }
-    } else if (stepId === 'declare_blocker_note') {
+    } else if (['declare_blocker_note', 'B4_04_block_with_llanowar'].includes(stepId)) {
       const attacker = findTutorialCard('Dragon Token', opponentId);
       forcedPhase = 'combat_blockers';
       forcedTurnPlayerId = opponentId || game.turnPlayerId;
@@ -5860,6 +6207,15 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     }
 
     const updates = { updatedAt: serverTimestamp() };
+    const updateBolasLife = (lifeTotal, reason) => {
+      const currentPlayers = Array.isArray(game.players) ? game.players : [];
+      const bolasPlayer = currentPlayers.find((player) => /Nicol Bolas/i.test(player?.name || ''));
+      if (!bolasPlayer || Number(bolasPlayer.life) === lifeTotal) return;
+      updates.players = currentPlayers.map((player) => player.id === bolasPlayer.id ? { ...player, life: lifeTotal } : player);
+      updates.log = pruneLogForFirestore([...(game.log || []), buildGameLogEntry({ currentGame: game, playerId: userId, playerName: 'Tutorial', type: 'TUTORIAL_SNAPSHOT', category: 'tutorial', message: reason })]);
+    };
+    if (stepId === 'P4_13_apply_insectile_damage') updateBolasLife(13, 'Insectile Aberration deals 4 combat damage to Nicol Bolas. Nicol Bolas goes to 13.');
+    if (stepId === 'F1_tap_mountain_bolt') updateBolasLife(3, 'Several turns later, Insectile, the Curse, and earlier spells have pushed Nicol Bolas to 3 life.');
     if (changed) {
       updates.cards = nextCards;
       updates.stack = nextStack;
@@ -7495,6 +7851,19 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         const nextPriorityIndex = Number.isInteger(currentGame.activePlayerIndex) ? currentGame.activePlayerIndex : 0;
         const nextPriorityPlayerId = currentPlayers[nextPriorityIndex]?.id || currentGame.priorityPlayerId || null;
         const logActorName = currentPlayers.find(p => p.id === userId)?.name || actorName;
+        const tutorialResolution = applyTutorialResolutionEffect({
+          currentGame,
+          topItem,
+          actionType,
+          currentStack,
+          updatedCards,
+          currentPlayers,
+          userId,
+          buildLogEntry: (message, extra = {}) => buildGameLogEntry({ currentGame, playerId: userId, playerName: logActorName, type: 'TUTORIAL_RESOLUTION', category: 'tutorial', message, cardId: topItem.sourceId || null, cardName, ...extra })
+        });
+        const resolvedCards = tutorialResolution.cards || updatedCards;
+        const resolvedPlayers = tutorialResolution.players || currentPlayers;
+        if (tutorialResolution.cardsChanged) cardsChanged = true;
         const stackLogEntry = buildGameLogEntry({
           currentGame,
           playerId: userId,
@@ -7506,13 +7875,14 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           cardName
         });
 
-        const undoFields = cardsChanged ? UNDO_STATE_FIELDS : STACK_ONLY_UNDO_STATE_FIELDS;
+        const undoFields = cardsChanged || currentGame.isTutorial ? UNDO_STATE_FIELDS : STACK_ONLY_UNDO_STATE_FIELDS;
         const stackUpdates = {
           stack: currentStack,
           consecutivePasses: 0,
           priorityIndex: nextPriorityIndex,
           priorityPlayerId: nextPriorityPlayerId,
-          log: [...(currentGame.log || []), stackLogEntry],
+          players: resolvedPlayers,
+          log: [...(currentGame.log || []), stackLogEntry, ...(tutorialResolution.extraLogEntries || [])],
           undoStack: appendUndoEntry(currentGame, buildUndoEntry({
             currentGame,
             actorId: userId,
@@ -7523,7 +7893,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           })),
           updatedAt: serverTimestamp()
         };
-        if (cardsChanged) stackUpdates.cards = updatedCards;
+        if (cardsChanged) stackUpdates.cards = resolvedCards;
         transactionUpdatesIncludeCards = cardsChanged;
 
         transaction.update(gameRef, normalizeGameUpdatesForFirestore(stackUpdates, actionType));
@@ -9408,7 +9778,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     const sourceName = getCardDisplayName(source, '');
     const requiresTutorialTarget = Boolean(
       isTutorialGame
-      && ['cast_spell_to_stack', 'final_spell'].includes(currentTutorialStep?.id)
+      && ['cast_spell_to_stack', 'final_spell', 'P1_08_target_bolas', 'F3_cast_bolt_bolas'].includes(currentTutorialStep?.id)
       && /Lightning Bolt/i.test(sourceName)
     );
     if (requiresTutorialTarget && selectedIds.length === 0) {
@@ -10099,7 +10469,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const isTutorialLightningBoltTargeting = Boolean(
     targetingState
     && isTutorialGame
-    && ['cast_spell_to_stack', 'final_spell'].includes(currentTutorialStep?.id)
+    && ['cast_spell_to_stack', 'final_spell', 'P1_08_target_bolas', 'F3_cast_bolt_bolas'].includes(currentTutorialStep?.id)
     && /Lightning Bolt/i.test(getCardDisplayName(targetingState.source, ''))
   );
   const targetingRequiresSelection = Boolean(targetingState && isTutorialLightningBoltTargeting);
@@ -10150,9 +10520,9 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         hasOpenPanel={tutorialHasOpenPanel}
         onToggleMinimized={() => setTutorialMinimized((value) => !value)}
         onResume={resumeTutorialOverlay}
-        onNext={() => advanceTutorialStep({ markCompleted: true, finish: currentTutorialStep?.id === 'tutorial_complete', actionLabel: 'manual next' })}
+        onNext={() => advanceTutorialStep({ markCompleted: true, finish: ['tutorial_complete', 'F11_victory_complete'].includes(currentTutorialStep?.id), actionLabel: 'manual next' })}
         onBack={goBackTutorialStep}
-        onSkip={() => advanceTutorialStep({ markCompleted: false, finish: currentTutorialStep?.id === 'tutorial_complete', actionLabel: 'manual skip' })}
+        onSkip={() => advanceTutorialStep({ markCompleted: false, finish: ['tutorial_complete', 'F11_victory_complete'].includes(currentTutorialStep?.id), actionLabel: 'manual skip' })}
         onExit={requestExitTutorial}
         onFocusTarget={focusTutorialTarget}
         onRestart={restartTutorial}
@@ -10227,7 +10597,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         <div
           data-tutorial-anchor="room-code"
           className={`flex flex-col items-center justify-center bg-slate-900 px-3 py-1 rounded border border-slate-700 cursor-pointer hover:bg-slate-800${getTutorialAnchorClass(currentTutorialAnchor, 'room-code', tutorialPulseAnchor)}`}
-          onClick={() => { copyToClipboard(gameId); maybeCompleteTutorialStep('intro'); maybeCompleteTutorialStep('room_code'); maybeCompleteTutorialStep('watch_cleanup_note'); }}
+          onClick={() => { copyToClipboard(gameId); maybeCompleteTutorialStep('intro'); maybeCompleteTutorialStep('room_code'); maybeCompleteTutorialStep('watch_cleanup_note'); maybeCompleteTutorialStep('G01_room_code'); }}
           title="Click to Copy Game ID"
         >
           <span className="text-[9px] text-slate-500 uppercase tracking-widest hidden sm:block">Room Code</span>
@@ -10315,7 +10685,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             <BookOpen size={20} />
           </button>
           <button
-            onClick={() => { setRevealsOpen(true); maybeCompleteTutorialStep('reveal_hand_note'); }}
+            onClick={() => { setRevealsOpen(true); maybeCompleteTutorialStep('reveal_hand_note'); maybeCompleteTutorialStep('tool_open_book_hex'); }}
             data-tutorial-anchor="reveal-tools"
             className={`relative z-20 pointer-events-auto flex flex-col items-center justify-center px-2 py-1 rounded hover:bg-slate-700${getTutorialAnchorClass(currentTutorialAnchor, 'reveal-tools', tutorialPulseAnchor)}`}
             title="View reveals and reveal tools"
@@ -10444,6 +10814,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           <section
             ref={opponentSectionRef}
             data-tutorial-anchor="opponent-battlefield"
+            onClick={() => { maybeCompleteTutorialStep('G02_opponent_area'); maybeCompleteTutorialStep('B2_02_bolas_swamp'); }}
             className={`rounded-xl border p-3 mb-3 min-h-[280px] transition-all duration-300 ${opponentSectionHighlighted ? 'border-blue-400 bg-blue-900/20 ring-2 ring-blue-400/60' : 'border-slate-700 bg-slate-800/30'}${isOpponentTargetSelected ? ' ring-2 ring-blue-400 bg-blue-900/20 border-blue-400' : ''}${getTutorialAnchorClass(currentTutorialAnchor, 'opponent-battlefield', tutorialPulseAnchor)}`}
           >
             <div
@@ -10615,7 +10986,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               </div>
             ) : <div />}
 
-            <div data-tutorial-anchor="combat-summary" onClick={() => { maybeCompleteTutorialStep('bolas_blocks_summary'); maybeCompleteTutorialStep('combat_summary_note'); maybeCompleteTutorialStep('bolas_declares_attacker'); }} className={`bg-slate-900/90 border border-slate-700 rounded-lg p-3 text-xs space-y-2${getTutorialAnchorClass(currentTutorialAnchor, 'combat-summary', tutorialPulseAnchor)}`}>
+            <div data-tutorial-anchor="combat-summary" onClick={() => { maybeCompleteTutorialStep('bolas_blocks_summary'); maybeCompleteTutorialStep('combat_summary_note'); maybeCompleteTutorialStep('bolas_declares_attacker'); maybeCompleteTutorialStep('P4_11_combat_summary'); maybeCompleteTutorialStep('B4_02_bolas_combat'); maybeCompleteTutorialStep('B4_03_knight_attacks'); }} className={`bg-slate-900/90 border border-slate-700 rounded-lg p-3 text-xs space-y-2${getTutorialAnchorClass(currentTutorialAnchor, 'combat-summary', tutorialPulseAnchor)}`}>
               <div className="font-bold text-slate-200 uppercase tracking-wider">Combat Summary</div>
               <div className="flex flex-wrap items-center gap-2">
                 <span className="font-semibold text-slate-300">Damage step:</span>
@@ -10644,7 +11015,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             </div>
           </div>
 
-          <section data-tutorial-anchor="own-battlefield" onClick={() => maybeCompleteTutorialStep('battlefields')} className={`rounded-xl border border-slate-700 bg-slate-900/30 p-3${getTutorialAnchorClass(currentTutorialAnchor, 'own-battlefield', tutorialPulseAnchor)}`}>
+          <section data-tutorial-anchor="own-battlefield" onClick={() => { maybeCompleteTutorialStep('battlefields'); maybeCompleteTutorialStep('G03_own_battlefield'); }} className={`rounded-xl border border-slate-700 bg-slate-900/30 p-3${getTutorialAnchorClass(currentTutorialAnchor, 'own-battlefield', tutorialPulseAnchor)}`}>
             <div className="flex items-center justify-between mb-3 gap-2">
               <div className="flex items-center gap-2">
                 <User size={16} className="text-green-400"/>
@@ -10857,7 +11228,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             <div className="relative">
               <button
                 ref={libraryButtonRef}
-                onClick={canAct ? () => { const willOpen = !libraryMenuOpen; setLibraryMenuOpen(willOpen); if (willOpen) maybeCompleteTutorialStep('open_library_tools'); } : undefined}
+                onClick={canAct ? () => { const willOpen = !libraryMenuOpen; setLibraryMenuOpen(willOpen); if (willOpen) { maybeCompleteTutorialStep('open_library_tools'); maybeCompleteTutorialStep('G05_mulligan_7'); maybeCompleteTutorialStep('P3_03_delver_reveal_ponder'); maybeCompleteTutorialStep('P4_06_reorder_ponder'); } } : undefined}
                 data-tutorial-anchor="library-menu-button"
                 className={`p-2 rounded-full hover:bg-slate-700 ${libraryMenuOpen ? 'text-white bg-slate-700' : 'text-slate-400'} ${canAct ? '' : 'opacity-40 cursor-not-allowed'}${getTutorialAnchorClass(currentTutorialAnchor, 'library-menu-button', tutorialPulseAnchor)}`}
               >
@@ -12679,9 +13050,10 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                       onClick: () => {
                         if (!canAct) return;
                         const shouldFocusOpponentTarget = isTutorialGame
-                          && ['cast_spell_to_stack', 'final_spell'].includes(currentTutorialStep?.id)
+                          && ['cast_spell_to_stack', 'final_spell', 'P1_08_target_bolas', 'F3_cast_bolt_bolas'].includes(currentTutorialStep?.id)
                           && /Lightning Bolt/i.test(getCardDisplayName(selectedCard, ''));
                         setTargetingState({ source: selectedCard, mode: 'CAST', selectedIds: [] });
+                        maybeCompleteTutorialStep('P1_07_bolt_cast_target');
                         setSelectedCard(null);
                         if (shouldFocusOpponentTarget) window.setTimeout(scrollToOpponentBattlefield, 50);
                       },
@@ -13487,7 +13859,7 @@ export default function App() {
               finished: false,
               inactive: false
             },
-            ...(shouldSeedExistingTutorial ? { cards: buildTutorialStarterCards(user.uid) } : {}),
+            ...(shouldSeedExistingTutorial ? { cards: buildTutorialDuelCards(user.uid, candidateData.players?.find((p) => p?.isScriptedOpponent)?.id || `tutorial-bolas-${candidateId}`) } : {}),
             updatedAt: serverTimestamp()
           });
           setActiveGameId(candidateId);
@@ -13556,7 +13928,7 @@ export default function App() {
         turnNumber: 1,
         consecutivePasses: 0,
         stack: [],
-        cards: buildTutorialStarterCards(user.uid),
+        cards: buildTutorialDuelCards(user.uid, bolasId),
         targets: [],
         reveals: [],
         autopass: {},

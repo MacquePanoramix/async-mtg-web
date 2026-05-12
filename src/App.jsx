@@ -35,65 +35,65 @@ const GAME_MODES = {
 
 const TUTORIAL_SCRIPT_VERSION = 4;
 const TUTORIAL_SCRIPT_STEPS = [
-  { id: 'intro', chapter: 'Act 1 / Turn 1 — Main Phase', title: 'Nicol Bolas and the Board of Doom', scene: 'The lobby has cracked open into an arena. Seven cards wait at the edge of your battlefield.', dialogue: 'Enough doors. Sit. Draw. Learn.', objective: 'Begin the guided duel.', hint: 'Tap Next. This is a scripted tutorial duel that uses the same manual tools as a real game.', anchor: null, completion: 'manual' },
-  { id: 'room_code', chapter: 'Act 1 / Turn 1 — Main Phase', title: 'The Doorway Sigil', scene: 'A six-character room code burns above the battlefield.', dialogue: 'This code is the doorway. Send it to the friend you wish to inconvenience.', objective: 'Find the room code.', hint: 'In real games, friends use this code to join as a player or watch as a spectator.', anchor: 'room-code', completion: 'manual' },
-  { id: 'battlefields', chapter: 'Act 1 / Turn 1 — Main Phase', title: 'Two Battlefields', scene: 'Two battlefields rise: yours below, mine above.', dialogue: 'Know the geography before you begin losing territory.', objective: 'Find your battlefield and Nicol Bolas’s battlefield.', hint: 'Your battlefield is near the bottom. Nicol Bolas is the scripted opponent above.', anchor: 'battlefields', completion: 'manual' },
-  { id: 'hand_area', chapter: 'Act 1 / Turn 1 — Main Phase', title: 'Opening Hand', scene: 'Seven cards fan out like possible futures.', dialogue: 'Seven choices. Most mortals need only one to disappoint me.', objective: 'Find your hand.', hint: 'Your hand is at the bottom. Scroll sideways if needed.', anchor: 'hand-area', completion: 'manual' },
-  { id: 'import_deck', chapter: 'Act 1 / Turn 1 — Before the First Spell', title: 'The Deck You Brought', scene: 'Your prepared tutorial deck waits, but the import altar is visible beside your hand.', dialogue: 'Before a real duel, bring a real deck. Commander lists may even declare their Commander before the Deck.', objective: 'Open Import Deck.', hint: 'Tap Import Deck. The tutorial opens a demo list without replacing your scripted duel deck.', anchor: 'import-deck-button', completion: 'detect-or-manual' },
+  { id: 'intro', chapter: 'Act 1 / Turn 1 — Main Phase', title: 'Nicol Bolas and the Board of Doom', scene: 'The lobby has cracked open into an arena. Seven cards wait at the edge of your battlefield.', dialogue: 'Enough doors. Sit. Draw. Learn.', objective: 'Tap the room code so you know where a duel lives.', hint: 'Tap the room code in the header. Real games use this code for players and watchers.', anchor: 'room-code', completion: 'detect' },
+  { id: 'room_code', chapter: 'Act 1 / Turn 1 — Main Phase', title: 'The Doorway Sigil', scene: 'A six-character room code burns above the battlefield.', dialogue: 'This code is the doorway. Send it to the friend you wish to inconvenience.', objective: 'Tap the room code to copy the doorway sigil.', hint: 'The tap copies the code and advances the tutorial.', anchor: 'room-code', completion: 'detect' },
+  { id: 'battlefields', chapter: 'Act 1 / Turn 1 — Main Phase', title: 'Two Battlefields', scene: 'Two battlefields rise: yours below, mine above.', dialogue: 'Know the geography before you begin losing territory.', objective: 'Tap your battlefield to inspect your side of the arena.', hint: 'Your battlefield is near the bottom. Nicol Bolas is above.', anchor: 'own-battlefield', completion: 'detect' },
+  { id: 'hand_area', chapter: 'Act 1 / Turn 1 — Main Phase', title: 'Opening Hand', scene: 'Seven cards fan out like possible futures.', dialogue: 'Seven choices. Most mortals need only one to disappoint me.', objective: 'Tap a card in your hand to open its detail panel.', hint: 'Your hand is at the bottom. Scroll sideways if needed, then tap any hand card.', anchor: 'hand-area', completion: 'detect' },
+  { id: 'import_deck', chapter: 'Act 1 / Turn 1 — Before the First Spell', title: 'The Deck You Brought', scene: 'Your prepared tutorial deck waits, but the import altar is visible beside your hand.', dialogue: 'Before a real duel, bring a real deck. Commander lists may even declare their Commander before the Deck.', objective: 'Open Import Deck.', hint: 'Tap Import Deck. The tutorial opens a demo list without replacing your scripted duel deck.', anchor: 'import-deck-button', completion: 'detect' },
   { id: 'play_land', chapter: 'Act 1 / Turn 1 — Main Phase', title: 'Play Mountain', scene: 'The floor splits into red stone.', dialogue: 'Put a place beneath your power.', objective: 'Play Mountain.', hint: 'Tap Mountain in your hand, then choose Play Land.', anchor: 'hand-area', completion: 'detect' },
-  { id: 'undo_play_land', chapter: 'Act 1 / Turn 1 — Main Phase', title: 'Undo and Replay', scene: 'Time stutters around the Mountain.', dialogue: 'Regret is the first spell every player learns.', objective: 'Undo the Mountain, then play it again.', hint: 'Tap Undo, confirm, then replay Mountain. This uses the normal Play Land undo flow.', anchor: 'undo-button', completion: 'detect-or-manual' },
+  { id: 'undo_play_land', chapter: 'Act 1 / Turn 1 — Main Phase', title: 'Undo and Replay', scene: 'Time stutters around the Mountain.', dialogue: 'Regret is the first spell every player learns.', objective: 'Undo the Mountain, then play it again.', hint: 'Tap Undo, confirm, then replay Mountain. This uses the normal Play Land undo flow.', anchor: 'undo-button', completion: 'detect' },
   { id: 'cast_spell_to_stack', chapter: 'Act 1 / Turn 1 — Main Phase', title: 'Lightning Bolt Enters the Stack', scene: 'A red spell ignites above your hand.', dialogue: 'Do not throw it at me yet. In Magic, even violence must wait in line.', objective: 'Cast Lightning Bolt targeting Nicol Bolas.', hint: 'Tap Lightning Bolt in your hand and choose Cast Spell or Cast + Target.', anchor: 'hand-area', completion: 'detect' },
-  { id: 'inspect_stack', chapter: 'Act 1 / Turn 1 — Main Phase', title: 'Open the Stack', scene: 'The bolt freezes in the air.', dialogue: 'The stack: where intentions become paperwork before becoming pain.', objective: 'Open the Stack panel.', hint: 'Tap the Stack button near the top of the screen.', anchor: 'stack-button', completion: 'detect-or-manual' },
-  { id: 'bolas_negate', chapter: 'Act 1 / Turn 1 — Main Phase', title: 'Bolas Responds with Negate', scene: 'Blue light wraps around your spell.', dialogue: 'Denied? Not yet. Merely contested.', objective: 'Watch Negate appear above Lightning Bolt.', hint: 'The newest stack item resolves first, so Negate sits above your Bolt.', anchor: 'stack-panel', completion: 'manual' },
+  { id: 'inspect_stack', chapter: 'Act 1 / Turn 1 — Main Phase', title: 'Open the Stack', scene: 'The bolt freezes in the air.', dialogue: 'The stack: where intentions become paperwork before becoming pain.', objective: 'Open the Stack panel.', hint: 'Tap the Stack button near the top of the screen.', anchor: 'stack-button', completion: 'detect' },
+  { id: 'bolas_negate', chapter: 'Act 1 / Turn 1 — Main Phase', title: 'Bolas Responds with Negate', scene: 'Blue light wraps around your spell.', dialogue: 'Denied? Not yet. Merely contested.', objective: 'Open the Stack and inspect Bolas’s Negate above Lightning Bolt.', hint: 'Tap the Stack button or the Negate stack item. The newest stack item resolves first.', anchor: 'stack-button', completion: 'detect' },
   { id: 'copy_stack_item', chapter: 'Act 1 / Turn 1 — Main Phase', title: 'Copy the Bolt', scene: 'Your spell casts a second shadow.', dialogue: 'Ah. Multiplication. Dangerous when discovered by the desperate.', objective: 'Copy Lightning Bolt.', hint: 'Open Lightning Bolt’s stack item details and use Copy Stack Item.', anchor: 'stack-panel', completion: 'detect' },
   { id: 'resolve_stack_item', chapter: 'Act 1 / Turn 1 — Main Phase', title: 'Resolve the Copy', scene: 'The copied bolt slips past the counterspell.', dialogue: 'The imitation wounds first. How vulgar.', objective: 'Resolve the top Lightning Bolt copy.', hint: 'Use Resolve Top Stack Item. The top object resolves first.', anchor: 'stack-panel', completion: 'detect' },
-  { id: 'counter_stack_item', chapter: 'Act 1 / Turn 1 — Main Phase', title: 'Negate Closes', scene: 'Negate closes around the original spell.', dialogue: 'The first future dies. Remember: the top resolves first.', objective: 'Counter or fizzle the remaining original spell as instructed by the stack.', hint: 'Use Counter/Fizzle or resolve the counterspell, depending on the current top item.', anchor: 'stack-panel', completion: 'detect-or-manual' },
+  { id: 'counter_stack_item', chapter: 'Act 1 / Turn 1 — Main Phase', title: 'Negate Closes', scene: 'Negate closes around the original spell.', dialogue: 'The first future dies. Remember: the top resolves first.', objective: 'Counter or fizzle the remaining original spell as instructed by the stack.', hint: 'Use Counter/Fizzle or resolve the counterspell, depending on the current top item.', anchor: 'stack-panel', completion: 'detect' },
   { id: 'pass_priority', chapter: 'Act 1 / Turn 1 — End Step', title: 'Pass Priority', scene: 'Silence returns to the battlefield.', dialogue: 'In async Magic, silence must be announced.', objective: 'Pass priority.', hint: 'Tap Pass when you are done acting.', anchor: 'pass-button', completion: 'detect' },
-  { id: 'game_log', chapter: 'Act 1 / Turn 1 — End Step', title: 'The Arena Remembers', scene: 'The arena wall records every insult.', dialogue: 'Memory is a weapon. The log is where your excuses go to die.', objective: 'Open the log/chat.', hint: 'Use the chat/log icon near the top to review actions and leave clear async notes.', anchor: 'reveal-tools', completion: 'manual' },
-  { id: 'beginning_phase_draw', chapter: 'Act 2 / Turn 2 — Untap, Upkeep, Draw', title: 'The Ritual of a Turn', scene: 'A new turn opens like a blade.', dialogue: 'Untap. Upkeep. Draw. The ritual matters because mistakes love shortcuts.', objective: 'Move through the beginning phase and draw for turn.', hint: 'Normal card draw happens in the draw step. Use phase controls and Draw when appropriate.', anchor: 'phase-indicator', completion: 'manual' },
-  { id: 'cast_delver', chapter: 'Act 2 / Turn 2 — Main Phase', title: 'Cast Delver of Secrets', scene: 'A small wizard steps onto the board carrying a terrible secret.', dialogue: 'Small creatures are often containers for larger problems.', objective: 'Cast Delver of Secrets.', hint: 'Tap Delver in your hand, cast it, and resolve it to the battlefield.', anchor: 'hand-area', completion: 'manual' },
-  { id: 'reveal_top_delver', chapter: 'Act 2 / Turn 2 — Upkeep Trigger', title: 'Reveal the Top Card', scene: 'The top of your library glows with instant magic.', dialogue: 'Show the insect what it wants to become.', objective: 'Reveal the top card for Delver’s trigger.', hint: 'Use Library tools / reveal top card when an effect tells everyone what the top card is.', anchor: 'library-menu-button', completion: 'manual' },
-  { id: 'transform_card', chapter: 'Act 2 / Turn 2 — Upkeep Trigger', title: 'Transform Delver', scene: 'The wizard’s shadow unfolds into wings.', dialogue: 'Identity is just a face with ambition.', objective: 'Transform Delver into Insectile Aberration.', hint: 'Open Delver’s card detail and use Transform / Switch face.', anchor: 'card-detail', completion: 'detect-or-manual' },
-  { id: 'bolas_removal', chapter: 'Act 2 / Turn 2 — Main Phase', title: 'Doom Blade on the Stack', scene: 'Black fire forms around the insect.', dialogue: 'Now let us see whether your little revelation survives contact with removal.', objective: 'Watch Bolas target your transformed Delver.', hint: 'The scripted Doom Blade demonstrates targets and why protection/phase-out tools matter.', anchor: 'stack-panel', completion: 'manual' },
-  { id: 'phase_card', chapter: 'Act 2 / Turn 2 — In Response', title: 'Slip Out the Back', scene: 'Delver folds sideways out of reality.', dialogue: 'Annoying. You have found the door marked not here.', objective: 'Phase out Delver.', hint: 'Open Delver details and use Phase Out when a card like Slip Out the Back makes it phase out.', anchor: 'card-detail', completion: 'detect-or-manual' },
-  { id: 'add_counter', chapter: 'Act 2 / Turn 2 — In Response', title: '+1/+1 Counter', scene: 'A counter remains where the spell touched your creature.', dialogue: 'A number appears. Soon it will demand respect.', objective: 'Add a +1/+1 counter to Delver.', hint: 'Use card detail counters to represent counters from real effects.', anchor: 'card-detail', completion: 'detect-or-manual' },
-  { id: 'add_reminder', chapter: 'Act 2 / Turn 2 — Cleanup Memory', title: 'Until End of Turn Reminder', scene: 'A temporary note clings to the creature’s outline.', dialogue: 'Until end of turn is where memory goes to be betrayed.', objective: 'Add a reminder marker.', hint: 'Use a reminder like “Can’t block” or “+3/+3 until EOT” when a temporary effect needs remembering.', anchor: 'card-detail', completion: 'detect-or-manual' },
-  { id: 'tap_card', chapter: 'Act 2 / Turn 2 — Main Phase', title: 'Tap and Untap', scene: 'The creature returns, exhausted from not existing.', dialogue: 'Turn it sideways. The oldest gesture of usefulness.', objective: 'Tap and untap a permanent.', hint: 'Open card details and use Tap/Untap.', anchor: 'card-detail', completion: 'detect-or-manual' },
-  { id: 'face_down_reveal', chapter: 'Act 2 / Turn 2 — Hidden Information', title: 'Face Down and Reveal', scene: 'Bolas places a blank mask over a card.', dialogue: 'Sometimes a card is a secret with corners.', objective: 'Learn face-down and reveal tools.', hint: 'Use Turn Face Down / Reveal only when a card effect creates hidden information.', anchor: 'card-detail', completion: 'manual' },
-  { id: 'set_attackers_phase', chapter: 'Act 3 / Turn 3 — Beginning of Combat', title: 'Scheduled Violence', scene: 'The arena lowers its walls.', dialogue: 'Combat is not violence. It is scheduled violence.', objective: 'Move to the attackers step.', hint: 'Tap the phase indicator and choose Attackers after beginning combat.', anchor: 'phase-indicator', completion: 'detect-or-manual' },
-  { id: 'declare_attacker_player', chapter: 'Act 3 / Turn 3 — Declare Attackers', title: 'Attack Bolas', scene: 'Your creature crosses the line.', dialogue: 'Very well. Aim your little rebellion.', objective: 'Declare an attacker against Nicol Bolas.', hint: 'Tap your creature, choose Attack, then choose Nicol Bolas.', anchor: 'card-detail', completion: 'detect-or-manual' },
-  { id: 'attack_planeswalker_battle_note', chapter: 'Act 3 / Turn 3 — Declare Attackers', title: 'Not Every Attack Seeks a Face', scene: 'Bolas places a false throne between you and him.', dialogue: 'Some attacks seek a planeswalker. Some seek a battle.', objective: 'Learn attack target options.', hint: 'When planeswalkers or battles exist, the attack target picker can choose them instead of a player.', anchor: 'combat-summary', completion: 'manual' },
-  { id: 'declare_blocker_note', chapter: 'Act 3 / Turn 3 — Declare Blockers', title: 'A Blocker Appears', scene: 'A Zombie lurches between blade and dragon.', dialogue: 'The honorable thing would be to block. Fortunately, I am flexible.', objective: 'Learn blockers.', hint: 'The defending player can mark blockers manually in combat.', anchor: 'combat-summary', completion: 'manual' },
-  { id: 'first_strike_step', chapter: 'Act 3 / Turn 3 — First-Strike Damage', title: 'The Early Wound', scene: 'One blade lands before time catches up.', dialogue: 'First strike is violence arriving early.', objective: 'Set combat damage to First-strike damage.', hint: 'Use phase/combat controls when first strike or double strike matters.', anchor: 'phase-indicator', completion: 'detect-or-manual' },
-  { id: 'regular_damage_step', chapter: 'Act 3 / Turn 3 — Regular Damage', title: 'Damage on Schedule', scene: 'The second wound arrives on schedule.', dialogue: 'Then time remembers the rest of the damage.', objective: 'Set combat damage to Regular damage.', hint: 'Use combat damage step controls for the normal damage step.', anchor: 'phase-indicator', completion: 'detect-or-manual' },
-  { id: 'damage_markers', chapter: 'Act 3 / Turn 3 — End of Combat', title: 'Damage Markers', scene: 'Red marks flare on damaged creatures.', dialogue: 'Damage fades at cleanup. Arguments do not.', objective: 'Add temporary damage to a creature.', hint: 'Open a creature detail panel and use damage controls.', anchor: 'card-detail', completion: 'manual' },
-  { id: 'combat_summary_note', chapter: 'Act 3 / Turn 3 — End Combat', title: 'Combat Summary', scene: 'The arena writes down who is trying to hurt whom.', dialogue: 'The combat summary exists because memory is not a legal game object.', objective: 'Find Combat Summary.', hint: 'It lists attackers, blockers, attack targets, and damage-step state.', anchor: 'combat-summary', completion: 'manual' },
-  { id: 'private_hand_peek', chapter: 'Act 4 / Turn 4 — The Library Labyrinth', title: 'Duress the Dragon', scene: 'A thought-spell slips behind Bolas’s eyes.', dialogue: 'Public knowledge is vulgar. Private knowledge wins games.', objective: 'Use Private hand peek on Nicol Bolas.', hint: 'Use private peek only when a spell or effect lets you see hidden cards privately.', anchor: 'private-hand-peek-button', completion: 'detect-or-manual' },
-  { id: 'reveal_hand_note', chapter: 'Act 4 / Turn 4 — Public Knowledge', title: 'Reveal and Hide Hand', scene: 'Bolas opens one hand to the arena, then closes it.', dialogue: 'Public reveal is not the same as private knowledge. Do not confuse theatre with espionage.', objective: 'Learn Reveal Hand and Hide Hand.', hint: 'Use reveal tools when the whole table should see a player’s hand.', anchor: 'reveal-tools', completion: 'manual' },
-  { id: 'open_library_tools', chapter: 'Act 4 / Turn 4 — Your Library', title: 'Open the Library Labyrinth', scene: 'Your next draws appear as floating cards.', dialogue: 'The future is fragile. Rearrange it before it notices.', objective: 'Open Library tools.', hint: 'Tap the book/library icon. Swipe the bottom toolbar if it is off-screen.', anchor: 'library-menu-button', completion: 'detect-or-manual' },
-  { id: 'batch_library_actions', chapter: 'Act 4 / Turn 4 — Batch Actions', title: 'One Card, Ten Cards', scene: 'Several cards fall from the top of a library at once.', dialogue: 'One card is a choice. Ten cards is weather.', objective: 'Open Batch Actions.', hint: 'Batch Actions covers Draw N, Mill N, Reveal top N, Exile top N, Scry N, and Surveil N.', anchor: 'library-menu-button', completion: 'detect-or-manual' },
-  { id: 'opponent_library_tools', chapter: 'Act 4 / Turn 4 — Portent', title: 'Trespass with Permission', scene: 'Portent points at Bolas’s library instead of yours.', dialogue: 'Permission to trespass is still trespassing.', objective: 'Find opponent library tools.', hint: 'Use opponent library tools only when an effect like Portent lets you look at or reorder an opponent’s library.', anchor: 'library-menu-button', completion: 'manual' },
-  { id: 'create_token', chapter: 'Act 5 / Turn 5 — Main Phase', title: 'Dragon Fodder', scene: 'Two goblins crawl out of a spell-shaped hole.', dialogue: 'Some creatures were never cards. Still, they insist on standing there.', objective: 'Create Goblin tokens.', hint: 'Use Token Tools or deck-derived token templates when a spell creates tokens.', anchor: 'token-tools', completion: 'detect-or-manual' },
-  { id: 'deck_tokens_note', chapter: 'Act 5 / Turn 5 — Main Phase', title: 'Deck-Derived Templates', scene: 'Dragon Fodder remembers what it usually creates.', dialogue: 'Your deck has habits. The app can remember them.', objective: 'Find From Your Deck token templates.', hint: 'Imported decks can surface token, emblem, and dungeon references without storing huge card data.', anchor: 'token-tools', completion: 'manual' },
-  { id: 'custom_token_note', chapter: 'Act 5 / Turn 5 — Main Phase', title: 'Custom Monster', scene: 'Bolas names a creature no preset has prepared for.', dialogue: 'When reality lacks the correct monster, fill out the form.', objective: 'Learn Custom Token.', hint: 'Custom Token lets you choose name, stats, colors, text, and quantity.', anchor: 'token-tools', completion: 'manual' },
-  { id: 'target_system', chapter: 'Act 5 / Turn 5 — Main Phase', title: 'A Promise with Consequences', scene: 'A red line connects spell and victim.', dialogue: 'A target is a promise with consequences.', objective: 'Mark a target.', hint: 'Use Ability/Target tools on a spell or permanent when an effect targets something.', anchor: 'target-tools', completion: 'detect-or-manual' },
-  { id: 'attach_to_permanent', chapter: 'Act 5 / Turn 5 — Main Phase', title: 'Rancor Finds a Body', scene: 'Rancor coils around a creature.', dialogue: 'Attachments are relationships with rules text.', objective: 'Attach an Aura or Equipment-style card to a permanent.', hint: 'Use Attach to permanent when a card becomes attached to a creature, artifact, or other permanent.', anchor: 'card-detail', completion: 'manual' },
-  { id: 'attach_to_player_note', chapter: 'Act 5 / Turn 5 — Main Phase', title: 'Curse the Dragon', scene: 'Curse of the Pierced Heart hangs behind Bolas like a bad moon.', dialogue: 'Why curse a creature when you can curse the person making decisions?', objective: 'Attach a curse to Nicol Bolas.', hint: 'Use Attach to player for player-bound Auras such as Curses.', anchor: 'card-detail', completion: 'manual' },
-  { id: 'clone_control', chapter: 'Act 5 / Turn 5 — Main Phase', title: 'Clone and Betrayal', scene: 'A creature looks at itself and makes a tactical error.', dialogue: 'Copies are lies that learned anatomy. Control changes are betrayal with timestamps.', objective: 'Learn Clone and Give Control.', hint: 'Open card detail to clone a permanent or give control when a spell like Act of Treason says so.', anchor: 'card-detail', completion: 'manual' },
-  { id: 'player_panel', chapter: 'Act 6 / Turn 6 — The Player Becomes the Battlefield', title: 'Open Player Panel', scene: 'Bolas points at you instead of your cards.', dialogue: 'The battlefield is not only where creatures stand. Sometimes it is you.', objective: 'Open Player Counters & Statuses.', hint: 'Tap the player/status/counter button near your battlefield.', anchor: 'player-counters-button', completion: 'manual' },
-  { id: 'mana_pool', chapter: 'Act 6 / Turn 6 — Mana Pool', title: 'Floating Mana', scene: 'Green mana floats like a captured firefly.', dialogue: 'Mana unspent is a threat looking for a sentence.', objective: 'Add mana to your mana pool, then clear it.', hint: 'Mana Pool controls are manual and do not automatically pay for spells.', anchor: 'mana-pool-panel', completion: 'detect-or-manual' },
-  { id: 'player_counters', chapter: 'Act 6 / Turn 6 — Player Counters', title: 'Invisible Ledgers', scene: 'Poison, energy, and experience ledgers open beside your name.', dialogue: 'Some numbers sit on players because cards are too fragile to hold them.', objective: 'Add and remove a player counter.', hint: 'Use Poison, Energy, Experience, or custom player counters.', anchor: 'player-counters-panel', completion: 'detect-or-manual' },
-  { id: 'statuses', chapter: 'Act 6 / Turn 6 — Statuses', title: 'Crowns and Nightfall', scene: 'A crown, a dungeon door, a city seal, and a changing sky appear.', dialogue: 'Titles are counters with better costumes.', objective: 'Toggle a status, Day/Night, or Ring temptation.', hint: 'Use Monarch, Initiative, City’s Blessing, Day/Night, and Ring controls as cards require.', anchor: 'status-panel', completion: 'detect-or-manual' },
-  { id: 'emblems', chapter: 'Act 6 / Turn 6 — Emblems', title: 'A Scar the Rules Remember', scene: 'A planeswalker’s threat remains after the planeswalker is gone.', dialogue: 'An emblem is a scar the rules refuse to forget.', objective: 'Add an emblem.', hint: 'Use preset, custom, or deck-derived emblems.', anchor: 'player-counters-panel', completion: 'detect-or-manual' },
-  { id: 'dungeons_note', chapter: 'Act 6 / Turn 6 — Dungeons', title: 'Checklist with Walls', scene: 'A map appears beneath the turn order.', dialogue: 'Dungeons are not places. They are checklists with walls.', objective: 'Learn dungeon references.', hint: 'Use dungeon references for venture/initiative cards. Progress is manual.', anchor: 'player-counters-panel', completion: 'manual' },
-  { id: 'commander_note', chapter: 'Act 6 / Turn 6 — Commander', title: 'The Command Zone', scene: 'A command zone opens like a throne room.', dialogue: 'In Commander, death is merely a tax increase.', objective: 'Learn Commander mode tools.', hint: 'Commander games start at 40 life and add command zone, commander tax, and commander damage tools.', anchor: 'player-counters-panel', completion: 'manual' },
-  { id: 'final_spell', chapter: 'Act 7 / Final Turn — Main Phase', title: 'The Final Spell', scene: 'Your battlefield has become a weapon with several moving parts.', dialogue: 'Show me the oldest phrase in Magic. Show me you know when to answer.', objective: 'Cast the final spell or declare the final attack.', hint: 'Use the shown card or combat tool. The board is prepared for a lethal line.', anchor: 'hand-area', completion: 'manual' },
-  { id: 'final_bolas_response', chapter: 'Act 7 / Final Turn — In Response', title: 'Bolas Responds', scene: 'Bolas places one last spell above yours.', dialogue: 'Victory is adorable when it believes the stack is empty.', objective: 'Open the stack and inspect Bolas’s response.', hint: 'The newest spell is on top.', anchor: 'stack-button', completion: 'manual' },
-  { id: 'final_in_response', chapter: 'Act 7 / Final Turn — In Response', title: 'In Response', scene: 'Your answer appears above his answer.', dialogue: 'Ah. There it is. The phrase that ruins kings.', objective: 'Respond using the shown tool.', hint: 'Copy, counter, or resolve as instructed by the scripted board state.', anchor: 'stack-panel', completion: 'manual' },
-  { id: 'final_trial', chapter: 'Act 7 / Final Turn — Pass Priority', title: 'Let the Future Happen', scene: 'The arena waits.', dialogue: 'No more tricks? Then pass. Let the future happen.', objective: 'Pass priority.', hint: 'Tap Pass to finish the duel.', anchor: 'pass-button', completion: 'detect-or-manual' },
-  { id: 'async_oath', chapter: 'Act 8 / After the Duel — Async Survival', title: 'The Async Oath', scene: 'The dragon’s shadow cracks, but its smile remains.', dialogue: 'Leave clear board states. Pass priority. Use the log. Do not make your friends solve archaeology.', objective: 'Learn async play habits.', hint: 'Use pass, logs, and clear markers so friends can understand the game later.', anchor: 'pass-button', completion: 'manual' },
-  { id: 'watch_cleanup_note', chapter: 'Act 8 / After the Duel — Async Survival', title: 'Watchers and Cleanup', scene: 'The arena folds back toward the lobby.', dialogue: 'Some will watch. Some rooms will rot. Know the difference.', objective: 'Review Watch Game and Clean up old games.', hint: 'Watch from the lobby for spectators. Use cleanup for old host-owned games.', anchor: 'room-code', completion: 'manual' },
-  { id: 'manual_toolbox_note', chapter: 'Act 8 / After the Duel — Async Survival', title: 'The Manual Toolbox', scene: 'Bolas hands you a toolbox and pointedly not a judge.', dialogue: 'This machine is not a judge. It is a table, a memory, and a knife drawer.', objective: 'Understand the app’s manual-toolbox philosophy.', hint: 'Players are responsible for legal play; the app helps represent paper Magic.', anchor: null, completion: 'manual' },
+  { id: 'game_log', chapter: 'Act 1 / Turn 1 — End Step', title: 'The Arena Remembers', scene: 'The arena wall records every insult.', dialogue: 'Memory is a weapon. The log is where your excuses go to die.', objective: 'Open the log/chat.', hint: 'Use the chat/log icon near the top to review actions and leave clear async notes.', anchor: 'chat-button', completion: 'detect' },
+  { id: 'beginning_phase_draw', chapter: 'Act 2 / Turn 2 — Untap, Upkeep, Draw', title: 'The Ritual of a Turn', scene: 'A new turn opens like a blade.', dialogue: 'Untap. Upkeep. Draw. The ritual matters because mistakes love shortcuts.', objective: 'Open phase controls, set the draw step, then draw a card.', hint: 'Tap the phase indicator, choose Draw, then use Draw from the library tools.', anchor: 'phase-indicator', completion: 'detect' },
+  { id: 'cast_delver', chapter: 'Act 2 / Turn 2 — Main Phase', title: 'Cast Delver of Secrets', scene: 'A small wizard steps onto the board carrying a terrible secret.', dialogue: 'Small creatures are often containers for larger problems.', objective: 'Cast Delver of Secrets and resolve it onto the battlefield.', hint: 'Tap Delver in your hand, cast it, then resolve the stack item.', anchor: 'hand-area', completion: 'detect' },
+  { id: 'reveal_top_delver', chapter: 'Act 2 / Turn 2 — Upkeep Trigger', title: 'Reveal the Top Card', scene: 'The top of your library glows with instant magic.', dialogue: 'Show the insect what it wants to become.', objective: 'Use Library tools to reveal the top card for Delver’s trigger.', hint: 'Tap the book/library icon and reveal the top card.', anchor: 'library-menu-button', completion: 'detect' },
+  { id: 'transform_card', chapter: 'Act 2 / Turn 2 — Upkeep Trigger', title: 'Transform Delver', scene: 'The wizard’s shadow unfolds into wings.', dialogue: 'Identity is just a face with ambition.', objective: 'Transform Delver into Insectile Aberration.', hint: 'Open Delver’s card detail and use Transform / Switch face.', anchor: 'card-detail', completion: 'detect' },
+  { id: 'bolas_removal', chapter: 'Act 2 / Turn 2 — Main Phase', title: 'Doom Blade on the Stack', scene: 'Black fire forms around the insect.', dialogue: 'Now let us see whether your little revelation survives contact with removal.', objective: 'Open the Stack and inspect Bolas’s Doom Blade targeting Delver.', hint: 'The scripted Doom Blade demonstrates targets and why protection/phase-out tools matter.', anchor: 'stack-button', completion: 'detect' },
+  { id: 'phase_card', chapter: 'Act 2 / Turn 2 — In Response', title: 'Slip Out the Back', scene: 'Delver folds sideways out of reality.', dialogue: 'Annoying. You have found the door marked not here.', objective: 'Phase out Delver.', hint: 'Open Delver details and use Phase Out when a card like Slip Out the Back makes it phase out.', anchor: 'card-detail', completion: 'detect' },
+  { id: 'add_counter', chapter: 'Act 2 / Turn 2 — In Response', title: '+1/+1 Counter', scene: 'A counter remains where the spell touched your creature.', dialogue: 'A number appears. Soon it will demand respect.', objective: 'Add a +1/+1 counter to Delver.', hint: 'Use card detail counters to represent counters from real effects.', anchor: 'card-detail', completion: 'detect' },
+  { id: 'add_reminder', chapter: 'Act 2 / Turn 2 — Cleanup Memory', title: 'Until End of Turn Reminder', scene: 'A temporary note clings to the creature’s outline.', dialogue: 'Until end of turn is where memory goes to be betrayed.', objective: 'Add a reminder marker.', hint: 'Use a reminder like “Can’t block” or “+3/+3 until EOT” when a temporary effect needs remembering.', anchor: 'card-detail', completion: 'detect' },
+  { id: 'tap_card', chapter: 'Act 2 / Turn 2 — Main Phase', title: 'Tap and Untap', scene: 'The creature returns, exhausted from not existing.', dialogue: 'Turn it sideways. The oldest gesture of usefulness.', objective: 'Tap and untap a permanent.', hint: 'Open card details and use Tap/Untap.', anchor: 'card-detail', completion: 'detect' },
+  { id: 'face_down_reveal', chapter: 'Act 2 / Turn 2 — Hidden Information', title: 'Face Down and Reveal', scene: 'Bolas places a blank mask over a card.', dialogue: 'Sometimes a card is a secret with corners.', objective: 'Open Delver details, turn it face down, then reveal or switch it back.', hint: 'Use Turn Face Down / Reveal only when a card effect creates hidden information.', anchor: 'card-detail', completion: 'detect' },
+  { id: 'set_attackers_phase', chapter: 'Act 3 / Turn 3 — Beginning of Combat', title: 'Scheduled Violence', scene: 'The arena lowers its walls.', dialogue: 'Combat is not violence. It is scheduled violence.', objective: 'Move to the attackers step.', hint: 'Tap the phase indicator and choose Attackers after beginning combat.', anchor: 'phase-indicator', completion: 'detect' },
+  { id: 'declare_attacker_player', chapter: 'Act 3 / Turn 3 — Declare Attackers', title: 'Attack Bolas', scene: 'Your creature crosses the line.', dialogue: 'Very well. Aim your little rebellion.', objective: 'Declare an attacker against Nicol Bolas.', hint: 'Tap your creature, choose Attack, then choose Nicol Bolas.', anchor: 'card-detail', completion: 'detect' },
+  { id: 'attack_planeswalker_battle_note', chapter: 'Act 3 / Turn 3 — Declare Attackers', title: 'Not Every Attack Seeks a Face', scene: 'Bolas places a false throne between you and him.', dialogue: 'Some attacks seek a planeswalker. Some seek a battle.', objective: 'Open the attack target picker and choose Nicol Bolas or the planeswalker.', hint: 'Tap your attacker, choose Attack, then choose a target from the picker.', anchor: 'card-detail', completion: 'detect' },
+  { id: 'declare_blocker_note', chapter: 'Act 3 / Turn 3 — Declare Blockers', title: 'A Blocker Appears', scene: 'A Zombie lurches between blade and dragon.', dialogue: 'The honorable thing would be to block. Fortunately, I am flexible.', objective: 'Open blocker tools and mark a blocker for the attack.', hint: 'Use the blocker controls on a creature or combat row when a defender blocks.', anchor: 'combat-summary', completion: 'detect' },
+  { id: 'first_strike_step', chapter: 'Act 3 / Turn 3 — First-Strike Damage', title: 'The Early Wound', scene: 'One blade lands before time catches up.', dialogue: 'First strike is violence arriving early.', objective: 'Set combat damage to First-strike damage.', hint: 'Use phase/combat controls when first strike or double strike matters.', anchor: 'phase-indicator', completion: 'detect' },
+  { id: 'regular_damage_step', chapter: 'Act 3 / Turn 3 — Regular Damage', title: 'Damage on Schedule', scene: 'The second wound arrives on schedule.', dialogue: 'Then time remembers the rest of the damage.', objective: 'Set combat damage to Regular damage.', hint: 'Use combat damage step controls for the normal damage step.', anchor: 'phase-indicator', completion: 'detect' },
+  { id: 'damage_markers', chapter: 'Act 3 / Turn 3 — End of Combat', title: 'Damage Markers', scene: 'Red marks flare on damaged creatures.', dialogue: 'Damage fades at cleanup. Arguments do not.', objective: 'Open a creature detail panel and add temporary damage.', hint: 'Use the damage controls; damage clears at cleanup.', anchor: 'card-detail', completion: 'detect' },
+  { id: 'combat_summary_note', chapter: 'Act 3 / Turn 3 — End Combat', title: 'Combat Summary', scene: 'The arena writes down who is trying to hurt whom.', dialogue: 'The combat summary exists because memory is not a legal game object.', objective: 'Tap Combat Summary to inspect the war record.', hint: 'It lists attackers, blockers, attack targets, and damage-step state.', anchor: 'combat-summary', completion: 'detect' },
+  { id: 'private_hand_peek', chapter: 'Act 4 / Turn 4 — The Library Labyrinth', title: 'Duress the Dragon', scene: 'A thought-spell slips behind Bolas’s eyes.', dialogue: 'Public knowledge is vulgar. Private knowledge wins games.', objective: 'Use Private hand peek on Nicol Bolas.', hint: 'Use private peek only when a spell or effect lets you see hidden cards privately.', anchor: 'private-hand-peek-button', completion: 'detect' },
+  { id: 'reveal_hand_note', chapter: 'Act 4 / Turn 4 — Public Knowledge', title: 'Reveal and Hide Hand', scene: 'Bolas opens one hand to the arena, then closes it.', dialogue: 'Public reveal is not the same as private knowledge. Do not confuse theatre with espionage.', objective: 'Open Reveal tools and reveal or hide your hand.', hint: 'Use reveal tools when the whole table should see a player’s hand.', anchor: 'reveal-tools', completion: 'detect' },
+  { id: 'open_library_tools', chapter: 'Act 4 / Turn 4 — Your Library', title: 'Open the Library Labyrinth', scene: 'Your next draws appear as floating cards.', dialogue: 'The future is fragile. Rearrange it before it notices.', objective: 'Open Library tools.', hint: 'Tap the book/library icon. Swipe the bottom toolbar if it is off-screen.', anchor: 'library-menu-button', completion: 'detect' },
+  { id: 'batch_library_actions', chapter: 'Act 4 / Turn 4 — Batch Actions', title: 'One Card, Ten Cards', scene: 'Several cards fall from the top of a library at once.', dialogue: 'One card is a choice. Ten cards is weather.', objective: 'Open Batch Actions.', hint: 'Batch Actions covers Draw N, Mill N, Reveal top N, Exile top N, Scry N, and Surveil N.', anchor: 'library-menu-button', completion: 'detect' },
+  { id: 'opponent_library_tools', chapter: 'Act 4 / Turn 4 — Portent', title: 'Trespass with Permission', scene: 'Portent points at Bolas’s library instead of yours.', dialogue: 'Permission to trespass is still trespassing.', objective: 'Open Library tools and inspect the opponent library section.', hint: 'Use opponent library tools only when an effect like Portent lets you look at or reorder an opponent’s library.', anchor: 'library-menu-button', completion: 'detect' },
+  { id: 'create_token', chapter: 'Act 5 / Turn 5 — Main Phase', title: 'Dragon Fodder', scene: 'Two goblins crawl out of a spell-shaped hole.', dialogue: 'Some creatures were never cards. Still, they insist on standing there.', objective: 'Create Goblin tokens.', hint: 'Use Token Tools or deck-derived token templates when a spell creates tokens.', anchor: 'token-tools', completion: 'detect' },
+  { id: 'deck_tokens_note', chapter: 'Act 5 / Turn 5 — Main Phase', title: 'Deck-Derived Templates', scene: 'Dragon Fodder remembers what it usually creates.', dialogue: 'Your deck has habits. The app can remember them.', objective: 'Open Token Tools and tap a From Your Deck token template if one is present.', hint: 'Imported decks can surface token, emblem, and dungeon references without storing huge card data.', anchor: 'token-tools', completion: 'detect' },
+  { id: 'custom_token_note', chapter: 'Act 5 / Turn 5 — Main Phase', title: 'Custom Monster', scene: 'Bolas names a creature no preset has prepared for.', dialogue: 'When reality lacks the correct monster, fill out the form.', objective: 'Open Token Tools and edit the Custom Token form.', hint: 'Custom Token lets you choose name, stats, colors, text, and quantity.', anchor: 'token-tools', completion: 'detect' },
+  { id: 'target_system', chapter: 'Act 5 / Turn 5 — Main Phase', title: 'A Promise with Consequences', scene: 'A red line connects spell and victim.', dialogue: 'A target is a promise with consequences.', objective: 'Mark a target.', hint: 'Use Ability/Target tools on a spell or permanent when an effect targets something.', anchor: 'target-tools', completion: 'detect' },
+  { id: 'attach_to_permanent', chapter: 'Act 5 / Turn 5 — Main Phase', title: 'Rancor Finds a Body', scene: 'Rancor coils around a creature.', dialogue: 'Attachments are relationships with rules text.', objective: 'Use Attach to permanent on Rancor or another attachment.', hint: 'Use Attach to permanent when a card becomes attached to a creature, artifact, or other permanent.', anchor: 'card-detail', completion: 'detect' },
+  { id: 'attach_to_player_note', chapter: 'Act 5 / Turn 5 — Main Phase', title: 'Curse the Dragon', scene: 'Curse of the Pierced Heart hangs behind Bolas like a bad moon.', dialogue: 'Why curse a creature when you can curse the person making decisions?', objective: 'Use Attach to player to curse Nicol Bolas.', hint: 'Use Attach to player for player-bound Auras such as Curses.', anchor: 'card-detail', completion: 'detect' },
+  { id: 'clone_control', chapter: 'Act 5 / Turn 5 — Main Phase', title: 'Clone and Betrayal', scene: 'A creature looks at itself and makes a tactical error.', dialogue: 'Copies are lies that learned anatomy. Control changes are betrayal with timestamps.', objective: 'Open card detail and use Clone or Give Control.', hint: 'Use these tools when a spell copies a permanent or changes control.', anchor: 'card-detail', completion: 'detect' },
+  { id: 'player_panel', chapter: 'Act 6 / Turn 6 — The Player Becomes the Battlefield', title: 'Open Player Panel', scene: 'Bolas points at you instead of your cards.', dialogue: 'The battlefield is not only where creatures stand. Sometimes it is you.', objective: 'Open Player Counters & Statuses.', hint: 'Tap the player/status/counter button near your battlefield.', anchor: 'player-counters-button', completion: 'detect' },
+  { id: 'mana_pool', chapter: 'Act 6 / Turn 6 — Mana Pool', title: 'Floating Mana', scene: 'Green mana floats like a captured firefly.', dialogue: 'Mana unspent is a threat looking for a sentence.', objective: 'Add mana to your mana pool, then clear it.', hint: 'Mana Pool controls are manual and do not automatically pay for spells.', anchor: 'mana-pool-panel', completion: 'detect' },
+  { id: 'player_counters', chapter: 'Act 6 / Turn 6 — Player Counters', title: 'Invisible Ledgers', scene: 'Poison, energy, and experience ledgers open beside your name.', dialogue: 'Some numbers sit on players because cards are too fragile to hold them.', objective: 'Add and remove a player counter.', hint: 'Use Poison, Energy, Experience, or custom player counters.', anchor: 'player-counters-panel', completion: 'detect' },
+  { id: 'statuses', chapter: 'Act 6 / Turn 6 — Statuses', title: 'Crowns and Nightfall', scene: 'A crown, a dungeon door, a city seal, and a changing sky appear.', dialogue: 'Titles are counters with better costumes.', objective: 'Toggle a status, Day/Night, or Ring temptation.', hint: 'Use Monarch, Initiative, City’s Blessing, Day/Night, and Ring controls as cards require.', anchor: 'status-panel', completion: 'detect' },
+  { id: 'emblems', chapter: 'Act 6 / Turn 6 — Emblems', title: 'A Scar the Rules Remember', scene: 'A planeswalker’s threat remains after the planeswalker is gone.', dialogue: 'An emblem is a scar the rules refuse to forget.', objective: 'Add an emblem.', hint: 'Use preset, custom, or deck-derived emblems.', anchor: 'player-counters-panel', completion: 'detect' },
+  { id: 'dungeons_note', chapter: 'Act 6 / Turn 6 — Dungeons', title: 'Checklist with Walls', scene: 'A map appears beneath the turn order.', dialogue: 'Dungeons are not places. They are checklists with walls.', objective: 'Open the dungeon reference from Player Counters & Statuses.', hint: 'Use dungeon references for venture/initiative cards. Progress is manual.', anchor: 'player-counters-panel', completion: 'detect' },
+  { id: 'commander_note', chapter: 'Act 6 / Turn 6 — Commander', title: 'The Command Zone', scene: 'A command zone opens like a throne room.', dialogue: 'In Commander, death is merely a tax increase.', objective: 'Open the commander/player tools panel and inspect commander status.', hint: 'Commander games start at 40 life and add command zone, commander tax, and commander damage tools.', anchor: 'player-counters-panel', completion: 'detect' },
+  { id: 'final_spell', chapter: 'Act 7 / Final Turn — Main Phase', title: 'The Final Spell', scene: 'Your battlefield has become a weapon with several moving parts.', dialogue: 'Show me the oldest phrase in Magic. Show me you know when to answer.', objective: 'Cast the final Lightning Bolt or declare the final attack.', hint: 'Use the shown card or combat tool. The board is prepared for a lethal line.', anchor: 'hand-area', completion: 'detect' },
+  { id: 'final_bolas_response', chapter: 'Act 7 / Final Turn — In Response', title: 'Bolas Responds', scene: 'Bolas places one last spell above yours.', dialogue: 'Victory is adorable when it believes the stack is empty.', objective: 'Open the stack and inspect Bolas’s response.', hint: 'The newest spell is on top.', anchor: 'stack-button', completion: 'detect' },
+  { id: 'final_in_response', chapter: 'Act 7 / Final Turn — In Response', title: 'In Response', scene: 'Your answer appears above his answer.', dialogue: 'Ah. There it is. The phrase that ruins kings.', objective: 'Respond on the stack by copying, countering, or resolving the shown item.', hint: 'Use the active stack controls to answer Bolas.', anchor: 'stack-panel', completion: 'detect' },
+  { id: 'final_trial', chapter: 'Act 7 / Final Turn — Pass Priority', title: 'Let the Future Happen', scene: 'The arena waits.', dialogue: 'No more tricks? Then pass. Let the future happen.', objective: 'Pass priority.', hint: 'Tap Pass to finish the duel.', anchor: 'pass-button', completion: 'detect' },
+  { id: 'async_oath', chapter: 'Act 8 / After the Duel — Async Survival', title: 'The Async Oath', scene: 'The dragon’s shadow cracks, but its smile remains.', dialogue: 'Leave clear board states. Pass priority. Use the log. Do not make your friends solve archaeology.', objective: 'Open log/chat, then pass priority so the async state is clear.', hint: 'Use pass, logs, and clear markers so friends can understand the game later.', anchor: 'chat-button', completion: 'detect' },
+  { id: 'watch_cleanup_note', chapter: 'Act 8 / After the Duel — Async Survival', title: 'Watchers and Cleanup', scene: 'The arena folds back toward the lobby.', dialogue: 'Some will watch. Some rooms will rot. Know the difference.', objective: 'Tap the room code again to practice sharing a room before cleanup later.', hint: 'Watch and cleanup live in the lobby; in-game, copying the room code is the real table action.', anchor: 'room-code', completion: 'detect' },
+  { id: 'manual_toolbox_note', chapter: 'Act 8 / After the Duel — Async Survival', title: 'The Manual Toolbox', scene: 'Bolas hands you a toolbox and pointedly not a judge.', dialogue: 'This machine is not a judge. It is a table, a memory, and a knife drawer.', objective: 'Open the log/chat and focus the message field as your table note scratchpad.', hint: 'Players are responsible for legal play; the app helps represent paper Magic.', anchor: 'chat-button', completion: 'detect' },
   { id: 'tutorial_complete', chapter: 'Victory, Temporarily', title: 'Nicol Bolas Defeated', scene: 'The dragon’s shadow cracks, but its smile remains.', dialogue: 'You have not defeated me. You have merely become inconvenient.', objective: 'Finish the tutorial duel.', hint: 'You can now return to the lobby, keep exploring this board, or restart the guided duel.', anchor: null, completion: 'finish' },
 ];
 const TUTORIAL_LOBBY_SCENES = [
@@ -4940,6 +4940,12 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     const anchor = Array.isArray(currentTutorialAnchor) ? currentTutorialAnchor[0] : currentTutorialAnchor;
     if (!anchor || typeof document === 'undefined') return;
     const targetAnchor = anchor === 'battlefields' ? 'own-battlefield' : anchor;
+    if (targetAnchor === 'stack-button' || targetAnchor === 'stack-panel') setStackDetailOpen(true);
+    if (targetAnchor === 'chat-button') { setChatOpen(true); maybeCompleteTutorialStep('game_log'); maybeCompleteTutorialStep('async_oath'); maybeCompleteTutorialStep('manual_toolbox_note'); }
+    if (targetAnchor === 'library-menu-button') setLibraryMenuOpen(true);
+    if (targetAnchor === 'token-tools') { setLibraryMenuOpen(false); setTokenModal(getDefaultCustomToken()); }
+    if (targetAnchor === 'player-counters-button' || targetAnchor === 'player-counters-panel' || targetAnchor === 'mana-pool-panel' || targetAnchor === 'status-panel') setPlayerStatsOpen(true);
+    if (targetAnchor === 'reveal-tools') setRevealsOpen(true);
     const target = document.querySelector(`[data-tutorial-anchor="${targetAnchor}"]`);
 
     if (targetAnchor === 'library-menu-button' || targetAnchor === 'draw-button') {
@@ -5075,24 +5081,42 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     if (!isTutorialGame || !liveStepId) return Promise.resolve(false);
     const stepId = liveStepId;
     const actionStepMap = {
-      DRAW_CARD: ['draw_card'],
+      DRAW_CARD: ['beginning_phase_draw'],
       PLAY_LAND: ['play_land'],
-      CAST_SPELL: ['cast_spell_to_stack'],
-      COPY_STACK_ITEM: ['copy_stack_item'],
-      RESOLVE_STACK_TOP: ['resolve_stack_item'],
-      COUNTER_STACK_TOP: ['counter_stack_item'],
-      PASS_PRIORITY: ['pass_priority', 'final_trial'],
+      UNDO_LAST_ACTION: ['undo_play_land'],
+      CAST_SPELL: ['cast_spell_to_stack', 'cast_delver', 'final_spell'],
+      COPY_STACK_ITEM: ['copy_stack_item', 'final_in_response'],
+      RESOLVE_STACK_TOP: ['resolve_stack_item', 'counter_stack_item', 'cast_delver', 'final_in_response'],
+      COUNTER_STACK_TOP: ['counter_stack_item', 'final_in_response'],
+      PASS_PRIORITY: ['pass_priority', 'final_trial', 'async_oath'],
       MANUAL_SET_STEP: payload?.phaseId === 'combat_attackers' ? ['set_attackers_phase'] : [],
       SET_COMBAT_DAMAGE_STEP: payload?.combatDamageStep === COMBAT_DAMAGE_STEPS.FIRST_STRIKE ? ['first_strike_step'] : (payload?.combatDamageStep === COMBAT_DAMAGE_STEPS.REGULAR ? ['regular_damage_step'] : []),
-      SET_ATTACK_TARGET: ['declare_attacker_player'],
+      SET_ATTACK_TARGET: ['declare_attacker_player', 'attack_planeswalker_battle_note'],
+      TOGGLE_BLOCK_TARGET: ['declare_blocker_note'],
       TAP_TOGGLE: ['tap_card'],
+      TEMP_DAMAGE: ['damage_markers'],
       MOD_COUNTER: ['add_counter'],
       ADD_CARD_REMINDER: ['add_reminder'],
       PHASE_TOGGLE: ['phase_card'],
-      SWITCH_CARD_FACE: ['transform_card'],
-      CREATE_TOKEN: ['create_token'],
+      SWITCH_CARD_FACE: ['transform_card', 'face_down_reveal'],
+      TOGGLE_FACE: ['face_down_reveal'],
+      REVEAL_CARD: ['reveal_top_delver'],
+      BATCH_REVEAL_LIBRARY: ['reveal_top_delver', 'batch_library_actions', 'opponent_library_tools'],
+      BATCH_DRAW_LIBRARY: ['batch_library_actions', 'opponent_library_tools'],
+      BATCH_MILL_LIBRARY: ['batch_library_actions', 'opponent_library_tools'],
+      BATCH_EXILE_LIBRARY: ['batch_library_actions', 'opponent_library_tools'],
+      BATCH_SCRY_LIBRARY: ['batch_library_actions', 'opponent_library_tools'],
+      BATCH_SURVEIL_LIBRARY: ['batch_library_actions', 'opponent_library_tools'],
+      REORDER_TOP_LIBRARY: ['opponent_library_tools'],
+      SHUFFLE_LIBRARY: ['opponent_library_tools'],
+      CREATE_TOKEN: ['create_token', 'deck_tokens_note', 'custom_token_note'],
       TARGET: ['target_system'],
+      ATTACH_CARD: payload?.targetPlayerId ? ['attach_to_player_note'] : ['attach_to_permanent'],
+      CLONE_CARD: ['clone_control'],
+      CHANGE_CONTROL: ['clone_control'],
       PRIVATE_PEEK_HAND: ['private_hand_peek'],
+      REVEAL_ALL_HAND: ['reveal_hand_note'],
+      TOGGLE_HAND_REVEAL: ['reveal_hand_note'],
       PLAYER_COUNTER: ['player_counters'],
       MANA_POOL_ADJUST: ['mana_pool'],
       MANA_POOL_CLEAR: ['mana_pool'],
@@ -5100,14 +5124,50 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       RING_TEMPTATION: ['statuses'],
       TOGGLE_PLAYER_STATUS: ['statuses'],
       SET_DAY_NIGHT: ['statuses'],
-      ADD_PLAYER_EMBLEM: ['emblems']
+      ADD_PLAYER_EMBLEM: ['emblems'],
+      ADD_PLAYER_REMINDER: ['dungeons_note'],
+      COMMANDER_TAX: ['commander_note'],
+      COMMANDER_DAMAGE: ['commander_note'],
+      SET_COMMANDER: ['commander_note']
     };
     if ((actionStepMap[actionType] || []).includes(stepId)) {
+      if (stepId === 'final_trial' && actionType === 'PASS_PRIORITY') {
+        const baseCompletedStepIds = capTutorialCompletedStepIds((optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.completedStepIds || []);
+        updateTutorialState({
+          stepId: 'tutorial_complete',
+          completedStepIds: capTutorialCompletedStepIds([...baseCompletedStepIds, stepId]),
+          finished: true,
+          inactive: false
+        }, { actionLabel: actionType });
+        return Promise.resolve(true);
+      }
       return advanceTutorialStepFrom(stepId, { markCompleted: true, actionLabel: actionType });
     }
     return Promise.resolve(false);
   };
 
+
+
+
+  useEffect(() => {
+    if (!isTutorialGame || !selectedCard) return;
+    const liveStepId = (optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.stepId || 'intro';
+    if (['hand_area'].includes(liveStepId)) {
+      maybeCompleteTutorialStep(liveStepId);
+    }
+  }, [isTutorialGame, selectedCard?.instanceId]);
+
+  useEffect(() => {
+    if (!isTutorialGame) return;
+    const liveStepId = (optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.stepId || 'intro';
+    if (stackDetailOpen && ['inspect_stack', 'bolas_negate', 'bolas_removal', 'final_bolas_response'].includes(liveStepId)) maybeCompleteTutorialStep(liveStepId);
+    if (chatOpen && ['game_log', 'async_oath', 'manual_toolbox_note'].includes(liveStepId)) maybeCompleteTutorialStep(liveStepId);
+    if (libraryMenuOpen && ['open_library_tools', 'opponent_library_tools'].includes(liveStepId)) maybeCompleteTutorialStep(liveStepId);
+    if (libraryBatchOpen && liveStepId === 'batch_library_actions') maybeCompleteTutorialStep(liveStepId);
+    if (tokenModal && ['deck_tokens_note', 'custom_token_note'].includes(liveStepId)) maybeCompleteTutorialStep(liveStepId);
+    if (playerStatsOpen && ['player_panel', 'dungeons_note', 'commander_note'].includes(liveStepId)) maybeCompleteTutorialStep(liveStepId);
+    if (revealsOpen && liveStepId === 'reveal_hand_note') maybeCompleteTutorialStep(liveStepId);
+  }, [isTutorialGame, stackDetailOpen, chatOpen, libraryMenuOpen, libraryBatchOpen, Boolean(tokenModal), playerStatsOpen, revealsOpen]);
 
   const buildTutorialCardInstance = useCallback((cardName, ownerId, zone = ZONES.HAND, controllerId = ownerId) => {
     const safeName = String(cardName || 'Tutorial Card');
@@ -5813,6 +5873,9 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
   const openChat = () => {
     setChatOpen(true);
+    maybeCompleteTutorialStep('game_log');
+    maybeCompleteTutorialStep('async_oath');
+    maybeCompleteTutorialStep('manual_toolbox_note');
     if (isSpectator) {
       setSpectatorLastSeenChatAt(Date.now());
     } else {
@@ -8636,6 +8699,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     }
     setLibraryMenuOpen(false);
     setTokenModal(getDefaultCustomToken());
+    maybeCompleteTutorialStep('custom_token_note');
   };
 
   const submitTokenPreset = async (preset) => {
@@ -9533,7 +9597,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         <div
           data-tutorial-anchor="room-code"
           className={`flex flex-col items-center justify-center bg-slate-900 px-3 py-1 rounded border border-slate-700 cursor-pointer hover:bg-slate-800${getTutorialAnchorClass(currentTutorialAnchor, 'room-code', tutorialPulseAnchor)}`}
-          onClick={() => copyToClipboard(gameId)}
+          onClick={() => { copyToClipboard(gameId); maybeCompleteTutorialStep('intro'); maybeCompleteTutorialStep('room_code'); maybeCompleteTutorialStep('watch_cleanup_note'); }}
           title="Click to Copy Game ID"
         >
           <span className="text-[9px] text-slate-500 uppercase tracking-widest hidden sm:block">Room Code</span>
@@ -9603,7 +9667,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           </button>
           <button
             onClick={openChat}
-            className="relative z-20 pointer-events-auto p-2 rounded hover:bg-slate-700 text-slate-400 hover:text-white"
+            data-tutorial-anchor="chat-button"
+            className={`relative z-20 pointer-events-auto p-2 rounded hover:bg-slate-700 text-slate-400 hover:text-white${getTutorialAnchorClass(currentTutorialAnchor, 'chat-button', tutorialPulseAnchor)}`}
           >
             <MessageSquare size={20} />
             {unreadCount > 0 && (
@@ -9620,7 +9685,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             <BookOpen size={20} />
           </button>
           <button
-            onClick={() => setRevealsOpen(true)}
+            onClick={() => { setRevealsOpen(true); maybeCompleteTutorialStep('reveal_hand_note'); }}
             data-tutorial-anchor="reveal-tools"
             className={`relative z-20 pointer-events-auto flex flex-col items-center justify-center px-2 py-1 rounded hover:bg-slate-700${getTutorialAnchorClass(currentTutorialAnchor, 'reveal-tools', tutorialPulseAnchor)}`}
             title="View reveals and reveal tools"
@@ -9902,7 +9967,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               </div>
             ) : <div />}
 
-            <div data-tutorial-anchor="combat-summary" className={`bg-slate-900/90 border border-slate-700 rounded-lg p-3 text-xs space-y-2${getTutorialAnchorClass(currentTutorialAnchor, 'combat-summary', tutorialPulseAnchor)}`}>
+            <div data-tutorial-anchor="combat-summary" onClick={() => { maybeCompleteTutorialStep('combat_summary_note'); maybeCompleteTutorialStep('declare_blocker_note'); }} className={`bg-slate-900/90 border border-slate-700 rounded-lg p-3 text-xs space-y-2${getTutorialAnchorClass(currentTutorialAnchor, 'combat-summary', tutorialPulseAnchor)}`}>
               <div className="font-bold text-slate-200 uppercase tracking-wider">Combat Summary</div>
               <div className="flex flex-wrap items-center gap-2">
                 <span className="font-semibold text-slate-300">Damage step:</span>
@@ -9931,7 +9996,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             </div>
           </div>
 
-          <section data-tutorial-anchor="own-battlefield" className={`rounded-xl border border-slate-700 bg-slate-900/30 p-3${getTutorialAnchorClass(currentTutorialAnchor, 'own-battlefield', tutorialPulseAnchor)}`}>
+          <section data-tutorial-anchor="own-battlefield" onClick={() => maybeCompleteTutorialStep('battlefields')} className={`rounded-xl border border-slate-700 bg-slate-900/30 p-3${getTutorialAnchorClass(currentTutorialAnchor, 'own-battlefield', tutorialPulseAnchor)}`}>
             <div className="flex items-center justify-between mb-3 gap-2">
               <div className="flex items-center gap-2">
                 <User size={16} className="text-green-400"/>
@@ -10067,7 +10132,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
             <div data-tutorial-anchor="player-counters-button" className={`flex items-center gap-2 cursor-pointer p-1 rounded hover:bg-slate-800${getTutorialAnchorClass(currentTutorialAnchor, 'player-counters-button', tutorialPulseAnchor)}`} onClick={(e) => {
               if(targetingState) { e.stopPropagation(); toggleTargetPlayer(viewAsPlayerId); }
-              else { setPlayerStatsOpen(true); maybeCompleteTutorialStep('player_counters_statuses'); }
+              else { setPlayerStatsOpen(true); maybeCompleteTutorialStep('player_panel'); }
             }}>
               <span className="text-red-400 font-bold text-xl">{myPlayer?.life}</span>
               <div className="flex flex-col">

@@ -5133,6 +5133,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       setTutorialActivationDebug(null);
       return undefined;
     }
+    const existingActivation = tutorialStepActivationRef.current;
+    if (existingActivation?.stepId === currentTutorialStep.id) return undefined;
     if (tutorialAdvanceDelayTimerRef.current) {
       window.clearTimeout(tutorialAdvanceDelayTimerRef.current);
       tutorialAdvanceDelayTimerRef.current = null;
@@ -5456,10 +5458,10 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   useEffect(() => {
     if (!isTutorialGame || !selectedCard) return;
     const liveStepId = (optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.stepId || 'intro';
-    if (['hand_area'].includes(liveStepId)) {
+    if (liveStepId === 'hand_area' && selectedCard.zone === ZONES.HAND && selectedCard.controllerId === viewAsPlayerId) {
       maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'selectedCard' });
     }
-  }, [isTutorialGame, selectedCard?.instanceId]);
+  }, [isTutorialGame, selectedCard?.instanceId, selectedCard?.zone, selectedCard?.controllerId, viewAsPlayerId]);
 
   useEffect(() => {
     if (!isTutorialGame) return;
@@ -9952,6 +9954,13 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     await handleAction('TEMP_DAMAGE', { cardId, amount, clear });
   };
 
+  const openHandCardDetail = (card) => {
+    setSelectedCard(card);
+    if (card?.zone === ZONES.HAND && card?.controllerId === viewAsPlayerId) {
+      maybeCompleteTutorialStep('hand_area', { source: 'user-action', detail: 'handCardTapped' });
+    }
+  };
+
   return (
     <div
       className="flex flex-col h-screen bg-slate-900 text-slate-100 overflow-hidden font-sans"
@@ -10894,7 +10903,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               targets={game.targets || []}
               stack={stackCards}
               isSelected={targetingState?.selectedIds.includes(card.instanceId)}
-              onMove={() => setSelectedCard(card)}
+              onMove={() => openHandCardDetail(card)}
               onZoom={setZoomedCard}
               targetInfo={getTargetInfoFor(card)}
             />

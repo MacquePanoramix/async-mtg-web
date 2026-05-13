@@ -2694,24 +2694,43 @@ const shuffleArray = (array) => {
   return array;
 };
 
-const copyToClipboard = (text) => {
-  // Robust fallback for copy
+const copyToClipboard = (text, { onCopied, onCopyFailed } = {}) => {
+  const notifyCopied = () => onCopied?.(`Copied: ${text}`);
+  const notifyCopyFailed = () => onCopyFailed?.(`Copy failed. Code: ${text}`);
+
   if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(text).then(() => alert(`Copied: ${text}`)).catch(() => prompt("Copy this code:", text));
-  } else {
-    // Fallback for older browsers / iframe restrictions
-    const textArea = document.createElement("textarea");
-    textArea.value = text;
-    document.body.appendChild(textArea);
-    textArea.select();
-    try {
-      document.execCommand('copy');
-      alert(`Copied: ${text}`);
-    } catch {
-      prompt("Copy this code:", text);
-    }
-    document.body.removeChild(textArea);
+    return navigator.clipboard.writeText(text)
+      .then(() => {
+        notifyCopied();
+        return true;
+      })
+      .catch(() => {
+        notifyCopyFailed();
+        return false;
+      });
   }
+
+  // Fallback for older browsers / iframe restrictions.
+  const textArea = document.createElement("textarea");
+  textArea.value = text;
+  textArea.setAttribute('readonly', '');
+  textArea.style.position = 'fixed';
+  textArea.style.top = '-9999px';
+  document.body.appendChild(textArea);
+  textArea.select();
+  let copied = false;
+  try {
+    copied = document.execCommand('copy');
+  } catch {
+    copied = false;
+  }
+  document.body.removeChild(textArea);
+  if (copied) {
+    notifyCopied();
+  } else {
+    notifyCopyFailed();
+  }
+  return Promise.resolve(copied);
 };
 
 const isMobileOrTouchDevice = () => {
@@ -5695,6 +5714,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       SET_DAY_NIGHT: ['statuses', 'tool_celestus_day'],
       ADD_PLAYER_EMBLEM: ['emblems', 'tool_chandra_emblem'],
       ADD_PLAYER_REMINDER: ['dungeons_note', 'tool_nadaar_dungeon'],
+      ROOM_CODE_COPIED: ['G01_room_code', 'intro', 'room_code', 'watch_cleanup_note'],
       COMMANDER_TAX: ['commander_note'],
       COMMANDER_DAMAGE: ['commander_note'],
       SET_COMMANDER: ['commander_note']
@@ -10597,7 +10617,23 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         <div
           data-tutorial-anchor="room-code"
           className={`flex flex-col items-center justify-center bg-slate-900 px-3 py-1 rounded border border-slate-700 cursor-pointer hover:bg-slate-800${getTutorialAnchorClass(currentTutorialAnchor, 'room-code', tutorialPulseAnchor)}`}
-          onClick={() => { copyToClipboard(gameId); maybeCompleteTutorialStep('intro'); maybeCompleteTutorialStep('room_code'); maybeCompleteTutorialStep('watch_cleanup_note'); maybeCompleteTutorialStep('G01_room_code'); }}
+          onClick={() => {
+            maybeCompleteTutorialStep('G01_room_code', { source: 'user-action', detail: 'roomCodeCopied' });
+            maybeCompleteTutorialStep('intro');
+            maybeCompleteTutorialStep('room_code');
+            maybeCompleteTutorialStep('watch_cleanup_note');
+            maybeCompleteTutorialAction('ROOM_CODE_COPIED', { roomCode: gameId });
+            copyToClipboard(gameId, {
+              onCopied: (message) => {
+                setNotification(message);
+                setTimeout(() => setNotification(null), 1800);
+              },
+              onCopyFailed: (message) => {
+                setNotification(message);
+                setTimeout(() => setNotification(null), 3000);
+              }
+            });
+          }}
           title="Click to Copy Game ID"
         >
           <span className="text-[9px] text-slate-500 uppercase tracking-widest hidden sm:block">Room Code</span>

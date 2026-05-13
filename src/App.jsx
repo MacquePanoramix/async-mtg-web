@@ -5543,22 +5543,93 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     return writePromise;
   };
 
-  const advanceTutorialStepFrom = (expectedStepId, { markCompleted = true, finish = false, actionLabel = 'advance', bypassMinimumDelay = false } = {}) => {
-    if (!isTutorialGame || !expectedStepId) return Promise.resolve(false);
+  const getTutorialAdvanceDebugPayload = (expectedStepId, reason) => ({
+    expectedStepId,
+    visibleStepId: currentTutorialStep?.id || displayedTutorialState?.stepId || null,
+    liveStepId: (optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.stepId || null,
+    optimisticStepId: optimisticTutorialRef.current?.stepId || optimisticTutorialState?.stepId || null,
+    serverStepId: serverTutorialState?.stepId || game?.tutorial?.stepId || null,
+    activationStepId: tutorialStepActivationRef.current?.stepId || null,
+    reason
+  });
+
+  const warnTutorialAdvanceRefused = (expectedStepId, reason, extra = {}) => {
+    if (import.meta.env.PROD) return;
+    console.warn('[Tutorial advance refused]', {
+      ...getTutorialAdvanceDebugPayload(expectedStepId, reason),
+      ...extra
+    });
+  };
+
+  const canFinishTutorialNow = () => {
+    const bolasLife = Number((game?.players || []).find((player) => /Nicol Bolas/i.test(player?.name || ''))?.life ?? 20);
+    const stackEmpty = (game?.stack || []).length === 0;
+    const defeatLogged = (game?.log || []).some((entry) => /Nicol Bolas is defeated/i.test(entry?.message || ''));
+    return { allowed: bolasLife <= 0 && stackEmpty && defeatLogged, bolasLife, stackEmpty, defeatLogged };
+  };
+
+  const forceAdvanceTutorialStep = (expectedStepId, actionLabel = 'force advance', { markCompleted = true, finish = false } = {}) => {
+    if (!isTutorialGame || !expectedStepId) {
+      warnTutorialAdvanceRefused(expectedStepId, 'not a tutorial game or missing expected step');
+      return Promise.resolve(false);
+    }
     if (finish) {
-      const bolasLife = Number((game?.players || []).find((player) => /Nicol Bolas/i.test(player?.name || ''))?.life ?? 20);
-      const stackEmpty = (game?.stack || []).length === 0;
-      const defeatLogged = (game?.log || []).some((entry) => /Nicol Bolas is defeated/i.test(entry?.message || ''));
-      if (bolasLife > 0 || !stackEmpty || !defeatLogged) {
+      const finishStatus = canFinishTutorialNow();
+      if (!finishStatus.allowed) {
         setTutorialOverlayError('Finish is locked until Nicol Bolas is mechanically at 0 or less, the stack is empty, and the defeat is logged.');
+        warnTutorialAdvanceRefused(expectedStepId, 'finish locked by final victory checks', finishStatus);
+        return Promise.resolve(false);
+      }
+    }
+
+    const visibleStepId = currentTutorialStep?.id || displayedTutorialState?.stepId || game?.tutorial?.stepId || null;
+    if (visibleStepId !== expectedStepId) {
+      warnTutorialAdvanceRefused(expectedStepId, 'visible step did not match expected step');
+      return Promise.resolve(false);
+    }
+
+    if (tutorialAdvanceDelayTimerRef.current) {
+      window.clearTimeout(tutorialAdvanceDelayTimerRef.current);
+      tutorialAdvanceDelayTimerRef.current = null;
+    }
+
+    const baseTutorial = displayedTutorialState || optimisticTutorialRef.current || game?.tutorial || {};
+    const baseCompletedStepIds = capTutorialCompletedStepIds(baseTutorial.completedStepIds || []);
+    const completedStepIds = markCompleted
+      ? capTutorialCompletedStepIds([...baseCompletedStepIds, expectedStepId])
+      : baseCompletedStepIds;
+    return updateTutorialState({
+      stepId: finish ? expectedStepId : getNextTutorialStepId(expectedStepId),
+      completedStepIds,
+      finished: finish || Boolean(baseTutorial.finished),
+      inactive: finish ? false : Boolean(baseTutorial.inactive)
+    }, { actionLabel }).then(() => true);
+  };
+
+  const advanceTutorialStepFrom = (expectedStepId, { markCompleted = true, finish = false, actionLabel = 'advance', bypassMinimumDelay = false } = {}) => {
+    if (!isTutorialGame || !expectedStepId) {
+      warnTutorialAdvanceRefused(expectedStepId, 'not a tutorial game or missing expected step');
+      return Promise.resolve(false);
+    }
+    if (finish) {
+      const finishStatus = canFinishTutorialNow();
+      if (!finishStatus.allowed) {
+        setTutorialOverlayError('Finish is locked until Nicol Bolas is mechanically at 0 or less, the stack is empty, and the defeat is logged.');
+        warnTutorialAdvanceRefused(expectedStepId, 'finish locked by final victory checks', finishStatus);
         return Promise.resolve(false);
       }
     }
     const liveStepId = (optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.stepId || 'intro';
-    if (liveStepId !== expectedStepId) return Promise.resolve(false);
+    if (liveStepId !== expectedStepId) {
+      warnTutorialAdvanceRefused(expectedStepId, 'live step did not match expected step');
+      return Promise.resolve(false);
+    }
     const performAdvance = () => {
       const latestStepId = (optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.stepId || 'intro';
-      if (latestStepId !== expectedStepId) return false;
+      if (latestStepId !== expectedStepId) {
+        warnTutorialAdvanceRefused(expectedStepId, 'latest step changed before advance');
+        return false;
+      }
       const baseCompletedStepIds = capTutorialCompletedStepIds((optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.completedStepIds || []);
       const completedStepIds = markCompleted
         ? capTutorialCompletedStepIds([...baseCompletedStepIds, expectedStepId])
@@ -5585,8 +5656,9 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     return Promise.resolve(performAdvance());
   };
 
-  const advanceTutorialStep = ({ markCompleted = true, finish = false, actionLabel = 'manual next' } = {}) => {
+  const advanceTutorialStep = ({ markCompleted = true, finish = false, actionLabel = 'manual next', force = false } = {}) => {
     if (!isTutorialGame || !currentTutorialStep) return Promise.resolve(false);
+    if (force) return forceAdvanceTutorialStep(currentTutorialStep.id, actionLabel, { markCompleted, finish });
     return advanceTutorialStepFrom(currentTutorialStep.id, { markCompleted, finish, actionLabel });
   };
 
@@ -5630,10 +5702,13 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     const liveStepId = (optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.stepId || 'intro';
     const activation = tutorialStepActivationRef.current;
     const completionEvent = { stepId, source, detail, at: Math.round(eventAt), activationId: activation?.id || null };
-    if (!isTutorialGame || liveStepId !== stepId) return Promise.resolve(false);
+    if (!isTutorialGame || liveStepId !== stepId) {
+      warnTutorialAdvanceRefused(stepId, !isTutorialGame ? 'not a tutorial game' : 'maybeCompleteTutorialStep live step did not match requested step', { completionEvent });
+      return Promise.resolve(false);
+    }
     const ignore = (reason) => {
       setTutorialDebugTiming((current) => ({ ...current, ignoredCompletion: { ...completionEvent, reason } }));
-      if (isDebugActionsEnabled() || isPerfActionsEnabled()) console.debug('[Tutorial completion ignored]', { ...completionEvent, reason, activation });
+      warnTutorialAdvanceRefused(stepId, reason, { completionEvent, activation });
       return Promise.resolve(false);
     };
     if (!activation || activation.stepId !== stepId) return ignore('step not armed after activation');
@@ -10542,7 +10617,15 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         onResume={resumeTutorialOverlay}
         onNext={() => advanceTutorialStep({ markCompleted: true, finish: ['tutorial_complete', 'F11_victory_complete'].includes(currentTutorialStep?.id), actionLabel: 'manual next' })}
         onBack={goBackTutorialStep}
-        onSkip={() => advanceTutorialStep({ markCompleted: false, finish: ['tutorial_complete', 'F11_victory_complete'].includes(currentTutorialStep?.id), actionLabel: 'manual skip' })}
+        onSkip={() => {
+          const isFinalTutorialStep = ['tutorial_complete', 'F11_victory_complete'].includes(currentTutorialStep?.id);
+          return advanceTutorialStep({
+            markCompleted: false,
+            finish: isFinalTutorialStep,
+            actionLabel: 'manual skip',
+            force: !isFinalTutorialStep
+          });
+        }}
         onExit={requestExitTutorial}
         onFocusTarget={focusTutorialTarget}
         onRestart={restartTutorial}
@@ -10618,11 +10701,15 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           data-tutorial-anchor="room-code"
           className={`flex flex-col items-center justify-center bg-slate-900 px-3 py-1 rounded border border-slate-700 cursor-pointer hover:bg-slate-800${getTutorialAnchorClass(currentTutorialAnchor, 'room-code', tutorialPulseAnchor)}`}
           onClick={() => {
-            maybeCompleteTutorialStep('G01_room_code', { source: 'user-action', detail: 'roomCodeCopied' });
-            maybeCompleteTutorialStep('intro');
-            maybeCompleteTutorialStep('room_code');
-            maybeCompleteTutorialStep('watch_cleanup_note');
-            maybeCompleteTutorialAction('ROOM_CODE_COPIED', { roomCode: gameId });
+            if (currentTutorialStep?.id === 'G01_room_code') {
+              forceAdvanceTutorialStep('G01_room_code', 'room code copied');
+            } else {
+              maybeCompleteTutorialStep('G01_room_code', { source: 'user-action', detail: 'roomCodeCopied' });
+              maybeCompleteTutorialStep('intro');
+              maybeCompleteTutorialStep('room_code');
+              maybeCompleteTutorialStep('watch_cleanup_note');
+              maybeCompleteTutorialAction('ROOM_CODE_COPIED', { roomCode: gameId });
+            }
             copyToClipboard(gameId, {
               onCopied: (message) => {
                 setNotification(message);

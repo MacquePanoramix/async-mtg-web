@@ -1310,14 +1310,15 @@ const getCardFaceAt = (card, index) => {
 const getCardDisplayName = (card, fallback = 'Unknown') => getActiveCardFace(card)?.name || card?.name || fallback;
 const normalizeTutorialHandName = (name = '') => String(name || '').replace(/\s*\/\/.*$/, '').trim();
 const TUTORIAL_SCRIPTED_OPENING_HAND_NAMES = TUTORIAL_OPENING_HAND_LUIS.map(normalizeTutorialHandName);
-const hasExactTutorialOpeningHand = (cards = [], playerId = null) => {
-  const handNames = (Array.isArray(cards) ? cards : [])
-    .filter((card) => card?.zone === ZONES.HAND && (!playerId || card.controllerId === playerId || card.ownerId === playerId))
-    .map((card) => normalizeTutorialHandName(getCardDisplayName(card, card?.name || '')))
-    .sort();
-  const expectedNames = [...TUTORIAL_SCRIPTED_OPENING_HAND_NAMES].sort();
-  return handNames.length === expectedNames.length && expectedNames.every((name, index) => handNames[index] === name);
-};
+const getTutorialHandSignature = (cards = [], playerId = null) => (Array.isArray(cards) ? cards : [])
+  .filter((card) => card?.zone === ZONES.HAND && (!playerId || card.controllerId === playerId || card.ownerId === playerId))
+  .map((card) => normalizeTutorialHandName(getCardDisplayName(card, card?.name || '')))
+  .sort()
+  .join('||');
+const TUTORIAL_SCRIPTED_OPENING_HAND_SIGNATURE = [...TUTORIAL_SCRIPTED_OPENING_HAND_NAMES].sort().join('||');
+const hasExactTutorialOpeningHand = (cards = [], playerId = null) => getTutorialHandSignature(cards, playerId) === TUTORIAL_SCRIPTED_OPENING_HAND_SIGNATURE;
+const getLatestUndoEntry = (undoStack = []) => (Array.isArray(undoStack) && undoStack.length > 0 ? undoStack[undoStack.length - 1] : null);
+const isMulliganUndoEntry = (entry = null) => String(entry?.actionType || entry?.type || '').toUpperCase() === 'MULLIGAN';
 const getCardTypeLine = (card, fallback = '') => getActiveCardFace(card)?.type_line || card?.type_line || fallback;
 const getCardManaCost = (card, fallback = '') => getActiveCardFace(card)?.mana_cost || card?.mana_cost || fallback;
 const getCardOracleText = (card, fallback = '') => getActiveCardFace(card)?.oracle_text || card?.oracle_text || card?.rulesText || fallback;
@@ -5545,6 +5546,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const tutorialStepActivationIdRef = useRef(0);
   const tutorialStepActivationRef = useRef(null);
   const tutorialAdvanceDelayTimerRef = useRef(null);
+  const g07ScriptedHandIgnoredRef = useRef(false);
 
   // Chat State
   const [chatOpen, setChatOpen] = useState(false);
@@ -6026,6 +6028,9 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       if (detail === 'playerStatsOpen' && baseline.playerStatsOpen) return ignore('player panel was already open at step activation');
       if (detail === 'revealsOpen' && baseline.revealsOpen) return ignore('reveal panel was already open at step activation');
     }
+    if (stepId === 'G07_undo_mulligan' && source !== 'undo-handler') {
+      return ignore('G07_undo_mulligan waits for actual Undo action; scripted hand match alone is ignored');
+    }
     setTutorialDebugTiming((current) => ({ ...current, lastCompletionEvent: completionEvent, ignoredCompletion: null }));
     return advanceTutorialStepFrom(stepId, { markCompleted: true, actionLabel: source === 'user-action' ? `step:${stepId}` : `step:${stepId}:${detail || source}` });
   };
@@ -6048,7 +6053,6 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     const actionStepMap = {
       DRAW_CARD: ['beginning_phase_draw', 'P2_02_draw_slip', 'P3_05_draw_ponder', 'P4_02_draw_mountain', 'P4_07_draw_ponder'],
       PLAY_LAND: ['play_land', 'P1_01_play_mountain', 'P2_04_play_island', 'P3_07_play_mountain', 'P4_04_play_third_mountain'],
-      UNDO_LAST_ACTION: ['G07_undo_mulligan'],
       CAST_SPELL: ['cast_spell_to_stack', 'cast_delver', 'final_spell', 'P1_08_target_bolas', 'P2_08_cast_delver', 'B3_05_cast_slip', 'F3_cast_bolt_bolas', 'F7_reverberate_bolt'],
       COPY_STACK_ITEM: ['copy_stack_item', 'final_in_response', 'F8_resolve_reverberate'],
       RESOLVE_STACK_TOP: ['resolve_stack_item', 'counter_stack_item', 'cast_delver', 'final_in_response', 'P1_10_resolve_bolt', 'P2_09_resolve_delver', 'B2_04_resolve_knight', 'B3_06_resolve_slip', 'P4_05_cast_ponder', 'F8_resolve_reverberate', 'F9_resolve_bolt_copy_lethal', 'F10_resolve_negate_original'],
@@ -6094,8 +6098,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       ROOM_CODE_COPIED: ['G01_room_code', 'intro', 'room_code', 'watch_cleanup_note'],
       COMMANDER_TAX: ['commander_note'],
       COMMANDER_DAMAGE: ['commander_note'],
-      SET_COMMANDER: ['commander_note'],
-      MULLIGAN: ['G06_mulligan_7']
+      SET_COMMANDER: ['commander_note']
     };
     const getTutorialActionCard = (cardId) => (game?.cards || []).find((card) => card.instanceId === cardId);
     const targetNames = [
@@ -6207,8 +6210,42 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   useEffect(() => {
     if (!isTutorialGame || !userId) return;
     const liveStepId = (optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.stepId || 'intro';
-    if (liveStepId === 'G07_undo_mulligan' && hasExactTutorialOpeningHand(game?.cards || [], userId)) {
-      maybeCompleteTutorialStep('G07_undo_mulligan', { source: 'state-transition', detail: 'tutorialHandRestored' });
+    if (liveStepId !== 'G06_mulligan_7') return;
+
+    const activation = tutorialStepActivationRef.current;
+    if (!activation || activation.stepId !== 'G06_mulligan_7') return;
+
+    const latestUndoEntry = getLatestUndoEntry(game?.undoStack || []);
+    if (!isMulliganUndoEntry(latestUndoEntry)) return;
+    if (Number(latestUndoEntry.timestamp || 0) < Number(activation.wallEnteredAt || 0)) return;
+
+    const currentHandSignature = getTutorialHandSignature(game?.cards || [], userId);
+    if (currentHandSignature === TUTORIAL_SCRIPTED_OPENING_HAND_SIGNATURE) return;
+
+    maybeCompleteTutorialStep('G06_mulligan_7', { source: 'state-transition', detail: 'mulliganChangedHandWithUndoEntry' });
+  }, [isTutorialGame, userId, game?.cards, game?.undoStack, displayedTutorialState?.stepId, game?.tutorial?.stepId]);
+
+  useEffect(() => {
+    if (!isTutorialGame || !userId) return;
+    const liveStepId = (optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.stepId || 'intro';
+    if (liveStepId !== 'G07_undo_mulligan') {
+      g07ScriptedHandIgnoredRef.current = false;
+      return;
+    }
+    if (!hasExactTutorialOpeningHand(game?.cards || [], userId) || g07ScriptedHandIgnoredRef.current) return;
+
+    g07ScriptedHandIgnoredRef.current = true;
+    const ignoredCompletion = {
+      stepId: 'G07_undo_mulligan',
+      source: 'state-transition',
+      detail: 'tutorialHandRestored',
+      at: Math.round(getActionPerfNow()),
+      activationId: tutorialStepActivationRef.current?.id || null,
+      reason: 'G07 waiting for actual Undo action; scripted hand match alone is ignored.'
+    };
+    setTutorialDebugTiming((current) => ({ ...current, ignoredCompletion }));
+    if (isDebugActionsEnabled() || isPerfActionsEnabled()) {
+      console.debug('G07 waiting for actual Undo action; scripted hand match alone is ignored.');
     }
   }, [isTutorialGame, userId, game?.cards, displayedTutorialState?.stepId, game?.tutorial?.stepId]);
 
@@ -7503,8 +7540,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     setDiceMenuOpen(false);
   };
 
-  const getLatestUndoEntry = () => (game?.undoStack || [])[(game?.undoStack || []).length - 1] || null;
-  const latestDisplayedUndoEntry = getLatestUndoEntry();
+  const latestDisplayedUndoEntry = getLatestUndoEntry(game?.undoStack || []);
   const canOpenUndoModal = canAct && Boolean(latestDisplayedUndoEntry) && (!undoPendingSync || latestDisplayedUndoEntry.pendingSync);
   const canUndoLatestAction = canOpenUndoModal && !undoPendingSync;
 
@@ -7547,7 +7583,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       return;
     }
 
-    const expectedUndoEntry = (undoBaseGame?.undoStack || [])[(undoBaseGame?.undoStack || []).length - 1] || null;
+    const expectedUndoEntry = getLatestUndoEntry(undoBaseGame?.undoStack || []);
     if (!expectedUndoEntry) {
       setNotification('Nothing to undo.');
       setTimeout(() => setNotification(null), 2000);
@@ -7593,6 +7629,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     const optimisticUndoPatch = buildOptimisticUndoPatch(undoBaseGame, expectedUndoEntry);
     const optimisticUndoActionId = perfActionId || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     let appliedOptimisticUndo = false;
+    let undoRestoredCards = Array.isArray(optimisticUndoPatch?.cards) ? optimisticUndoPatch.cards : null;
+    let consumedUndoActionType = expectedUndoEntry.actionType || expectedUndoEntry.type || null;
 
     if (optimisticUndoPatch) {
       const optimisticUndoGame = {
@@ -7661,6 +7699,10 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           return;
         }
 
+        consumedUndoActionType = latestUndoEntry.actionType || latestUndoEntry.type || consumedUndoActionType;
+        const restoreUpdates = getUndoRestoreUpdates(latestUndoEntry.previousState || {});
+        if (Array.isArray(restoreUpdates.cards)) undoRestoredCards = restoreUpdates.cards;
+
         const actionLabel = latestUndoEntry.actionLabel || 'last action';
         const undoActorName = currentPlayer.name || myPlayer?.name || 'Unknown';
         const undoLogEntry = buildGameLogEntry({
@@ -7677,7 +7719,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         });
 
         transaction.update(gameRef, normalizeGameUpdatesForFirestore({
-          ...getUndoRestoreUpdates(latestUndoEntry.previousState || {}),
+          ...restoreUpdates,
           undoStack: normalizeUndoStackForFirestore(currentUndoStack.slice(0, -1)),
           log: [...(currentGame.log || []), undoLogEntry],
           updatedAt: serverTimestamp()
@@ -7708,14 +7750,17 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     }
 
     closeTransientGameModals();
-    const restoredTutorialHand = hasExactTutorialOpeningHand(expectedUndoEntry.previousState?.cards || [], userId);
-    if (restoredTutorialHand && appliedOptimisticUndo) {
-      maybeCompleteTutorialStep('G07_undo_mulligan');
-    } else if ((optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.stepId === 'G07_undo_mulligan') {
-      const message = 'Undo did not restore the tutorial hand. Use Reset tutorial battle to restart this lesson.';
-      setTutorialOverlayError(message);
-      setNotification(message);
-      setTimeout(() => setNotification(null), 5000);
+    const liveTutorialStepId = (optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.stepId || 'intro';
+    if (liveTutorialStepId === 'G07_undo_mulligan') {
+      const restoredTutorialHand = hasExactTutorialOpeningHand(undoRestoredCards || [], userId);
+      if (isMulliganUndoEntry({ actionType: consumedUndoActionType }) && restoredTutorialHand) {
+        maybeCompleteTutorialStep('G07_undo_mulligan', { source: 'undo-handler', detail: 'mulliganUndoRestoredTutorialHand' });
+      } else {
+        const message = 'Undo did not restore the tutorial opening hand. Reset tutorial battle to continue cleanly.';
+        setTutorialOverlayError(message);
+        setNotification(message);
+        setTimeout(() => setNotification(null), 5000);
+      }
     }
     finishPerfAction(perfActionId);
   };

@@ -33,7 +33,7 @@ const GAME_MODES = {
   COMMANDER: 'commander'
 };
 
-const TUTORIAL_SCRIPT_VERSION = 8;
+const TUTORIAL_SCRIPT_VERSION = 9;
 const TUTORIAL_RULES_BY_STEP_ID = {
   intro: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Inspect room code', sourceCardOrEffect: 'Async room setup', boardPrecondition: 'Tutorial duel exists', stackPrecondition: 'Stack may be empty', completionCondition: 'Room code tapped', tutorialTargetAnchor: 'room-code' },
   room_code: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Copy room code', sourceCardOrEffect: 'Async room setup', boardPrecondition: 'Tutorial duel exists', stackPrecondition: 'Stack may be empty', completionCondition: 'Room code tapped', tutorialTargetAnchor: 'room-code' },
@@ -41,8 +41,8 @@ const TUTORIAL_RULES_BY_STEP_ID = {
   hand_area: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Inspect a hand card', sourceCardOrEffect: 'Opening hand', boardPrecondition: 'Player has cards in hand', stackPrecondition: 'Stack may be empty', completionCondition: 'Card detail opened', tutorialTargetAnchor: 'hand-area' },
   import_deck: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Open import deck', sourceCardOrEffect: 'Pre-game deck registration note', boardPrecondition: 'Import tool visible', stackPrecondition: 'Stack may be empty', completionCondition: 'Import deck opened', tutorialTargetAnchor: 'import-deck-button' },
   play_land: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Play land', sourceCardOrEffect: 'Land play for turn', boardPrecondition: 'Mountain in hand', stackPrecondition: 'Stack empty', expectedZoneChange: 'Mountain: hand -> battlefield', completionCondition: 'Mountain played', tutorialTargetAnchor: 'hand-area' },
-  undo_play_land: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Undo land play', sourceCardOrEffect: 'Tutorial demonstrates undo immediately after a reversible land play', boardPrecondition: 'Mountain on battlefield from this turn', stackPrecondition: 'Stack empty', expectedZoneChange: 'Mountain: battlefield -> hand', completionCondition: 'Undo action completed; Mountain returns to hand', tutorialTargetAnchor: 'undo-button' },
-  replay_mountain: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Replay Mountain after undo', sourceCardOrEffect: 'Land play for turn after rewinding the earlier mistake', boardPrecondition: 'Mountain in hand after Undo; stack empty', stackPrecondition: 'Stack empty', expectedZoneChange: 'Mountain: hand -> battlefield', completionCondition: 'Mountain replayed and red source restored', tutorialTargetAnchor: 'hand-area' },
+  undo_play_land: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Read optional Undo note', sourceCardOrEffect: 'The orange undo button can reverse the last synced action in normal play', boardPrecondition: 'Mountain may already be on the battlefield', stackPrecondition: 'Stack may be empty', completionCondition: 'Manual Next or Skip; undo is not required during beta', tutorialTargetAnchor: 'undo-button' },
+  replay_mountain: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Continue with Mountain on the battlefield', sourceCardOrEffect: 'Beta tutorial bypasses the fragile forced undo/replay loop', boardPrecondition: 'Mountain on battlefield; stack empty', stackPrecondition: 'Stack empty', expectedZoneChange: 'None required', completionCondition: 'Manual Next or Skip; Mountain remains available as the red source', tutorialTargetAnchor: 'own-battlefield' },
   tap_mountain_red: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Tap Mountain for red mana', sourceCardOrEffect: 'Mountain mana ability', boardPrecondition: 'Mountain on battlefield and untapped after replay', stackPrecondition: 'Mana abilities do not use the stack', expectedZoneChange: 'Mountain becomes tapped', completionCondition: 'Mountain tapped after step activation', tutorialTargetAnchor: 'own-battlefield' },
   add_red_mana: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Add {R} to the mana pool', sourceCardOrEffect: 'Manual mana pool tracking for Mountain', boardPrecondition: 'Tapped Mountain is visible as the red source', stackPrecondition: 'Mana abilities do not use the stack', completionCondition: 'Red mana pool increased after step activation', tutorialTargetAnchor: 'mana-pool-panel' },
   cast_spell_to_stack: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Cast Lightning Bolt with a target', sourceCardOrEffect: 'Lightning Bolt targeting Nicol Bolas', boardPrecondition: 'Lightning Bolt in hand; Mountain tapped on battlefield as red source; {R} recorded in mana pool; Nicol Bolas is the target', stackPrecondition: 'Stack empty before casting', expectedZoneChange: 'Lightning Bolt: hand -> stack with Nicol Bolas target', completionCondition: 'Lightning Bolt is on stack with Nicol Bolas as target', tutorialTargetAnchor: 'hand-area' },
@@ -166,7 +166,7 @@ const validateTutorialScriptRules = (steps = []) => {
     const indexes = ids.map((id) => steps.findIndex((step) => step.id === id));
     if (indexes.some((index) => index < 0) || !indexes.every((index, i) => i === 0 || index > indexes[i - 1])) console.warn(`[Tutorial rules] ${label} order is invalid: ${ids.join(' → ')}`);
   };
-  requireOrder(['P1_01_play_mountain', 'P1_02_undo_mountain', 'P1_03_replay_mountain', 'P1_04_tap_mountain', 'P1_05_add_r', 'P1_08_target_bolas', 'P1_10_resolve_bolt'], 'first Bolt');
+  requireOrder(['P1_01_play_mountain', 'P1_02_undo_mountain', 'P1_03_replay_mountain', 'P1_04_tap_mountain', 'P1_05_add_r', 'P1_08_target_bolas', 'P1_10_resolve_bolt'], 'first Bolt beta-safe path');
   requireOrder(['B2_02_bolas_swamp', 'B2_03_bolas_cast_knight', 'B2_04_resolve_knight'], 'Bolas Knight with mana');
   requireOrder(['B3_02_bolas_doom_blade', 'B3_03_tap_island_slip', 'B3_05_cast_slip', 'B3_06_resolve_slip', 'B3_09_fizzle_doom_blade'], 'Doom Blade / Slip Out stack');
   requireOrder(['F1_tap_mountain_bolt', 'F2_add_r', 'F3_cast_bolt_bolas', 'F4_bolas_negate_real_mana', 'F5_tap_two_mountains', 'F6_add_rr', 'F7_reverberate_bolt', 'F8_resolve_reverberate', 'F9_resolve_bolt_copy_lethal', 'F10_resolve_negate_original', 'F11_victory_complete'], 'final lethal');
@@ -417,8 +417,8 @@ const TUTORIAL_DUEL_STEPS = [
   makeDuelStep({ id: 'G04_open_bolt', act: 'Act 0 / Entering the Table', title: 'Open Lightning Bolt', sourceCard: 'Lightning Bolt', requiredAction: 'Open Lightning Bolt from hand.', exactUiAction: 'Tap Lightning Bolt in your hand.', legalPreconditions: 'Lightning Bolt starts in Luis opening hand.', completionCondition: 'Lightning Bolt detail opens from hand after step activation.', showMeAnchor: 'hand-area', storyText: TUTORIAL_STORY_TEXT.G04_open_bolt, bolasLine: TUTORIAL_BOLAS_LINES.G04_open_bolt }),
   makeDuelStep({ id: 'G05_mulligan_7', act: 'Act 0 / Entering the Table', title: 'Mulligan Tool', sourceCard: 'Opening hand procedure', requiredAction: 'Use Mulligan (7), then restore the scripted opening hand.', exactUiAction: 'Open Library tools and use Mulligan (7).', legalPreconditions: 'Pre-game mulligans happen before turns begin.', completionCondition: 'Mulligan clicked; Luis hand restored to Mountain, Mountain, Island, Forest, Lightning Bolt, Delver, Ponder.', showMeAnchor: 'library-menu-button', storyText: TUTORIAL_STORY_TEXT.G05_mulligan_7, bolasLine: TUTORIAL_BOLAS_LINES.G05_mulligan_7 }),
   makeDuelStep({ id: 'P1_01_play_mountain', act: 'Act 1 / Luis Turn 1 — Main 1', title: 'Play Mountain', sourceCard: 'Mountain', requiredAction: 'Play Mountain from hand.', exactUiAction: 'Tap Mountain in hand → Play Land.', legalPreconditions: 'Luis Turn 1 Main 1; stack empty; Mountain in hand; Luis has not played a land this turn.', completionCondition: 'Mountain moves hand → battlefield.', showMeAnchor: 'hand-area', storyText: TUTORIAL_STORY_TEXT.P1_01_play_mountain, bolasLine: TUTORIAL_BOLAS_LINES.P1_01_play_mountain }),
-  makeDuelStep({ id: 'P1_02_undo_mountain', act: 'Act 1 / Luis Turn 1 — Main 1', title: 'Undo Mountain', sourceCard: 'Undo table correction', requiredAction: 'Undo the Mountain play.', exactUiAction: 'Tap Undo → confirm.', legalPreconditions: 'Mountain was just played and no opponent response happened.', completionCondition: 'Mountain returns battlefield → hand.', showMeAnchor: 'undo-button', storyText: TUTORIAL_STORY_TEXT.P1_02_undo_mountain, bolasLine: TUTORIAL_BOLAS_LINES.P1_02_undo_mountain }),
-  makeDuelStep({ id: 'P1_03_replay_mountain', act: 'Act 1 / Luis Turn 1 — Main 1', title: 'Replay Mountain', sourceCard: 'Mountain', requiredAction: 'Replay Mountain.', exactUiAction: 'Tap Mountain in hand → Play Land.', legalPreconditions: 'Mountain is in hand after Undo; stack empty.', completionCondition: 'Mountain moves hand → battlefield.', showMeAnchor: 'hand-area', storyText: TUTORIAL_STORY_TEXT.P1_03_replay_mountain, bolasLine: TUTORIAL_BOLAS_LINES.P1_03_replay_mountain }),
+  makeDuelStep({ id: 'P1_02_undo_mountain', act: 'Act 1 / Luis Turn 1 — Main 1', title: 'Undo Note (Optional)', sourceCard: 'Undo table correction', requiredAction: 'Optional: read how Undo works; do not undo the Mountain for this beta tutorial.', exactUiAction: 'The orange undo button can reverse the last synced action. Tap Next or Skip to keep going.', legalPreconditions: 'Mountain was just played and remains safe to use as the red source.', completionCondition: 'Manual advance only; no successful undo is required.', showMeAnchor: 'undo-button', completion: 'manual', storyText: TUTORIAL_STORY_TEXT.P1_02_undo_mountain, bolasLine: TUTORIAL_BOLAS_LINES.P1_02_undo_mountain }),
+  makeDuelStep({ id: 'P1_03_replay_mountain', act: 'Act 1 / Luis Turn 1 — Main 1', title: 'Continue With Mountain', sourceCard: 'Mountain', requiredAction: 'Continue with Mountain already on the battlefield.', exactUiAction: 'Tap Next or Skip; do not replay anything.', legalPreconditions: 'Mountain is already on the battlefield; stack empty.', completionCondition: 'Manual advance only; Mountain remains battlefield → battlefield.', showMeAnchor: 'own-battlefield', completion: 'manual', storyText: TUTORIAL_STORY_TEXT.P1_03_replay_mountain, bolasLine: TUTORIAL_BOLAS_LINES.P1_03_replay_mountain }),
   makeDuelStep({ id: 'P1_04_tap_mountain', act: 'Act 1 / Luis Turn 1 — Main 1', title: 'Tap Mountain', sourceCard: 'Mountain', sourceEffect: '{T}: add {R}', requiredAction: 'Tap Mountain for red mana.', exactUiAction: 'Tap Mountain on battlefield → Tap.', manaPayment: 'Source is Mountain; produces {R}.', legalPreconditions: 'Mountain is untapped on battlefield.', completionCondition: 'Mountain is tapped.', showMeAnchor: 'own-battlefield', storyText: TUTORIAL_STORY_TEXT.P1_04_tap_mountain, bolasLine: TUTORIAL_BOLAS_LINES.P1_04_tap_mountain }),
   makeDuelStep({ id: 'P1_05_add_r', act: 'Act 1 / Luis Turn 1 — Main 1', title: 'Add Red Mana', sourceCard: 'Mountain', sourceEffect: 'manual mana pool tracking', requiredAction: 'Record {R} in Luis mana pool.', exactUiAction: 'Open Player Counters & Statuses → Mana Pool → + beside R.', manaPayment: 'Luis mana pool becomes R1.', legalPreconditions: 'Mountain is tapped as the visible red source.', completionCondition: 'Luis mana pool has R1.', showMeAnchor: 'mana-pool-panel', storyText: TUTORIAL_STORY_TEXT.P1_05_add_r, bolasLine: TUTORIAL_BOLAS_LINES.P1_05_add_r }),
   makeDuelStep({ id: 'P1_06_open_bolt', act: 'Act 1 / Luis Turn 1 — Main 1', title: 'Open Bolt to Cast', sourceCard: 'Lightning Bolt', requiredAction: 'Open Lightning Bolt from hand.', exactUiAction: 'Tap Lightning Bolt in hand.', manaPayment: '{R} available from Mountain.', legalPreconditions: 'Lightning Bolt in hand; {R} recorded.', completionCondition: 'Lightning Bolt detail opens from hand.', showMeAnchor: 'hand-area', storyText: TUTORIAL_STORY_TEXT.P1_06_open_bolt, bolasLine: TUTORIAL_BOLAS_LINES.P1_06_open_bolt }),
@@ -503,6 +503,45 @@ const TUTORIAL_DUEL_STEPS = [
 
 const TUTORIAL_SCRIPT_STEPS = withTutorialRules(TUTORIAL_DUEL_STEPS);
 validateTutorialScriptRules(TUTORIAL_SCRIPT_STEPS);
+
+const QUICK_START_ITEMS = [
+  'Create a game and send the room code/link to your friend.',
+  'Import your deck.',
+  'Draw your opening hand.',
+  'Tap cards to open their action menu.',
+  'Use Play Land, Cast Spell, Cast + Target, and Move Zone manually.',
+  'Use the stack panel to resolve/counter/fizzle spells.',
+  'Use the book icon for library tools.',
+  'Use the dice/random tools for tokens, counters, mana, and extra trackers.',
+  'Use chat/log to explain actions when playing asynchronously.',
+  'The app is a shared manual board, not a full rules engine.'
+];
+
+const QuickStartGuideModal = ({ open, onClose }) => {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-[120] flex items-end justify-center bg-black/75 p-3 sm:items-center sm:p-4" onClick={onClose}>
+      <div className="w-full max-w-lg rounded-t-2xl border border-slate-600 bg-slate-900 shadow-2xl sm:rounded-2xl" onClick={(event) => event.stopPropagation()}>
+        <div className="flex items-start justify-between gap-3 border-b border-slate-700 p-4">
+          <div>
+            <h2 className="flex items-center gap-2 text-xl font-black text-white"><BookOpen className="text-sky-300" size={20} /> Quick Start</h2>
+            <p className="mt-1 text-sm text-slate-400">A practical checklist for async manual-board games.</p>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-white" aria-label="Close Quick Start Guide">
+            <X size={18} />
+          </button>
+        </div>
+        <ol className="max-h-[70vh] list-decimal space-y-2 overflow-y-auto px-8 py-4 text-sm leading-relaxed text-slate-200">
+          {QUICK_START_ITEMS.map((item) => <li key={item}>{item}</li>)}
+        </ol>
+        <div className="border-t border-slate-700 p-4">
+          <button type="button" onClick={onClose} className="min-h-11 w-full rounded-xl bg-sky-600 px-4 py-2 font-black text-white hover:bg-sky-500">Got it</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const TUTORIAL_LOBBY_SCENES = [
   { id: 'name', completion: 'NAME_CONFIRMED', title: 'L0 — Name Yourself', scene: 'The lobby darkens like a summoning circle.', dialogue: 'Before a duel can wound you, it must know what to call you.', objective: 'Tap your name field and confirm the name you will use in the duel.', hint: 'Do it now: focus or edit Your Name. The name must not be empty.', anchor: 'lobby-name-input', reaction: 'Good. Now the room knows what to blame.' },
   { id: 'laws', completion: 'GAME_MODE_SELECTED', title: 'L1 — Choose the Laws', scene: 'Two rule-stones burn: Regular and Commander.', dialogue: 'Twenty life is a duel. Forty life is a declaration of stubbornness.', objective: 'Choose Regular or Commander.', hint: 'Touch one of the mode buttons. Regular starts at 20 life; Commander starts at 40 and adds command-zone tools.', anchor: 'lobby-game-mode', reaction: 'A law chosen is a cage accepted.' },
@@ -3936,6 +3975,8 @@ const Lobby = ({
   const [lobbyTutorialMinimized, setLobbyTutorialMinimized] = useState(false);
   const [lobbyTutorialDock, setLobbyTutorialDock] = useState('bottom');
   const [lobbyTutorialReaction, setLobbyTutorialReaction] = useState('');
+  const [quickStartOpen, setQuickStartOpen] = useState(false);
+  const [tutorialStartWarningOpen, setTutorialStartWarningOpen] = useState(false);
   const lobbyTutorialAdvanceTimerRef = useRef(null);
   const isInitLoading = !currentUser;
   const isGoogleConnected = currentUser?.isAnonymous === false;
@@ -3993,11 +4034,20 @@ const Lobby = ({
     setLobbyTutorialIndex((current) => Math.min(current + 1, TUTORIAL_LOBBY_SCENES.length - 1));
   };
 
+  const requestTutorialBattleStart = () => {
+    setTutorialStartWarningOpen(true);
+  };
+
+  const confirmTutorialBattleStart = () => {
+    setTutorialStartWarningOpen(false);
+    setLobbyTutorialOpen(false);
+    onStartTutorial(effectiveName);
+  };
+
   const completeLobbyTutorialStep = (stepId) => {
     if (!isLobbyTutorialActive || lobbyTutorialScene.id !== stepId || lobbyTutorialAdvanceTimerRef.current) return false;
     if (lobbyTutorialScene.final) {
-      setLobbyTutorialOpen(false);
-      onStartTutorial(effectiveName);
+      requestTutorialBattleStart();
       return true;
     }
     setLobbyTutorialReaction(lobbyTutorialScene.reaction || 'Good. Continue.');
@@ -4131,6 +4181,14 @@ const Lobby = ({
             )}
           </div>
 
+          <button
+            type="button"
+            onClick={() => setQuickStartOpen(true)}
+            className="flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border border-sky-500/40 bg-sky-950/40 px-3 py-2 text-sm font-black text-sky-100 hover:border-sky-300/70 hover:bg-sky-900/50"
+          >
+            <BookOpen size={16} /> Quick Start Guide
+          </button>
+
           <div>
             <label className="block text-sm font-medium text-slate-400 mb-1">Your Name</label>
             <input
@@ -4233,8 +4291,8 @@ const Lobby = ({
               >
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <div className="font-extrabold">Start Tutorial Battle</div>
-                    <div className="mt-0.5 text-xs font-medium text-amber-100/80">Learn the app in a scripted duel against Nicol Bolas.</div>
+                    <div className="font-extrabold">Tutorial Battle (Beta)</div>
+                    <div className="mt-0.5 text-xs font-medium text-amber-100/80">Experimental cinematic duel. You can skip it anytime and play normally.</div>
                   </div>
                   {isActionLoading ? <Loader2 className="shrink-0 animate-spin" size={18}/> : <ArrowRight className="shrink-0 text-amber-200" size={18}/>} 
                 </div>
@@ -4455,6 +4513,22 @@ const Lobby = ({
                 </div>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+
+      <QuickStartGuideModal open={quickStartOpen} onClose={() => setQuickStartOpen(false)} />
+
+      {tutorialStartWarningOpen && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/75 p-4" onClick={() => setTutorialStartWarningOpen(false)}>
+          <div className="w-full max-w-md rounded-2xl border border-amber-400/50 bg-slate-950 p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+            <h2 className="flex items-center gap-2 text-lg font-black text-amber-100"><AlertTriangle size={20} /> Tutorial Battle (Beta)</h2>
+            <p className="mt-3 rounded-xl border border-amber-500/30 bg-amber-950/30 p-3 text-sm font-bold leading-relaxed text-amber-50">This cinematic tutorial is still experimental. You can skip it anytime and play normally.</p>
+            <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <button type="button" onClick={() => setTutorialStartWarningOpen(false)} className="min-h-11 rounded-xl border border-slate-600 px-4 py-2 font-bold text-slate-100 hover:bg-slate-800">Cancel</button>
+              <button type="button" onClick={confirmTutorialBattleStart} className="min-h-11 rounded-xl bg-amber-500 px-4 py-2 font-black text-slate-950 hover:bg-amber-400">Start beta battle</button>
+            </div>
           </div>
         </div>
       )}
@@ -5225,7 +5299,7 @@ const TutorialOverlay = ({ game, currentStep, activeAnchor = null, canGoBack, is
       <div className={`pointer-events-auto mx-auto overflow-hidden rounded-2xl border border-amber-400/40 bg-slate-950/95 shadow-2xl shadow-black/60 backdrop-blur ${collapsed ? 'max-w-sm' : 'max-w-md'}`}>
         <div className={`flex items-center justify-between gap-3 border-b border-amber-500/20 bg-gradient-to-r from-amber-950/80 to-purple-950/80 ${collapsed ? 'px-3 py-2' : 'px-4 py-3'}`}>
           <button type="button" onClick={collapsed ? onResume : undefined} className="min-w-0 flex-1 text-left" aria-label={collapsed ? 'Resume tutorial' : undefined}>
-            <div className="text-[10px] font-black uppercase tracking-[0.2em] text-amber-200">Tutorial · {stepNumber}/{TUTORIAL_SCRIPT_STEPS.length}</div>
+            <div className="text-[10px] font-black uppercase tracking-[0.2em] text-amber-200">Tutorial Battle (Beta) · {stepNumber}/{TUTORIAL_SCRIPT_STEPS.length}</div>
             <div className="truncate text-sm font-extrabold text-white">{collapsed ? `Resume tutorial: ${safeCurrentStep.title}` : safeCurrentStep.chapter}</div>
             {forcedCompact && <div className="mt-0.5 truncate text-[11px] font-bold text-amber-100/80">Card/menu open — tutorial is paused, not closed.</div>}
           </button>
@@ -5300,7 +5374,7 @@ const TutorialOverlay = ({ game, currentStep, activeAnchor = null, canGoBack, is
                 <div className="mt-3 grid gap-2 sm:grid-cols-3">
                   <button type="button" onClick={onExit} className="min-h-10 rounded-lg bg-slate-800 px-3 text-sm font-bold text-slate-100 hover:bg-slate-700">Return to lobby</button>
                   <button type="button" onClick={onExplore} className="min-h-10 rounded-lg border border-emerald-500/40 px-3 text-sm font-bold text-emerald-100 hover:bg-emerald-950/40">Explore board</button>
-                  <button type="button" onClick={onRestart} className="min-h-10 rounded-lg border border-amber-500/40 px-3 text-sm font-black text-amber-100 hover:bg-amber-950/40">Restart</button>
+                  <button type="button" onClick={onRestart} className="min-h-10 rounded-lg border border-amber-500/40 px-3 text-sm font-black text-amber-100 hover:bg-amber-950/40">Reset tutorial battle</button>
                 </div>
               </div>
             ) : (
@@ -5314,6 +5388,9 @@ const TutorialOverlay = ({ game, currentStep, activeAnchor = null, canGoBack, is
                   </button>
                   <button type="button" onClick={onSkip} className="min-h-10 rounded-lg border border-slate-700 px-3 text-sm font-bold text-slate-300 hover:bg-slate-800">
                     Skip step
+                  </button>
+                  <button type="button" onClick={onExit} className="min-h-10 rounded-lg border border-emerald-500/50 px-3 text-sm font-black text-emerald-100 hover:bg-emerald-950/50">
+                    Exit tutorial / Continue to game
                   </button>
                   {isActionStep ? (
                     <button type="button" disabled className="min-h-10 rounded-lg bg-slate-700 px-4 text-sm font-black text-slate-300 opacity-70">
@@ -5453,6 +5530,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const [tutorialSyncPending, setTutorialSyncPending] = useState(false);
   const [tutorialDebugTiming, setTutorialDebugTiming] = useState({ lastAction: null, localAdvanceMs: null, firestoreWriteMs: null, lastCompletionEvent: null, ignoredCompletion: null });
   const [tutorialActivationDebug, setTutorialActivationDebug] = useState(null);
+  const [quickStartOpen, setQuickStartOpen] = useState(false);
+  const [tutorialResetBusy, setTutorialResetBusy] = useState(false);
   const optimisticTutorialRef = useRef(null);
   const tutorialSyncWriteIdRef = useRef(0);
   const tutorialStepActivationIdRef = useRef(0);
@@ -5823,17 +5902,91 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
   const confirmExitTutorial = () => {
     setTutorialExitConfirmOpen(false);
+    setTutorialMinimized(false);
     if (game?.isTutorial) {
       updateTutorialState({ inactive: true }, { actionLabel: 'exit tutorial' });
+      return;
     }
     onExit?.();
   };
 
-  const restartTutorial = () => {
-    if (!game?.isTutorial) return Promise.resolve(false);
-    return updateTutorialState({ stepId: 'intro', completedStepIds: [], finished: false, inactive: false }, { actionLabel: 'restart tutorial' });
+  const resetTutorialBattle = async () => {
+    if (!gameId || !game?.isTutorial || !userId || tutorialResetBusy) return false;
+    setTutorialResetBusy(true);
+    try {
+      const existingBolasId = (game.players || []).find((player) => player?.isScriptedOpponent)?.id || `tutorial-bolas-${gameId}`;
+      const startingLife = getStartingLifeForMode(GAME_MODES.REGULAR);
+      const resetPlayers = (game.players || []).map((player, index) => ({
+        ...player,
+        life: startingLife,
+        turnOrder: index,
+        counters: { poison: 0, energy: 0, experience: 0 },
+        manaPool: clearManaPool(),
+        statuses: { monarch: false, initiative: false, citysBlessing: false, ringBearerLevel: 0, custom: [] },
+        emblems: [],
+        deckExtras: getEmptyDeckExtras(),
+        handRevealed: false
+      }));
+      const safePlayers = resetPlayers.length >= 2 ? resetPlayers : [
+        { id: userId, name: displayName || 'Planeswalker', life: startingLife, turnOrder: 0, counters: { poison: 0, energy: 0, experience: 0 }, manaPool: clearManaPool(), statuses: { monarch: false, initiative: false, citysBlessing: false, ringBearerLevel: 0, custom: [] }, emblems: [], deckExtras: getEmptyDeckExtras(), handRevealed: false },
+        { id: existingBolasId, name: 'Nicol Bolas', life: startingLife, turnOrder: 1, isScriptedOpponent: true, counters: { poison: 0, energy: 0, experience: 0 }, manaPool: clearManaPool(), statuses: { monarch: false, initiative: false, citysBlessing: false, ringBearerLevel: 0, custom: [] }, emblems: [], deckExtras: getEmptyDeckExtras(), handRevealed: false }
+      ];
+      const nextTutorial = {
+        scriptVersion: TUTORIAL_SCRIPT_VERSION,
+        stepId: 'intro',
+        completedStepIds: [],
+        playerId: userId,
+        opponentName: 'Nicol Bolas',
+        opponentIsScripted: true,
+        finished: false,
+        inactive: false
+      };
+      optimisticTutorialRef.current = nextTutorial;
+      setOptimisticTutorialState(nextTutorial);
+      setTutorialMinimized(false);
+      setTutorialOverlayError(null);
+      setSelectedCard(null);
+      setZoomedCard(null);
+      setViewZone(null);
+      setSearchLibraryOwner(null);
+      setLibraryMenuOpen(false);
+      setLibraryBatchOpen(false);
+      setTokenModal(null);
+      setPlayerStatsOpen(false);
+      setStackDetailOpen(false);
+      setUndoConfirmOpen(false);
+      await updateDoc(doc(db, 'games_v3', gameId), {
+        tutorial: nextTutorial,
+        cards: buildTutorialDuelCards(userId, existingBolasId),
+        players: safePlayers,
+        phase: 'main1',
+        activePlayerIndex: 0,
+        priorityIndex: 0,
+        priorityPlayerId: userId,
+        turnPlayerId: userId,
+        turnNumber: 1,
+        consecutivePasses: 0,
+        stack: [],
+        targets: [],
+        reveals: [],
+        autopass: {},
+        undoStack: [],
+        combat: getEmptyCombatState(),
+        updatedAt: serverTimestamp()
+      });
+      setNotification('Tutorial battle reset to a fresh opening state.');
+      setTimeout(() => setNotification(null), 2500);
+      return true;
+    } catch (error) {
+      console.error('Reset tutorial battle failed', error);
+      setTutorialOverlayError('Reset failed. You can still exit tutorial and continue playing.');
+      setNotification('Reset tutorial battle failed.');
+      setTimeout(() => setNotification(null), 3000);
+      return false;
+    } finally {
+      setTutorialResetBusy(false);
+    }
   };
-
   const continueExploringTutorial = () => {
     if (!game?.isTutorial) return Promise.resolve(false);
     return updateTutorialState({ inactive: true, finished: true }, { actionLabel: 'explore tutorial' });
@@ -5886,8 +6039,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     if (eventAt < activation.enteredAt) return ignoreActionCompletion('action before step activation');
     const actionStepMap = {
       DRAW_CARD: ['beginning_phase_draw', 'P2_02_draw_slip', 'P3_05_draw_ponder', 'P4_02_draw_mountain', 'P4_07_draw_ponder'],
-      PLAY_LAND: ['play_land', 'replay_mountain', 'P1_01_play_mountain', 'P1_03_replay_mountain', 'P2_04_play_island', 'P3_07_play_mountain', 'P4_04_play_third_mountain'],
-      UNDO_LAST_ACTION: ['undo_play_land', 'P1_02_undo_mountain'],
+      PLAY_LAND: ['play_land', 'replay_mountain', 'P1_01_play_mountain', 'P2_04_play_island', 'P3_07_play_mountain', 'P4_04_play_third_mountain'],
+      UNDO_LAST_ACTION: ['undo_play_land'],
       CAST_SPELL: ['cast_spell_to_stack', 'cast_delver', 'final_spell', 'P1_08_target_bolas', 'P2_08_cast_delver', 'B3_05_cast_slip', 'F3_cast_bolt_bolas', 'F7_reverberate_bolt'],
       COPY_STACK_ITEM: ['copy_stack_item', 'final_in_response', 'F8_resolve_reverberate'],
       RESOLVE_STACK_TOP: ['resolve_stack_item', 'counter_stack_item', 'cast_delver', 'final_in_response', 'P1_10_resolve_bolt', 'P2_09_resolve_delver', 'B2_04_resolve_knight', 'B3_06_resolve_slip', 'P4_05_cast_ponder', 'F8_resolve_reverberate', 'F9_resolve_bolt_copy_lethal', 'F10_resolve_negate_original'],
@@ -6079,7 +6232,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     const needs = {
       play_land: [{ name: 'Mountain', zone: ZONES.HAND, ownerId: userId, controllerId: userId }],
       undo_play_land: [{ name: 'Mountain', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId }],
-      replay_mountain: [{ name: 'Mountain', zone: ZONES.HAND, ownerId: userId, controllerId: userId }],
+      replay_mountain: [{ name: 'Mountain', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId, tapped: false }],
       tap_mountain_red: [{ name: 'Mountain', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId, tapped: false }],
       add_red_mana: [{ name: 'Mountain', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId, tapped: true }],
       cast_spell_to_stack: [
@@ -6197,7 +6350,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       ],
       P1_01_play_mountain: [{ name: 'Mountain', zone: ZONES.HAND, ownerId: userId, controllerId: userId }],
       P1_02_undo_mountain: [{ name: 'Mountain', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId }],
-      P1_03_replay_mountain: [{ name: 'Mountain', zone: ZONES.HAND, ownerId: userId, controllerId: userId }],
+      P1_03_replay_mountain: [{ name: 'Mountain', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId, tapped: false }],
       P1_04_tap_mountain: [{ name: 'Mountain', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId, tapped: false }],
       P1_05_add_r: [{ name: 'Mountain', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId, tapped: true }],
       P1_06_open_bolt: [{ name: 'Lightning Bolt', zone: ZONES.HAND, ownerId: userId, controllerId: userId }],
@@ -10746,6 +10899,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       onTouchEnd={handleDragEnd}
     >
       <PerfDebugIndicator />
+      <QuickStartGuideModal open={quickStartOpen} onClose={() => setQuickStartOpen(false)} />
       <PerformanceDebugPanel game={game} onRepairGameSize={handleRepairGameSize} canRepairGameSize={isPlayer || isHost} repairGameSizeBusy={repairGameSizeBusy} />
       <TutorialOverlay
         game={{ ...game, tutorial: displayedTutorialState || game?.tutorial }}
@@ -10769,7 +10923,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         }}
         onExit={requestExitTutorial}
         onFocusTarget={focusTutorialTarget}
-        onRestart={restartTutorial}
+        onRestart={resetTutorialBattle}
         onExplore={continueExploringTutorial}
         errorMessage={tutorialOverlayError || ''}
         debugInfo={tutorialDebugInfo}
@@ -10867,6 +11021,38 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           <span className="text-[9px] text-slate-500 uppercase tracking-widest hidden sm:block">Room Code</span>
           <span className="text-xs font-mono font-bold text-white tracking-widest">{gameId}</span>
         </div>
+
+        <button
+          type="button"
+          onClick={(event) => { event.stopPropagation(); setQuickStartOpen(true); }}
+          className="relative z-20 pointer-events-auto flex items-center gap-1 rounded-lg border border-sky-500/40 bg-sky-950/50 px-2 py-1.5 text-xs font-black text-sky-100 hover:bg-sky-900/60"
+          title="Quick Start Guide"
+        >
+          <BookOpen size={14} /> Quick Start
+        </button>
+
+        {game?.isTutorial && !displayedTutorialState?.inactive && (
+          <div className="flex items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-950/40 px-2 py-1">
+            <span className="hidden text-[10px] font-black uppercase tracking-widest text-amber-200 sm:inline">Tutorial Battle (Beta)</span>
+            <button
+              type="button"
+              onClick={(event) => { event.stopPropagation(); confirmExitTutorial(); }}
+              className="rounded-md bg-emerald-600 px-2 py-1 text-xs font-black text-white hover:bg-emerald-500"
+              title="Disable tutorial mode and continue playing this game"
+            >
+              Exit tutorial / Continue to game
+            </button>
+            <button
+              type="button"
+              onClick={(event) => { event.stopPropagation(); resetTutorialBattle(); }}
+              disabled={tutorialResetBusy}
+              className="rounded-md border border-amber-300/50 px-2 py-1 text-xs font-black text-amber-100 hover:bg-amber-900/60 disabled:cursor-wait disabled:opacity-60"
+              title="Reset tutorial battle to a fresh scripted opening"
+            >
+              {tutorialResetBusy ? 'Resetting…' : 'Reset tutorial battle'}
+            </button>
+          </div>
+        )}
 
         {gameDocumentSizeEstimate && (
           <div className={`flex items-center gap-2 rounded border px-2 py-1 text-[10px] font-bold ${gameDocumentSizeEstimate.isNearLimit ? 'border-amber-400/60 bg-amber-950/60 text-amber-100' : 'border-slate-700 bg-slate-900 text-slate-300'}`}>
@@ -14140,7 +14326,7 @@ export default function App() {
         updatedAt: serverTimestamp(),
         hostId: user.uid,
         gameMode: GAME_MODES.REGULAR,
-        title: 'Tutorial Battle: Nicol Bolas',
+        title: 'Tutorial Battle (Beta): Nicol Bolas',
         allowSpectators: false,
         spectatorIds: [],
         isTutorial: true,

@@ -5521,7 +5521,6 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const [undoConfirmOpen, setUndoConfirmOpen] = useState(false);
   const [repairGameSizeBusy, setRepairGameSizeBusy] = useState(false);
   const [tutorialMinimized, setTutorialMinimized] = useState(false);
-  const [tutorialExitConfirmOpen, setTutorialExitConfirmOpen] = useState(false);
   const [tutorialOverlayError, setTutorialOverlayError] = useState(null);
   const [optimisticTutorialState, setOptimisticTutorialState] = useState(null);
   const [tutorialSyncPending, setTutorialSyncPending] = useState(false);
@@ -5886,19 +5885,9 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
   const resumeTutorialOverlay = () => {
     setTutorialMinimized(false);
-    setTutorialExitConfirmOpen(false);
   };
 
   const requestExitTutorial = () => {
-    if (game?.isTutorial) {
-      setTutorialExitConfirmOpen(true);
-      return;
-    }
-    onExit?.();
-  };
-
-  const confirmExitTutorial = () => {
-    setTutorialExitConfirmOpen(false);
     setTutorialMinimized(false);
     if (game?.isTutorial) {
       updateTutorialState({ inactive: true }, { actionLabel: 'exit tutorial' });
@@ -10931,18 +10920,6 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         hasOpenPanel={tutorialHasOpenPanel}
         onResume={resumeTutorialOverlay}
       />
-      {tutorialExitConfirmOpen && (
-        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/70 p-4" onClick={() => setTutorialExitConfirmOpen(false)}>
-          <div className="w-full max-w-sm rounded-2xl border border-amber-400/50 bg-slate-950 p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}>
-            <h2 className="text-lg font-black text-amber-100">Exit tutorial?</h2>
-            <p className="mt-2 text-sm text-slate-300">Your current tutorial step is saved. Cancel to keep the overlay open, or exit to leave tutorial guidance.</p>
-            <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-              <button type="button" onClick={() => setTutorialExitConfirmOpen(false)} className="min-h-11 rounded-xl border border-slate-600 px-4 py-2 font-bold text-slate-100 hover:bg-slate-800">Cancel</button>
-              <button type="button" onClick={confirmExitTutorial} className="min-h-11 rounded-xl bg-red-600 px-4 py-2 font-black text-white hover:bg-red-500">Exit tutorial</button>
-            </div>
-          </div>
-        </div>
-      )}
       {/* 1. Header */}
       <div className="bg-slate-800 border-b border-slate-700 p-2 shrink-0 shadow-md top-action-scroll-wrap">
         <div

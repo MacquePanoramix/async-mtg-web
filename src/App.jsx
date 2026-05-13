@@ -33,7 +33,7 @@ const GAME_MODES = {
   COMMANDER: 'commander'
 };
 
-const TUTORIAL_SCRIPT_VERSION = 9;
+const TUTORIAL_SCRIPT_VERSION = 10;
 const TUTORIAL_RULES_BY_STEP_ID = {
   intro: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Inspect room code', sourceCardOrEffect: 'Async room setup', boardPrecondition: 'Tutorial duel exists', stackPrecondition: 'Stack may be empty', completionCondition: 'Room code tapped', tutorialTargetAnchor: 'room-code' },
   room_code: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Copy room code', sourceCardOrEffect: 'Async room setup', boardPrecondition: 'Tutorial duel exists', stackPrecondition: 'Stack may be empty', completionCondition: 'Room code tapped', tutorialTargetAnchor: 'room-code' },
@@ -41,8 +41,6 @@ const TUTORIAL_RULES_BY_STEP_ID = {
   hand_area: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Inspect a hand card', sourceCardOrEffect: 'Opening hand', boardPrecondition: 'Player has cards in hand', stackPrecondition: 'Stack may be empty', completionCondition: 'Card detail opened', tutorialTargetAnchor: 'hand-area' },
   import_deck: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Open import deck', sourceCardOrEffect: 'Pre-game deck registration note', boardPrecondition: 'Import tool visible', stackPrecondition: 'Stack may be empty', completionCondition: 'Import deck opened', tutorialTargetAnchor: 'import-deck-button' },
   play_land: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Play land', sourceCardOrEffect: 'Land play for turn', boardPrecondition: 'Mountain in hand', stackPrecondition: 'Stack empty', expectedZoneChange: 'Mountain: hand -> battlefield', completionCondition: 'Mountain played', tutorialTargetAnchor: 'hand-area' },
-  undo_play_land: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Read optional Undo note', sourceCardOrEffect: 'The orange undo button can reverse the last synced action in normal play', boardPrecondition: 'Mountain may already be on the battlefield', stackPrecondition: 'Stack may be empty', completionCondition: 'Manual Next or Skip; undo is not required during beta', tutorialTargetAnchor: 'undo-button' },
-  replay_mountain: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Continue with Mountain on the battlefield', sourceCardOrEffect: 'Beta tutorial bypasses the fragile forced undo/replay loop', boardPrecondition: 'Mountain on battlefield; stack empty', stackPrecondition: 'Stack empty', expectedZoneChange: 'None required', completionCondition: 'Manual Next or Skip; Mountain remains available as the red source', tutorialTargetAnchor: 'own-battlefield' },
   tap_mountain_red: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Tap Mountain for red mana', sourceCardOrEffect: 'Mountain mana ability', boardPrecondition: 'Mountain on battlefield and untapped after replay', stackPrecondition: 'Mana abilities do not use the stack', expectedZoneChange: 'Mountain becomes tapped', completionCondition: 'Mountain tapped after step activation', tutorialTargetAnchor: 'own-battlefield' },
   add_red_mana: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Add {R} to the mana pool', sourceCardOrEffect: 'Manual mana pool tracking for Mountain', boardPrecondition: 'Tapped Mountain is visible as the red source', stackPrecondition: 'Mana abilities do not use the stack', completionCondition: 'Red mana pool increased after step activation', tutorialTargetAnchor: 'mana-pool-panel' },
   cast_spell_to_stack: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Cast Lightning Bolt with a target', sourceCardOrEffect: 'Lightning Bolt targeting Nicol Bolas', boardPrecondition: 'Lightning Bolt in hand; Mountain tapped on battlefield as red source; {R} recorded in mana pool; Nicol Bolas is the target', stackPrecondition: 'Stack empty before casting', expectedZoneChange: 'Lightning Bolt: hand -> stack with Nicol Bolas target', completionCondition: 'Lightning Bolt is on stack with Nicol Bolas as target', tutorialTargetAnchor: 'hand-area' },
@@ -166,7 +164,7 @@ const validateTutorialScriptRules = (steps = []) => {
     const indexes = ids.map((id) => steps.findIndex((step) => step.id === id));
     if (indexes.some((index) => index < 0) || !indexes.every((index, i) => i === 0 || index > indexes[i - 1])) console.warn(`[Tutorial rules] ${label} order is invalid: ${ids.join(' → ')}`);
   };
-  requireOrder(['P1_01_play_mountain', 'P1_02_undo_mountain', 'P1_03_replay_mountain', 'P1_04_tap_mountain', 'P1_05_add_r', 'P1_08_target_bolas', 'P1_10_resolve_bolt'], 'first Bolt beta-safe path');
+  requireOrder(['G05_open_library_tools', 'G06_mulligan_7', 'G07_undo_mulligan', 'P1_01_play_mountain', 'P1_04_tap_mountain', 'P1_05_add_r', 'P1_08_target_bolas', 'P1_10_resolve_bolt'], 'mulligan undo lesson into first Bolt path');
   requireOrder(['B2_02_bolas_swamp', 'B2_03_bolas_cast_knight', 'B2_04_resolve_knight'], 'Bolas Knight with mana');
   requireOrder(['B3_02_bolas_doom_blade', 'B3_03_tap_island_slip', 'B3_05_cast_slip', 'B3_06_resolve_slip', 'B3_09_fizzle_doom_blade'], 'Doom Blade / Slip Out stack');
   requireOrder(['F1_tap_mountain_bolt', 'F2_add_r', 'F3_cast_bolt_bolas', 'F4_bolas_negate_real_mana', 'F5_tap_two_mountains', 'F6_add_rr', 'F7_reverberate_bolt', 'F8_resolve_reverberate', 'F9_resolve_bolt_copy_lethal', 'F10_resolve_negate_original', 'F11_victory_complete'], 'final lethal');
@@ -278,10 +276,10 @@ const TUTORIAL_BOLAS_LINES = {
   G02_opponent_area: 'Look closely. Empty boards have ended fuller lives than yours.',
   G03_own_battlefield: 'Behold your empire: a magnificent nothing. We improve it.',
   G04_open_bolt: 'Lightning in hand. How adorable when hope has a casting cost.',
-  G05_mulligan_7: 'Seven cards, seven futures. Try not to choose the dullest doom.',
+  G05_open_library_tools: 'Libraries are not piles of cards. They are futures stacked badly.',
+  G06_mulligan_7: 'Seven fresh futures. How generous of fate to provide more ways to disappoint me.',
+  G07_undo_mulligan: 'Undo, then. Drag time backward by the collar. Do not mistake this mercy for strategy.',
   P1_01_play_mountain: 'A Mountain. A red cathedral where bad decisions learn to pray.',
-  P1_02_undo_mountain: 'Time retreats one step. Do not grow fond of this mercy.',
-  P1_03_replay_mountain: 'Again, the Mountain rises. Repetition is the spine of competence.',
   P1_04_tap_mountain: 'Good. Even destruction must first produce a receipt.',
   P1_05_add_r: 'Name the mana, little spark. Power ignored is power wasted.',
   P1_06_open_bolt: 'Open the Bolt. Let us admire your tiny weather.',
@@ -391,7 +389,9 @@ const TUTORIAL_BOLAS_LINES = {
 const TUTORIAL_STORY_TEXT = {
   G01_room_code: 'The duel chamber opens with a code-sigil burning above the table.',
   G02_opponent_area: 'Across the battlefield, Nicol Bolas waits with theatrical patience.',
-  G05_mulligan_7: 'Your opening hand fans out like seven nervous prophecies.',
+  G05_open_library_tools: 'The lower toolbar hides a small book-shaped gate. Bolas smiles as if he knows the ending already.',
+  G06_mulligan_7: 'Bolas offers you seven new possibilities. None of them are free.',
+  G07_undo_mulligan: 'The new hand flickers. Bolas raises one claw, amused. The table remembers what happened.',
   P1_01_play_mountain: 'The first land hits the battlefield, and the duel becomes real.',
   P1_09_inspect_stack: 'Your Lightning Bolt hangs above the table, waiting its turn to matter.',
   P1_10_resolve_bolt: 'The spell descends and the elder dragon actually loses life.',
@@ -415,10 +415,10 @@ const TUTORIAL_DUEL_STEPS = [
   makeDuelStep({ id: 'G02_opponent_area', act: 'Act 0 / Entering the Table', title: 'Inspect Nicol Bolas', requiredAction: 'Inspect Nicol Bolas’s player area.', exactUiAction: 'Tap Nicol Bolas’s name, battlefield, or life area.', legalPreconditions: 'Nicol Bolas is seated as the scripted opponent at 20 life.', completionCondition: 'Opponent panel inspected.', showMeAnchor: 'opponent-battlefield', storyText: TUTORIAL_STORY_TEXT.G02_opponent_area, bolasLine: TUTORIAL_BOLAS_LINES.G02_opponent_area }),
   makeDuelStep({ id: 'G03_own_battlefield', act: 'Act 0 / Entering the Table', title: 'Inspect Your Battlefield', requiredAction: 'Tap your battlefield.', exactUiAction: 'Tap the empty lower battlefield.', legalPreconditions: 'Luis battlefield is empty before turn one.', completionCondition: 'Own battlefield inspected.', showMeAnchor: 'own-battlefield', storyText: TUTORIAL_STORY_TEXT.G03_own_battlefield, bolasLine: TUTORIAL_BOLAS_LINES.G03_own_battlefield }),
   makeDuelStep({ id: 'G04_open_bolt', act: 'Act 0 / Entering the Table', title: 'Open Lightning Bolt', sourceCard: 'Lightning Bolt', requiredAction: 'Open Lightning Bolt from hand.', exactUiAction: 'Tap Lightning Bolt in your hand.', legalPreconditions: 'Lightning Bolt starts in Luis opening hand.', completionCondition: 'Lightning Bolt detail opens from hand after step activation.', showMeAnchor: 'hand-area', storyText: TUTORIAL_STORY_TEXT.G04_open_bolt, bolasLine: TUTORIAL_BOLAS_LINES.G04_open_bolt }),
-  makeDuelStep({ id: 'G05_mulligan_7', act: 'Act 0 / Entering the Table', title: 'Mulligan Tool', sourceCard: 'Opening hand procedure', requiredAction: 'Use Mulligan (7), then restore the scripted opening hand.', exactUiAction: 'Open Library tools and use Mulligan (7).', legalPreconditions: 'Pre-game mulligans happen before turns begin.', completionCondition: 'Mulligan clicked; Luis hand restored to Mountain, Mountain, Island, Forest, Lightning Bolt, Delver, Ponder.', showMeAnchor: 'library-menu-button', storyText: TUTORIAL_STORY_TEXT.G05_mulligan_7, bolasLine: TUTORIAL_BOLAS_LINES.G05_mulligan_7 }),
+  makeDuelStep({ id: 'G05_open_library_tools', act: 'Act 0 / Entering the Table', title: 'The Library Gate', sourceCard: 'Opening hand procedure', requiredAction: 'Open Library Tools.', exactUiAction: 'Swipe the lower toolbar sideways if needed, then tap the book/library icon.', legalPreconditions: 'Tutorial duel exists; lower toolbar can open library tools.', completionCondition: 'Library tools menu is open.', showMeAnchor: 'library-menu-button', storyText: TUTORIAL_STORY_TEXT.G05_open_library_tools, bolasLine: TUTORIAL_BOLAS_LINES.G05_open_library_tools }),
+  makeDuelStep({ id: 'G06_mulligan_7', act: 'Act 0 / Entering the Table', title: 'The False Opening Hand', sourceCard: 'Opening hand procedure', requiredAction: 'Tap Mulligan (7).', exactUiAction: 'In Library Tools, tap Mulligan (7).', legalPreconditions: 'Pre-game mulligans happen before turns begin; Luis has the scripted opening hand before the action.', completionCondition: 'Mulligan (7) happens after this step becomes active and Luis’s hand visibly changes.', showMeAnchor: 'mulligan-button', storyText: TUTORIAL_STORY_TEXT.G06_mulligan_7, bolasLine: TUTORIAL_BOLAS_LINES.G06_mulligan_7 }),
+  makeDuelStep({ id: 'G07_undo_mulligan', act: 'Act 0 / Entering the Table', title: 'Time Objects', sourceCard: 'Undo table correction', requiredAction: 'Undo the mulligan.', exactUiAction: 'Tap the orange Undo button, then confirm. Undo restores the original tutorial hand.', legalPreconditions: 'Mulligan (7) changed Luis’s hand and created an undo entry.', completionCondition: 'Undo completes and Luis’s hand is exactly Mountain, Mountain, Island, Forest, Lightning Bolt, Delver of Secrets, Ponder.', showMeAnchor: 'undo-button', storyText: TUTORIAL_STORY_TEXT.G07_undo_mulligan, bolasLine: TUTORIAL_BOLAS_LINES.G07_undo_mulligan }),
   makeDuelStep({ id: 'P1_01_play_mountain', act: 'Act 1 / Luis Turn 1 — Main 1', title: 'Play Mountain', sourceCard: 'Mountain', requiredAction: 'Play Mountain from hand.', exactUiAction: 'Tap Mountain in hand → Play Land.', legalPreconditions: 'Luis Turn 1 Main 1; stack empty; Mountain in hand; Luis has not played a land this turn.', completionCondition: 'Mountain moves hand → battlefield.', showMeAnchor: 'hand-area', storyText: TUTORIAL_STORY_TEXT.P1_01_play_mountain, bolasLine: TUTORIAL_BOLAS_LINES.P1_01_play_mountain }),
-  makeDuelStep({ id: 'P1_02_undo_mountain', act: 'Act 1 / Luis Turn 1 — Main 1', title: 'Undo Note (Optional)', sourceCard: 'Undo table correction', requiredAction: 'Optional: read how Undo works; do not undo the Mountain for this beta tutorial.', exactUiAction: 'The orange undo button can reverse the last synced action. Tap Next or Skip to keep going.', legalPreconditions: 'Mountain was just played and remains safe to use as the red source.', completionCondition: 'Manual advance only; no successful undo is required.', showMeAnchor: 'undo-button', completion: 'manual', storyText: TUTORIAL_STORY_TEXT.P1_02_undo_mountain, bolasLine: TUTORIAL_BOLAS_LINES.P1_02_undo_mountain }),
-  makeDuelStep({ id: 'P1_03_replay_mountain', act: 'Act 1 / Luis Turn 1 — Main 1', title: 'Continue With Mountain', sourceCard: 'Mountain', requiredAction: 'Continue with Mountain already on the battlefield.', exactUiAction: 'Tap Next or Skip; do not replay anything.', legalPreconditions: 'Mountain is already on the battlefield; stack empty.', completionCondition: 'Manual advance only; Mountain remains battlefield → battlefield.', showMeAnchor: 'own-battlefield', completion: 'manual', storyText: TUTORIAL_STORY_TEXT.P1_03_replay_mountain, bolasLine: TUTORIAL_BOLAS_LINES.P1_03_replay_mountain }),
   makeDuelStep({ id: 'P1_04_tap_mountain', act: 'Act 1 / Luis Turn 1 — Main 1', title: 'Tap Mountain', sourceCard: 'Mountain', sourceEffect: '{T}: add {R}', requiredAction: 'Tap Mountain for red mana.', exactUiAction: 'Tap Mountain on battlefield → Tap.', manaPayment: 'Source is Mountain; produces {R}.', legalPreconditions: 'Mountain is untapped on battlefield.', completionCondition: 'Mountain is tapped.', showMeAnchor: 'own-battlefield', storyText: TUTORIAL_STORY_TEXT.P1_04_tap_mountain, bolasLine: TUTORIAL_BOLAS_LINES.P1_04_tap_mountain }),
   makeDuelStep({ id: 'P1_05_add_r', act: 'Act 1 / Luis Turn 1 — Main 1', title: 'Add Red Mana', sourceCard: 'Mountain', sourceEffect: 'manual mana pool tracking', requiredAction: 'Record {R} in Luis mana pool.', exactUiAction: 'Open Player Counters & Statuses → Mana Pool → + beside R.', manaPayment: 'Luis mana pool becomes R1.', legalPreconditions: 'Mountain is tapped as the visible red source.', completionCondition: 'Luis mana pool has R1.', showMeAnchor: 'mana-pool-panel', storyText: TUTORIAL_STORY_TEXT.P1_05_add_r, bolasLine: TUTORIAL_BOLAS_LINES.P1_05_add_r }),
   makeDuelStep({ id: 'P1_06_open_bolt', act: 'Act 1 / Luis Turn 1 — Main 1', title: 'Open Bolt to Cast', sourceCard: 'Lightning Bolt', requiredAction: 'Open Lightning Bolt from hand.', exactUiAction: 'Tap Lightning Bolt in hand.', manaPayment: '{R} available from Mountain.', legalPreconditions: 'Lightning Bolt in hand; {R} recorded.', completionCondition: 'Lightning Bolt detail opens from hand.', showMeAnchor: 'hand-area', storyText: TUTORIAL_STORY_TEXT.P1_06_open_bolt, bolasLine: TUTORIAL_BOLAS_LINES.P1_06_open_bolt }),
@@ -1308,6 +1308,16 @@ const getCardFaceAt = (card, index) => {
 };
 
 const getCardDisplayName = (card, fallback = 'Unknown') => getActiveCardFace(card)?.name || card?.name || fallback;
+const normalizeTutorialHandName = (name = '') => String(name || '').replace(/\s*\/\/.*$/, '').trim();
+const TUTORIAL_SCRIPTED_OPENING_HAND_NAMES = TUTORIAL_OPENING_HAND_LUIS.map(normalizeTutorialHandName);
+const hasExactTutorialOpeningHand = (cards = [], playerId = null) => {
+  const handNames = (Array.isArray(cards) ? cards : [])
+    .filter((card) => card?.zone === ZONES.HAND && (!playerId || card.controllerId === playerId || card.ownerId === playerId))
+    .map((card) => normalizeTutorialHandName(getCardDisplayName(card, card?.name || '')))
+    .sort();
+  const expectedNames = [...TUTORIAL_SCRIPTED_OPENING_HAND_NAMES].sort();
+  return handNames.length === expectedNames.length && expectedNames.every((name, index) => handNames[index] === name);
+};
 const getCardTypeLine = (card, fallback = '') => getActiveCardFace(card)?.type_line || card?.type_line || fallback;
 const getCardManaCost = (card, fallback = '') => getActiveCardFace(card)?.mana_cost || card?.mana_cost || fallback;
 const getCardOracleText = (card, fallback = '') => getActiveCardFace(card)?.oracle_text || card?.oracle_text || card?.rulesText || fallback;
@@ -2467,6 +2477,7 @@ const UNDO_FIELDS_BY_ACTION_TYPE = {
   BATCH_SCRY_LIBRARY: CARDS_ONLY_UNDO_STATE_FIELDS,
   BATCH_SURVEIL_LIBRARY: CARDS_ONLY_UNDO_STATE_FIELDS,
   BATCH_REVEAL_LIBRARY: REVEALS_ONLY_UNDO_STATE_FIELDS,
+  MULLIGAN: ['cards', 'reveals'],
   PLAY_LAND: CARDS_ONLY_UNDO_STATE_FIELDS,
   CAST_SPELL: ['cards', ...STACK_ONLY_UNDO_STATE_FIELDS],
   MOVE_ZONE: ({ updates } = {}) => appendUndoFieldIfUpdated(CARDS_ONLY_UNDO_STATE_FIELDS, updates, 'combat'),
@@ -5670,20 +5681,20 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     const targetAnchor = anchor === 'battlefields' ? 'own-battlefield' : anchor;
     if (targetAnchor === 'stack-button' || targetAnchor === 'stack-panel') setStackDetailOpen(true);
     if (targetAnchor === 'chat-button') { setChatOpen(true); maybeCompleteTutorialStep('game_log'); maybeCompleteTutorialStep('async_oath'); maybeCompleteTutorialStep('manual_toolbox_note'); }
-    if (targetAnchor === 'library-menu-button') setLibraryMenuOpen(true);
+    if (targetAnchor === 'library-menu-button' || targetAnchor === 'mulligan-button') setLibraryMenuOpen(true);
     if (targetAnchor === 'token-tools') { setLibraryMenuOpen(false); setTokenModal(getDefaultCustomToken()); }
     if (targetAnchor === 'player-counters-button' || targetAnchor === 'player-counters-panel' || targetAnchor === 'mana-pool-panel' || targetAnchor === 'status-panel') setPlayerStatsOpen(true);
     if (targetAnchor === 'reveal-tools') setRevealsOpen(true);
     const target = document.querySelector(`[data-tutorial-anchor="${targetAnchor}"]`);
 
-    if (targetAnchor === 'library-menu-button' || targetAnchor === 'draw-button') {
+    if (targetAnchor === 'library-menu-button' || targetAnchor === 'draw-button' || targetAnchor === 'mulligan-button') {
       bottomToolbarRef.current?.scrollTo?.({ left: bottomToolbarRef.current.scrollWidth, behavior: 'smooth' });
       target?.scrollIntoView?.({ behavior: 'smooth', block: 'center', inline: 'center' });
     } else {
       target?.scrollIntoView?.({ behavior: 'smooth', block: 'center', inline: 'center' });
     }
 
-    if (targetAnchor === 'library-menu-button' && libraryButtonRef.current) {
+    if ((targetAnchor === 'library-menu-button' || targetAnchor === 'mulligan-button') && libraryButtonRef.current) {
       setTimeout(() => libraryButtonRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'nearest', inline: 'center' }), 250);
     }
 
@@ -6036,8 +6047,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     if (eventAt < activation.enteredAt) return ignoreActionCompletion('action before step activation');
     const actionStepMap = {
       DRAW_CARD: ['beginning_phase_draw', 'P2_02_draw_slip', 'P3_05_draw_ponder', 'P4_02_draw_mountain', 'P4_07_draw_ponder'],
-      PLAY_LAND: ['play_land', 'replay_mountain', 'P1_01_play_mountain', 'P2_04_play_island', 'P3_07_play_mountain', 'P4_04_play_third_mountain'],
-      UNDO_LAST_ACTION: ['undo_play_land'],
+      PLAY_LAND: ['play_land', 'P1_01_play_mountain', 'P2_04_play_island', 'P3_07_play_mountain', 'P4_04_play_third_mountain'],
+      UNDO_LAST_ACTION: ['G07_undo_mulligan'],
       CAST_SPELL: ['cast_spell_to_stack', 'cast_delver', 'final_spell', 'P1_08_target_bolas', 'P2_08_cast_delver', 'B3_05_cast_slip', 'F3_cast_bolt_bolas', 'F7_reverberate_bolt'],
       COPY_STACK_ITEM: ['copy_stack_item', 'final_in_response', 'F8_resolve_reverberate'],
       RESOLVE_STACK_TOP: ['resolve_stack_item', 'counter_stack_item', 'cast_delver', 'final_in_response', 'P1_10_resolve_bolt', 'P2_09_resolve_delver', 'B2_04_resolve_knight', 'B3_06_resolve_slip', 'P4_05_cast_ponder', 'F8_resolve_reverberate', 'F9_resolve_bolt_copy_lethal', 'F10_resolve_negate_original'],
@@ -6083,7 +6094,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       ROOM_CODE_COPIED: ['G01_room_code', 'intro', 'room_code', 'watch_cleanup_note'],
       COMMANDER_TAX: ['commander_note'],
       COMMANDER_DAMAGE: ['commander_note'],
-      SET_COMMANDER: ['commander_note']
+      SET_COMMANDER: ['commander_note'],
+      MULLIGAN: ['G06_mulligan_7']
     };
     const getTutorialActionCard = (cardId) => (game?.cards || []).find((card) => card.instanceId === cardId);
     const targetNames = [
@@ -6193,11 +6205,19 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   }, [isTutorialGame, selectedCard?.instanceId, selectedCard?.zone, selectedCard?.controllerId, viewAsPlayerId]);
 
   useEffect(() => {
+    if (!isTutorialGame || !userId) return;
+    const liveStepId = (optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.stepId || 'intro';
+    if (liveStepId === 'G07_undo_mulligan' && hasExactTutorialOpeningHand(game?.cards || [], userId)) {
+      maybeCompleteTutorialStep('G07_undo_mulligan', { source: 'state-transition', detail: 'tutorialHandRestored' });
+    }
+  }, [isTutorialGame, userId, game?.cards, displayedTutorialState?.stepId, game?.tutorial?.stepId]);
+
+  useEffect(() => {
     if (!isTutorialGame) return;
     const liveStepId = (optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.stepId || 'intro';
     if (stackDetailOpen && ['inspect_stack', 'bolas_negate', 'bolas_removal', 'final_bolas_response', 'P1_09_inspect_stack', 'B2_03_bolas_cast_knight', 'B3_02_bolas_doom_blade', 'F4_bolas_negate_real_mana'].includes(liveStepId)) maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'stackDetailOpen' });
     if (chatOpen && ['game_log', 'async_oath', 'manual_toolbox_note', 'B1_01_bolas_island', 'B2_01_bolas_draw_mountain', 'B3_01_bolas_swamp', 'B4_01_bolas_untaps', 'F11_victory_complete'].includes(liveStepId)) maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'chatOpen' });
-    if (libraryMenuOpen && ['open_library_tools', 'opponent_library_tools', 'G05_mulligan_7', 'P3_03_delver_reveal_ponder', 'P4_06_reorder_ponder', 'tool_ponder_reorder', 'tool_opt_scry', 'tool_consider_surveil', 'tool_portent_bolas_library', 'tool_praetors_grasp', 'tool_thought_scour', 'tool_light_up_stage'].includes(liveStepId)) maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'libraryMenuOpen' });
+    if (libraryMenuOpen && ['open_library_tools', 'opponent_library_tools', 'G05_open_library_tools', 'P3_03_delver_reveal_ponder', 'P4_06_reorder_ponder', 'tool_ponder_reorder', 'tool_opt_scry', 'tool_consider_surveil', 'tool_portent_bolas_library', 'tool_praetors_grasp', 'tool_thought_scour', 'tool_light_up_stage'].includes(liveStepId)) maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'libraryMenuOpen' });
     if (libraryBatchOpen && liveStepId === 'batch_library_actions') maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'libraryBatchOpen' });
     if (tokenModal && ['deck_tokens_note', 'custom_token_note', 'tool_dragon_fodder', 'tool_goblin_template', 'tool_mirror_cell'].includes(liveStepId)) maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'tokenModalOpen' });
     if (playerStatsOpen && ['player_panel', 'dungeons_note', 'commander_note', 'tool_throne_monarch', 'tool_nadaar_dungeon', 'tool_celestus_day', 'tool_birthday_escape_ring', 'tool_vraskas_fall_poison', 'tool_attune_energy', 'tool_ezuri_experience', 'tool_chandra_emblem', 'tool_citys_blessing'].includes(liveStepId)) maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'playerStatsOpen' });
@@ -6228,8 +6248,6 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     if (!game || typeof game !== 'object') return;
     const needs = {
       play_land: [{ name: 'Mountain', zone: ZONES.HAND, ownerId: userId, controllerId: userId }],
-      undo_play_land: [{ name: 'Mountain', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId }],
-      replay_mountain: [{ name: 'Mountain', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId, tapped: false }],
       tap_mountain_red: [{ name: 'Mountain', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId, tapped: false }],
       add_red_mana: [{ name: 'Mountain', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId, tapped: true }],
       cast_spell_to_stack: [
@@ -6346,8 +6364,6 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         { name: 'Negate', zone: 'stack_zone', ownerId: opponent?.id || userId, controllerId: opponent?.id || userId, stack: true, targetName: 'Lightning Bolt' }
       ],
       P1_01_play_mountain: [{ name: 'Mountain', zone: ZONES.HAND, ownerId: userId, controllerId: userId }],
-      P1_02_undo_mountain: [{ name: 'Mountain', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId }],
-      P1_03_replay_mountain: [{ name: 'Mountain', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId, tapped: false }],
       P1_04_tap_mountain: [{ name: 'Mountain', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId, tapped: false }],
       P1_05_add_r: [{ name: 'Mountain', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId, tapped: true }],
       P1_06_open_bolt: [{ name: 'Lightning Bolt', zone: ZONES.HAND, ownerId: userId, controllerId: userId }],
@@ -6417,6 +6433,13 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       F9_resolve_bolt_copy_lethal: [{ name: 'Lightning Bolt', zone: 'stack_zone', ownerId: userId, controllerId: userId, stack: true, targetName: 'Nicol Bolas' }]
     }[stepId];
     if (!needs) return;
+    if (stepId === 'P1_01_play_mountain' && !hasExactTutorialOpeningHand(game.cards || [], userId) && !(game.cards || []).some((card) => getCardDisplayName(card, card?.name || '') === 'Mountain' && card.controllerId === userId && card.zone === ZONES.BATTLEFIELD)) {
+      const message = 'The tutorial hand is out of sync. Reset tutorial battle to continue cleanly.';
+      setTutorialOverlayError(message);
+      setNotification(message);
+      setTimeout(() => setNotification(null), 5000);
+      return;
+    }
 
     let nextCards = Array.isArray(game.cards) ? [...game.cards] : [];
     let nextStack = Array.isArray(game.stack) ? [...game.stack] : [];
@@ -6466,7 +6489,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     let forcedCombat = null;
     let forcedStack = null;
 
-    if (['P1_01_play_mountain', 'P1_02_undo_mountain', 'P1_03_replay_mountain', 'P1_04_tap_mountain', 'P1_05_add_r', 'P1_06_open_bolt', 'P1_07_bolt_cast_target', 'P1_08_target_bolas', 'P1_09_inspect_stack', 'P1_10_resolve_bolt', 'P1_11_pass', 'P2_03_main1', 'P2_04_play_island', 'P2_05_tap_island', 'P2_06_add_u', 'P2_07_open_delver', 'P2_08_cast_delver', 'P2_09_resolve_delver', 'P2_10_pass', 'P3_06_main1', 'P3_07_play_mountain', 'P3_08_pass', 'P4_03_main1', 'P4_04_play_third_mountain', 'P4_05_cast_ponder', 'P4_06_reorder_ponder', 'P4_07_draw_ponder', 'F1_tap_mountain_bolt', 'F2_add_r', 'F3_cast_bolt_bolas', 'F5_tap_two_mountains', 'F6_add_rr', 'F7_reverberate_bolt', 'F8_resolve_reverberate', 'F9_resolve_bolt_copy_lethal', 'F10_resolve_negate_original'].includes(stepId)) {
+    if (['P1_01_play_mountain', 'P1_04_tap_mountain', 'P1_05_add_r', 'P1_06_open_bolt', 'P1_07_bolt_cast_target', 'P1_08_target_bolas', 'P1_09_inspect_stack', 'P1_10_resolve_bolt', 'P1_11_pass', 'P2_03_main1', 'P2_04_play_island', 'P2_05_tap_island', 'P2_06_add_u', 'P2_07_open_delver', 'P2_08_cast_delver', 'P2_09_resolve_delver', 'P2_10_pass', 'P3_06_main1', 'P3_07_play_mountain', 'P3_08_pass', 'P4_03_main1', 'P4_04_play_third_mountain', 'P4_05_cast_ponder', 'P4_06_reorder_ponder', 'P4_07_draw_ponder', 'F1_tap_mountain_bolt', 'F2_add_r', 'F3_cast_bolt_bolas', 'F5_tap_two_mountains', 'F6_add_rr', 'F7_reverberate_bolt', 'F8_resolve_reverberate', 'F9_resolve_bolt_copy_lethal', 'F10_resolve_negate_original'].includes(stepId)) {
       forcedPhase = 'main1';
       forcedTurnPlayerId = userId;
     } else if (['P2_01_untap', 'P3_01_untap', 'P4_01_untap_phase_in', 'B4_01_bolas_untaps'].includes(stepId)) {
@@ -6506,7 +6529,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       forcedStack = [];
     }
 
-    if (['replay_mountain', 'tap_mountain_red', 'add_red_mana', 'cast_spell_to_stack', 'inspect_stack', 'bolas_negate', 'copy_stack_item', 'resolve_stack_item', 'counter_stack_item', 'pass_priority'].includes(stepId)) {
+    if (['tap_mountain_red', 'add_red_mana', 'cast_spell_to_stack', 'inspect_stack', 'bolas_negate', 'copy_stack_item', 'resolve_stack_item', 'counter_stack_item', 'pass_priority'].includes(stepId)) {
       forcedPhase = stepId === 'pass_priority' ? 'end' : 'main1';
       forcedTurnPlayerId = userId;
     }
@@ -7592,7 +7615,6 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       setPendingOptimisticActionId(optimisticUndoActionId);
       setPendingOptimisticStartedAt(pendingOptimisticActionRef.current.startedAt);
       appliedOptimisticUndo = true;
-      maybeCompleteTutorialStep('undo_play_land');
       recordPerfOptimisticApplied({ actionType: 'UNDO_LAST_ACTION', restoredFields }, perfActionId || optimisticUndoActionId);
       recordPerfUndo({
         optimisticApplied: true,
@@ -7686,7 +7708,15 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     }
 
     closeTransientGameModals();
-    maybeCompleteTutorialStep('undo_play_land');
+    const restoredTutorialHand = hasExactTutorialOpeningHand(expectedUndoEntry.previousState?.cards || [], userId);
+    if (restoredTutorialHand && appliedOptimisticUndo) {
+      maybeCompleteTutorialStep('G07_undo_mulligan');
+    } else if ((optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.stepId === 'G07_undo_mulligan') {
+      const message = 'Undo did not restore the tutorial hand. Use Reset tutorial battle to restart this lesson.';
+      setTutorialOverlayError(message);
+      setNotification(message);
+      setTimeout(() => setNotification(null), 5000);
+    }
     finishPerfAction(perfActionId);
   };
 
@@ -11667,7 +11697,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             <div className="relative">
               <button
                 ref={libraryButtonRef}
-                onClick={canAct ? () => { const willOpen = !libraryMenuOpen; setLibraryMenuOpen(willOpen); if (willOpen) { maybeCompleteTutorialStep('open_library_tools'); maybeCompleteTutorialStep('G05_mulligan_7'); maybeCompleteTutorialStep('P3_03_delver_reveal_ponder'); maybeCompleteTutorialStep('P4_06_reorder_ponder'); } } : undefined}
+                onClick={canAct ? () => { const willOpen = !libraryMenuOpen; setLibraryMenuOpen(willOpen); if (willOpen) { maybeCompleteTutorialStep('open_library_tools'); maybeCompleteTutorialStep('G05_open_library_tools'); maybeCompleteTutorialStep('P3_03_delver_reveal_ponder'); maybeCompleteTutorialStep('P4_06_reorder_ponder'); } } : undefined}
                 data-tutorial-anchor="library-menu-button"
                 className={`p-2 rounded-full hover:bg-slate-700 ${libraryMenuOpen ? 'text-white bg-slate-700' : 'text-slate-400'} ${canAct ? '' : 'opacity-40 cursor-not-allowed'}${getTutorialAnchorClass(currentTutorialAnchor, 'library-menu-button', tutorialPulseAnchor)}`}
               >
@@ -11827,7 +11857,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             <button data-tutorial-anchor="draw-button" onClick={async () => { recordPerfActionClick({ actionType: 'DRAW_CARD', buttonName: 'Draw', currentGame: game }); await handleAction('DRAW_CARD'); setLibraryMenuOpen(false); await maybeCompleteTutorialStep('draw_card'); }} disabled={!canDrawFromLibrary} className={`w-full text-left px-3 py-2 text-sm flex items-center gap-2 ${canDrawFromLibrary ? 'hover:bg-slate-700 text-blue-300' : 'text-slate-500 cursor-not-allowed'}${getTutorialAnchorClass(canDrawFromLibrary ? currentTutorialAnchor : null, 'draw-button', tutorialPulseAnchor)}`}>
               <Plus size={12} /> Draw
             </button>
-            <button onClick={() => { handleAction('MULLIGAN'); setLibraryMenuOpen(false); }} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-700 flex items-center gap-2 text-amber-300" >
+            <button data-tutorial-anchor="mulligan-button" onClick={() => { handleAction('MULLIGAN'); setLibraryMenuOpen(false); }} className={`w-full text-left px-3 py-2 text-sm hover:bg-slate-700 flex items-center gap-2 text-amber-300${getTutorialAnchorClass(currentTutorialAnchor, 'mulligan-button', tutorialPulseAnchor)}`} >
               <RefreshCw size={12} /> Mulligan (7)
             </button>
             <button onClick={() => handleAction('SCRY_TOP')} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-700 flex items-center gap-2 text-purple-300">

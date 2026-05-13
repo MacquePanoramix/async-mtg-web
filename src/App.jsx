@@ -5389,9 +5389,6 @@ const TutorialOverlay = ({ game, currentStep, activeAnchor = null, canGoBack, is
                   <button type="button" onClick={onSkip} className="min-h-10 rounded-lg border border-slate-700 px-3 text-sm font-bold text-slate-300 hover:bg-slate-800">
                     Skip step
                   </button>
-                  <button type="button" onClick={onExit} className="min-h-10 rounded-lg border border-emerald-500/50 px-3 text-sm font-black text-emerald-100 hover:bg-emerald-950/50">
-                    Exit tutorial / Continue to game
-                  </button>
                   {isActionStep ? (
                     <button type="button" disabled className="min-h-10 rounded-lg bg-slate-700 px-4 text-sm font-black text-slate-300 opacity-70">
                       Waiting…
@@ -11034,14 +11031,6 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         {game?.isTutorial && !displayedTutorialState?.inactive && (
           <div className="flex items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-950/40 px-2 py-1">
             <span className="hidden text-[10px] font-black uppercase tracking-widest text-amber-200 sm:inline">Tutorial Battle (Beta)</span>
-            <button
-              type="button"
-              onClick={(event) => { event.stopPropagation(); confirmExitTutorial(); }}
-              className="rounded-md bg-emerald-600 px-2 py-1 text-xs font-black text-white hover:bg-emerald-500"
-              title="Disable tutorial mode and continue playing this game"
-            >
-              Exit tutorial / Continue to game
-            </button>
             <button
               type="button"
               onClick={(event) => { event.stopPropagation(); resetTutorialBattle(); }}

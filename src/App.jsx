@@ -3969,7 +3969,10 @@ const Lobby = ({
   isError,
   errorMsg,
   currentUser,
-  isActionLoading
+  isActionLoading,
+  loadingAction,
+  lobbyActionDebug,
+  onLobbyActionDebugCheckpoint
 }) => {
   const [name, setName] = useState('');
   const [gameTitle, setGameTitle] = useState('');
@@ -3998,6 +4001,11 @@ const Lobby = ({
   const canConfirmCleanup = selectedCleanupGames.length > 0 && (!requiresDeleteText || cleanupConfirmText === 'DELETE') && !isCleanupDeleting;
   const lobbyTutorialScene = TUTORIAL_LOBBY_SCENES[Math.min(lobbyTutorialIndex, TUTORIAL_LOBBY_SCENES.length - 1)];
   const isLobbyTutorialActive = lobbyTutorialOpen && lobbyTutorialScene;
+  const normalizedCode = code.trim().toUpperCase();
+  const isCreatingGame = loadingAction === 'createGame';
+  const isJoiningGame = loadingAction === 'joinGame';
+  const isWatchingGame = loadingAction === 'watchGame';
+  const isStartingTutorial = loadingAction === 'startTutorial';
 
   useEffect(() => () => {
     if (lobbyTutorialAdvanceTimerRef.current) window.clearTimeout(lobbyTutorialAdvanceTimerRef.current);
@@ -4039,6 +4047,7 @@ const Lobby = ({
     if (lobbyTutorialScene?.final) {
       if (!launchFinal) return;
       setLobbyTutorialOpen(false);
+      onLobbyActionDebugCheckpoint?.('startTutorial', 'confirmed start');
       onStartTutorial(effectiveName);
       return;
     }
@@ -4047,10 +4056,12 @@ const Lobby = ({
   };
 
   const requestTutorialBattleStart = () => {
+    onLobbyActionDebugCheckpoint?.('startTutorial', 'warning modal opened');
     setTutorialStartWarningOpen(true);
   };
 
   const confirmTutorialBattleStart = () => {
+    onLobbyActionDebugCheckpoint?.('startTutorial', 'confirmed start');
     setTutorialStartWarningOpen(false);
     setLobbyTutorialOpen(false);
     onStartTutorial(effectiveName);
@@ -4224,10 +4235,10 @@ const Lobby = ({
                     if (isLobbyTutorialActive) { focusLobbyTutorialTarget(); return; }
                     onCreate(effectiveName, gameTitle, gameMode);
                   }}
-                  disabled={!effectiveName.trim() || isInitLoading || isActionLoading}
+                  disabled={!effectiveName.trim() || isInitLoading || isCreatingGame}
                   className="bg-purple-600 hover:bg-purple-700 disabled:opacity-50 disabled:cursor-wait text-white p-3 rounded-lg font-bold transition-colors flex justify-center items-center gap-2"
                 >
-                  {isActionLoading ? <Loader2 className="animate-spin" size={18}/> : 'Create Game'}
+                  {isCreatingGame ? <Loader2 className="animate-spin" size={18}/> : 'Create Game'}
                 </button>
                 <button
                   data-tutorial-anchor="lobby-join-game"
@@ -4236,7 +4247,7 @@ const Lobby = ({
                     if (isLobbyTutorialActive) { focusLobbyTutorialTarget(); return; }
                     setMode('join');
                   }}
-                  disabled={!effectiveName.trim() || isInitLoading || isActionLoading}
+                  disabled={!effectiveName.trim() || isInitLoading || isJoiningGame}
                   className="bg-slate-700 hover:bg-slate-600 disabled:opacity-50 disabled:cursor-wait text-white p-3 rounded-lg font-bold transition-colors flex justify-center items-center gap-2"
                 >
                   {isInitLoading ? <Loader2 className="animate-spin" size={18}/> : 'Join Game'}
@@ -4282,7 +4293,7 @@ const Lobby = ({
                   if (isLobbyTutorialActive) { focusLobbyTutorialTarget(); return; }
                   setMode('watch');
                 }}
-                disabled={!effectiveName.trim() || isInitLoading || isActionLoading}
+                disabled={!effectiveName.trim() || isInitLoading || isWatchingGame}
                 className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-wait text-white p-3 rounded-lg font-bold transition-colors flex justify-center items-center gap-2"
               >
                 {isInitLoading ? <Loader2 className="animate-spin" size={18}/> : 'Watch Game'}
@@ -4291,6 +4302,7 @@ const Lobby = ({
                 type="button"
                 data-tutorial-anchor="lobby-tutorial-start"
                 onClick={() => {
+                  onLobbyActionDebugCheckpoint?.('startTutorial', 'clicked Tutorial Battle');
                   if (isLobbyTutorialActive && lobbyTutorialScene?.final) {
                     completeLobbyTutorialStep('begin');
                     return;
@@ -4298,7 +4310,7 @@ const Lobby = ({
                   if (isLobbyTutorialActive) { focusLobbyTutorialTarget(); return; }
                   startLobbyTutorial();
                 }}
-                disabled={!effectiveName.trim() || isInitLoading || isActionLoading}
+                disabled={!effectiveName.trim() || isInitLoading || isStartingTutorial}
                 className="w-full rounded-lg border border-amber-500/40 bg-gradient-to-r from-amber-950/80 to-purple-950/70 p-3 text-left text-amber-50 transition-colors hover:border-amber-300/70 hover:from-amber-900/80 hover:to-purple-900/80 disabled:cursor-wait disabled:opacity-50"
               >
                 <div className="flex items-center justify-between gap-3">
@@ -4306,7 +4318,7 @@ const Lobby = ({
                     <div className="font-extrabold">Tutorial Battle (Beta)</div>
                     <div className="mt-0.5 text-xs font-medium text-amber-100/80">Experimental cinematic duel. You can skip it anytime and play normally.</div>
                   </div>
-                  {isActionLoading ? <Loader2 className="shrink-0 animate-spin" size={18}/> : <ArrowRight className="shrink-0 text-amber-200" size={18}/>} 
+                  {isStartingTutorial ? <Loader2 className="shrink-0 animate-spin" size={18}/> : <ArrowRight className="shrink-0 text-amber-200" size={18}/>}
                 </div>
               </button>
             </div>
@@ -4328,17 +4340,17 @@ const Lobby = ({
               <div className="flex gap-3">
                 <button
                   onClick={() => setMode('menu')}
-                  disabled={isActionLoading}
+                  disabled={isJoiningGame}
                   className="flex-1 bg-slate-700 hover:bg-slate-600 text-white p-3 rounded-lg font-bold"
                 >
                   Back
                 </button>
                 <button
                   onClick={() => onJoin(effectiveName, code)}
-                  disabled={!code || isInitLoading || isActionLoading}
+                  disabled={!normalizedCode || isInitLoading || isJoiningGame}
                   className="flex-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white p-3 rounded-lg font-bold flex justify-center items-center gap-2"
                 >
-                  {isActionLoading ? <Loader2 className="animate-spin" size={18}/> : 'Enter'}
+                  {isJoiningGame ? <Loader2 className="animate-spin" size={18}/> : 'Enter'}
                 </button>
               </div>
             </div>
@@ -4360,21 +4372,31 @@ const Lobby = ({
               <div className="flex gap-3">
                 <button
                   onClick={() => setMode('menu')}
-                  disabled={isActionLoading}
+                  disabled={isWatchingGame}
                   className="flex-1 bg-slate-700 hover:bg-slate-600 text-white p-3 rounded-lg font-bold"
                 >
                   Back
                 </button>
                 <button
                   onClick={() => onWatch(effectiveName, code)}
-                  disabled={!code || isInitLoading || isActionLoading}
+                  disabled={!normalizedCode || isInitLoading || isWatchingGame}
                   className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white p-3 rounded-lg font-bold flex justify-center items-center gap-2"
                 >
-                  {isActionLoading ? <Loader2 className="animate-spin" size={18}/> : 'Watch'}
+                  {isWatchingGame ? <Loader2 className="animate-spin" size={18}/> : 'Watch'}
                 </button>
               </div>
             </div>
           )}
+
+          <div className="rounded-lg border border-sky-500/40 bg-sky-950/30 p-3 text-xs text-sky-100">
+            <div className="mb-2 font-black uppercase tracking-[0.2em] text-sky-200">Lobby action debug</div>
+            <div className="grid gap-1 font-mono">
+              <div><span className="text-sky-300">action:</span> {lobbyActionDebug?.action || 'none'}</div>
+              <div><span className="text-sky-300">checkpoint:</span> {lobbyActionDebug?.checkpoint || 'none'}</div>
+              <div><span className="text-sky-300">loading:</span> {isActionLoading ? 'yes' : 'no'}</div>
+              <div className="break-words"><span className="text-sky-300">last error:</span> {lobbyActionDebug?.errorMessage ? `${lobbyActionDebug.errorMessage}${lobbyActionDebug.errorCode ? ` (${lobbyActionDebug.errorCode})` : ''}` : 'none'}</div>
+            </div>
+          </div>
 
           <button
             onClick={isGoogleConnected ? undefined : onContinueWithGoogle}
@@ -4884,7 +4906,7 @@ const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isD
       onTouchStart={isDraggable ? onMouseDown : undefined}
     >
       <div className={`w-full h-full rounded-lg overflow-hidden border-2 shadow-md relative bg-slate-800 pointer-events-none ${borderStyle} ${zone === ZONES.BATTLEFIELD ? 'shadow-lg' : ''} ${isPhasedOut ? 'grayscale saturate-50' : ''}`}>
-        
+
 
         {isFaceDown ? (
           <div className="w-full h-full bg-slate-700 flex flex-col items-center justify-center p-1 border-4 border-slate-600">
@@ -14087,6 +14109,9 @@ export default function App() {
   const [activeGameId, setActiveGameId] = useState(null);
   const [initError, setInitError] = useState(null);
   const [isActionLoading, setIsActionLoading] = useState(false);
+  const [loadingAction, setLoadingAction] = useState('');
+  const [lobbyActionDebug, setLobbyActionDebug] = useState({ action: '', checkpoint: '', errorMessage: '', errorCode: '' });
+  const lobbyActionRunIdRef = useRef(0);
   const [isAuthStartupLoading, setIsAuthStartupLoading] = useState(true);
   const [playerName, setPlayerName] = useState('');
   const [myGames, setMyGames] = useState([]);
@@ -14154,6 +14179,79 @@ export default function App() {
     }, { merge: true });
   };
 
+  const recordLobbyActionCheckpoint = (actionName, checkpoint, details = {}) => {
+    const debugUpdate = {
+      action: actionName,
+      checkpoint,
+      errorMessage: details.errorMessage || '',
+      errorCode: details.errorCode || ''
+    };
+    setLobbyActionDebug((current) => ({ ...current, ...debugUpdate }));
+    console.info('[Lobby action]', actionName, checkpoint, details);
+  };
+
+  const runLobbyAction = async (actionName, asyncFn) => {
+    const runId = lobbyActionRunIdRef.current + 1;
+    lobbyActionRunIdRef.current = runId;
+    setLoadingAction(actionName);
+    setIsActionLoading(true);
+    setInitError(null);
+    recordLobbyActionCheckpoint(actionName, 'started');
+
+    let lastCheckpoint = 'started';
+    let timedOut = false;
+    const checkpoint = (label, details = {}) => {
+      if (timedOut) {
+        console.info('[Lobby action]', actionName, `late checkpoint after timeout: ${label}`, details);
+        return;
+      }
+      lastCheckpoint = label;
+      recordLobbyActionCheckpoint(actionName, label, details);
+    };
+
+    const timeoutId = window.setTimeout(() => {
+      if (lobbyActionRunIdRef.current !== runId) return;
+      timedOut = true;
+      const message = `Lobby action timed out at checkpoint: ${lastCheckpoint}`;
+      console.warn('[Lobby action]', actionName, message, { checkpoint: lastCheckpoint });
+      setLobbyActionDebug((current) => ({
+        ...current,
+        action: actionName,
+        checkpoint: lastCheckpoint,
+        errorMessage: message,
+        errorCode: 'timeout'
+      }));
+      setInitError(message);
+      setLoadingAction('');
+      setIsActionLoading(false);
+    }, 12000);
+
+    try {
+      const result = await asyncFn(checkpoint);
+      checkpoint('completed');
+      return result;
+    } catch (e) {
+      const message = e?.message || String(e) || 'Unknown lobby action error';
+      const code = e?.code || '';
+      console.error('[Lobby action]', actionName, 'failed', e);
+      setLobbyActionDebug((current) => ({
+        ...current,
+        action: actionName,
+        checkpoint: lastCheckpoint,
+        errorMessage: message,
+        errorCode: code
+      }));
+      setInitError(code ? `${message} (${code})` : message);
+      return undefined;
+    } finally {
+      window.clearTimeout(timeoutId);
+      if (lobbyActionRunIdRef.current === runId) {
+        setLoadingAction('');
+        setIsActionLoading(false);
+      }
+    }
+  };
+
   const getPreferredNameForGame = async (uid, roomCode, fallbackName) => {
     const defaultName = (fallbackName || '').trim() || 'Guest';
     try {
@@ -14181,6 +14279,7 @@ export default function App() {
     const finishStartup = () => {
       if (cancelled) return;
       setIsAuthStartupLoading(false);
+      setLoadingAction('');
       setIsActionLoading(false);
     };
 
@@ -14345,25 +14444,141 @@ export default function App() {
     console.log('currentUser providerData', user.providerData);
   }, [user]);
 
-  const createGame = async (playerNameInput, gameTitleInput, selectedGameMode = GAME_MODES.REGULAR) => {
-    if (!user) return;
-    setIsActionLoading(true);
-    setInitError(null);
+  const createGame = async (playerNameInput, gameTitleInput, selectedGameMode = GAME_MODES.REGULAR) => runLobbyAction('createGame', async (checkpoint) => {
+    checkpoint('clicked Create Game');
+    if (!user) throw new Error('Authentication is not ready yet.');
+    checkpoint('currentUser exists / uid', { uid: user.uid });
     const safeName = (playerNameInput || '').trim();
     const safeTitle = (gameTitleInput || '').trim();
+    checkpoint('display name resolved', { displayName: safeName || '(blank)' });
     const safeGameMode = selectedGameMode === GAME_MODES.COMMANDER ? GAME_MODES.COMMANDER : GAME_MODES.REGULAR;
+    checkpoint('game mode selected', { gameMode: safeGameMode });
     const startingLife = getStartingLifeForMode(safeGameMode);
     setPlayerName(safeName);
-    try {
-      const initialData = {
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-        hostId: user.uid,
-        gameMode: safeGameMode,
-        ...(safeTitle ? { title: safeTitle } : {}),
-        allowSpectators: true,
-        spectatorIds: [],
-        players: [{
+
+    const shortCode = generateGameId();
+    checkpoint('generated room code / game id', { gameId: shortCode });
+    const initialData = {
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      hostId: user.uid,
+      gameMode: safeGameMode,
+      ...(safeTitle ? { title: safeTitle } : {}),
+      allowSpectators: true,
+      spectatorIds: [],
+      players: [{
+        id: user.uid,
+        name: safeName,
+        life: startingLife,
+        turnOrder: 0,
+        counters: { poison: 0, energy: 0, experience: 0 },
+        manaPool: clearManaPool(),
+        statuses: { monarch: false, initiative: false, citysBlessing: false, ringBearerLevel: 0, custom: [] },
+        emblems: [],
+        deckExtras: getEmptyDeckExtras(),
+        handRevealed: false,
+        lastSeenChatAt: Date.now()
+      }],
+      phase: 'main1',
+      dayNight: null,
+      activePlayerIndex: 0,
+      priorityIndex: 0,
+      priorityPlayerId: user.uid,
+      turnPlayerId: user.uid,
+      turnNumber: 1,
+      consecutivePasses: 0,
+      stack: [],
+      cards: [],
+      targets: [],
+      reveals: [],
+      autopass: {},
+      undoStack: [],
+      combat: getEmptyCombatState(),
+      log: [buildGameLogEntry({
+        currentGame: { turnNumber: 1, turnPlayerId: user.uid, phase: 'main1' },
+        playerId: user.uid,
+        playerName: safeName || 'Unknown',
+        type: 'GAME_CREATE',
+        category: 'setup',
+        message: `${safeName || 'Unknown'} created the ${safeGameMode === GAME_MODES.COMMANDER ? 'Commander' : 'Regular'} game.`
+      })]
+    };
+
+    checkpoint('before Firestore write', { gameId: shortCode });
+    await setDoc(doc(db, 'games_v3', shortCode), { ...initialData, id: shortCode });
+    await upsertUserGameMembership(user.uid, shortCode, 'player', { myName: safeName, title: safeTitle });
+    checkpoint('after Firestore write', { gameId: shortCode });
+    checkpoint('before setting/opening current game', { gameId: shortCode });
+    setActiveGameId(shortCode);
+    checkpoint('after setting/opening current game', { gameId: shortCode });
+  });
+
+  const startTutorialGame = async (playerNameInput) => runLobbyAction('startTutorial', async (checkpoint) => {
+    checkpoint('confirmed start');
+    if (!user) throw new Error('Authentication is not ready yet.');
+    checkpoint('currentUser exists / uid', { uid: user.uid });
+    const safeName = (playerNameInput || '').trim() || suggestedName || 'Planeswalker';
+    checkpoint('display name resolved', { displayName: safeName });
+    setPlayerName(safeName);
+
+    checkpoint('before tutorial Firestore lookup');
+    const existingTutorialRefs = await getDocs(query(collection(db, 'users', user.uid, 'games'), where('isTutorial', '==', true), limit(1)));
+    checkpoint('after tutorial Firestore lookup', { count: existingTutorialRefs.docs.length });
+    for (const membershipDoc of existingTutorialRefs.docs) {
+      const candidateId = membershipDoc.data()?.roomCode || membershipDoc.id;
+      if (!candidateId) continue;
+      const candidateSnap = await getDoc(doc(db, 'games_v3', candidateId));
+      if (candidateSnap.exists() && candidateSnap.data()?.isTutorial) {
+        const candidateData = candidateSnap.data() || {};
+        const shouldSeedExistingTutorial = shouldSeedTutorialCardsForPlayer(candidateData.cards || [], user.uid);
+        checkpoint('before tutorial Firestore write', { gameId: candidateId, reusingExisting: true });
+        await updateDoc(doc(db, 'games_v3', candidateId), {
+          tutorial: {
+            scriptVersion: candidateData.tutorial?.scriptVersion || TUTORIAL_SCRIPT_VERSION,
+            stepId: candidateData.tutorial?.finished ? 'intro' : (candidateData.tutorial?.stepId || 'intro'),
+            completedStepIds: candidateData.tutorial?.finished ? [] : capTutorialCompletedStepIds(candidateData.tutorial?.completedStepIds || []),
+            playerId: candidateData.tutorial?.playerId || user.uid,
+            opponentName: 'Nicol Bolas',
+            opponentIsScripted: true,
+            finished: false,
+            inactive: false
+          },
+          ...(shouldSeedExistingTutorial ? { cards: buildTutorialDuelCards(user.uid, candidateData.players?.find((p) => p?.isScriptedOpponent)?.id || `tutorial-bolas-${candidateId}`) } : {}),
+          updatedAt: serverTimestamp()
+        });
+        checkpoint('after tutorial Firestore write', { gameId: candidateId, reusingExisting: true });
+        checkpoint('before opening tutorial game', { gameId: candidateId });
+        setActiveGameId(candidateId);
+        return;
+      }
+    }
+
+    const shortCode = generateGameId();
+    const bolasId = `tutorial-bolas-${shortCode}`;
+    checkpoint('generated tutorial room code / game id', { gameId: shortCode });
+    const startingLife = getStartingLifeForMode(GAME_MODES.REGULAR);
+    const initialData = {
+      id: shortCode,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      hostId: user.uid,
+      gameMode: GAME_MODES.REGULAR,
+      title: 'Tutorial Battle (Beta): Nicol Bolas',
+      allowSpectators: false,
+      spectatorIds: [],
+      isTutorial: true,
+      tutorial: {
+        scriptVersion: TUTORIAL_SCRIPT_VERSION,
+        stepId: 'intro',
+        completedStepIds: [],
+        playerId: user.uid,
+        opponentName: 'Nicol Bolas',
+        opponentIsScripted: true,
+        finished: false,
+        inactive: false
+      },
+      players: [
+        {
           id: user.uid,
           name: safeName,
           life: startingLife,
@@ -14375,266 +14590,158 @@ export default function App() {
           deckExtras: getEmptyDeckExtras(),
           handRevealed: false,
           lastSeenChatAt: Date.now()
-        }],
-        phase: 'main1',
-        dayNight: null,
-        activePlayerIndex: 0,
-        priorityIndex: 0,
-        priorityPlayerId: user.uid,
-        turnPlayerId: user.uid,
-        turnNumber: 1,
-        consecutivePasses: 0,
-        stack: [],
-        cards: [],
-        targets: [],
-        reveals: [],
-        autopass: {},
-        undoStack: [],
-        combat: getEmptyCombatState(),
-        log: [buildGameLogEntry({
-          currentGame: { turnNumber: 1, turnPlayerId: user.uid, phase: 'main1' },
-          playerId: user.uid,
-          playerName: safeName || 'Unknown',
-          type: 'GAME_CREATE',
-          category: 'setup',
-          message: `${safeName || 'Unknown'} created the ${safeGameMode === GAME_MODES.COMMANDER ? 'Commander' : 'Regular'} game.`
-        })]
-      };
-
-      const shortCode = generateGameId();
-      await setDoc(doc(db, 'games_v3', shortCode), { ...initialData, id: shortCode });
-      await upsertUserGameMembership(user.uid, shortCode, 'player', { myName: safeName, title: safeTitle });
-      setActiveGameId(shortCode);
-    } catch (e) {
-      console.error(e);
-      setInitError(e.message);
-    } finally {
-      setIsActionLoading(false);
-    }
-  };
-
-  const startTutorialGame = async (playerNameInput) => {
-    if (!user) return;
-    setIsActionLoading(true);
-    setInitError(null);
-    const safeName = (playerNameInput || '').trim() || suggestedName || 'Planeswalker';
-    setPlayerName(safeName);
-    try {
-      const existingTutorialRefs = await getDocs(query(collection(db, 'users', user.uid, 'games'), where('isTutorial', '==', true), limit(1)));
-      for (const membershipDoc of existingTutorialRefs.docs) {
-        const candidateId = membershipDoc.data()?.roomCode || membershipDoc.id;
-        if (!candidateId) continue;
-        const candidateSnap = await getDoc(doc(db, 'games_v3', candidateId));
-        if (candidateSnap.exists() && candidateSnap.data()?.isTutorial) {
-          const candidateData = candidateSnap.data() || {};
-          const shouldSeedExistingTutorial = shouldSeedTutorialCardsForPlayer(candidateData.cards || [], user.uid);
-          await updateDoc(doc(db, 'games_v3', candidateId), {
-            tutorial: {
-              scriptVersion: candidateData.tutorial?.scriptVersion || TUTORIAL_SCRIPT_VERSION,
-              stepId: candidateData.tutorial?.finished ? 'intro' : (candidateData.tutorial?.stepId || 'intro'),
-              completedStepIds: candidateData.tutorial?.finished ? [] : capTutorialCompletedStepIds(candidateData.tutorial?.completedStepIds || []),
-              playerId: candidateData.tutorial?.playerId || user.uid,
-              opponentName: 'Nicol Bolas',
-              opponentIsScripted: true,
-              finished: false,
-              inactive: false
-            },
-            ...(shouldSeedExistingTutorial ? { cards: buildTutorialDuelCards(user.uid, candidateData.players?.find((p) => p?.isScriptedOpponent)?.id || `tutorial-bolas-${candidateId}`) } : {}),
-            updatedAt: serverTimestamp()
-          });
-          setActiveGameId(candidateId);
-          return;
-        }
-      }
-
-      const shortCode = generateGameId();
-      const bolasId = `tutorial-bolas-${shortCode}`;
-      const startingLife = getStartingLifeForMode(GAME_MODES.REGULAR);
-      const initialData = {
-        id: shortCode,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-        hostId: user.uid,
-        gameMode: GAME_MODES.REGULAR,
-        title: 'Tutorial Battle (Beta): Nicol Bolas',
-        allowSpectators: false,
-        spectatorIds: [],
-        isTutorial: true,
-        tutorial: {
-          scriptVersion: TUTORIAL_SCRIPT_VERSION,
-          stepId: 'intro',
-          completedStepIds: [],
-          playerId: user.uid,
-          opponentName: 'Nicol Bolas',
-          opponentIsScripted: true,
-          finished: false,
-          inactive: false
         },
-        players: [
-          {
-            id: user.uid,
-            name: safeName,
-            life: startingLife,
-            turnOrder: 0,
-            counters: { poison: 0, energy: 0, experience: 0 },
-            manaPool: clearManaPool(),
-            statuses: { monarch: false, initiative: false, citysBlessing: false, ringBearerLevel: 0, custom: [] },
-            emblems: [],
-            deckExtras: getEmptyDeckExtras(),
-            handRevealed: false,
-            lastSeenChatAt: Date.now()
-          },
-          {
-            id: bolasId,
-            name: 'Nicol Bolas',
-            life: startingLife,
-            turnOrder: 1,
-            isScriptedOpponent: true,
-            counters: { poison: 0, energy: 0, experience: 0 },
-            manaPool: clearManaPool(),
-            statuses: { monarch: false, initiative: false, citysBlessing: false, ringBearerLevel: 0, custom: [] },
-            emblems: [],
-            deckExtras: getEmptyDeckExtras(),
-            handRevealed: false,
-            lastSeenChatAt: Date.now()
-          }
-        ],
-        phase: 'main1',
-        dayNight: null,
-        activePlayerIndex: 0,
-        priorityIndex: 0,
-        priorityPlayerId: user.uid,
-        turnPlayerId: user.uid,
-        turnNumber: 1,
-        consecutivePasses: 0,
-        stack: [],
-        cards: buildTutorialDuelCards(user.uid, bolasId),
-        targets: [],
-        reveals: [],
-        autopass: {},
-        undoStack: [],
-        combat: getEmptyCombatState(),
-        log: [buildGameLogEntry({
-          currentGame: { turnNumber: 1, turnPlayerId: user.uid, phase: 'main1' },
-          playerId: user.uid,
-          playerName: safeName || 'Unknown',
-          type: 'TUTORIAL_CREATE',
-          category: 'setup',
-          message: `${safeName || 'Unknown'} began the tutorial battle against Nicol Bolas.`
-        })]
-      };
-
-      await setDoc(doc(db, 'games_v3', shortCode), initialData);
-      await upsertUserGameMembership(user.uid, shortCode, 'player', { myName: safeName, title: initialData.title, isTutorial: true });
-      setActiveGameId(shortCode);
-    } catch (e) {
-      console.error(e);
-      setInitError(e.message);
-    } finally {
-      setIsActionLoading(false);
-    }
-  };
-
-  const joinGame = async (playerNameInput, code) => {
-    if (!user) return;
-    setIsActionLoading(true);
-    setInitError(null);
-    const safeName = (playerNameInput || '').trim();
-    setPlayerName(safeName);
-    try {
-      const safeCode = (code || '').trim().toUpperCase();
-      const gameRef = doc(db, 'games_v3', safeCode);
-      let gameTitle = '';
-
-      await runTransaction(db, async (transaction) => {
-        const gameDoc = await transaction.get(gameRef);
-        if (!gameDoc.exists()) throw new Error('Game not found! Check the code.');
-
-        const gameData = gameDoc.data();
-        gameTitle = (gameData.title || '').trim();
-        const players = gameData.players || [];
-        const existingPlayerIndex = players.findIndex((p) => p.id === user.uid);
-
-        if (existingPlayerIndex >= 0) {
-          const newPlayers = [...players];
-          newPlayers[existingPlayerIndex] = { ...newPlayers[existingPlayerIndex], name: safeName, lastSeenChatAt: Date.now() };
-          transaction.update(gameRef, normalizeGameUpdatesForFirestore({
-            players: newPlayers,
-            undoStack: gameData.undoStack || [],
-            updatedAt: serverTimestamp(),
-            log: pruneLogForFirestore([...(gameData.log || []), buildGameLogEntry({ currentGame: gameData, playerId: user.uid, playerName: safeName || 'Unknown', type: 'PLAYER_REJOIN', category: 'setup', message: `${safeName || 'Unknown'} rejoined the game.` })])
-          }, 'PLAYER_REJOIN'));
-        } else if (players.length < 2) {
-          const newPlayer = {
-            id: user.uid,
-            name: safeName,
-            life: getStartingLifeForMode(getGameMode(gameData)),
-            turnOrder: players.length,
-            counters: { poison: 0, energy: 0, experience: 0 },
-            manaPool: clearManaPool(),
-            statuses: { monarch: false, initiative: false, citysBlessing: false, ringBearerLevel: 0, custom: [] },
-            emblems: [],
-            deckExtras: getEmptyDeckExtras(),
-            handRevealed: false,
-            lastSeenChatAt: Date.now()
-          };
-          transaction.update(gameRef, normalizeGameUpdatesForFirestore({
-            players: [...players, newPlayer],
-            undoStack: gameData.undoStack || [],
-            updatedAt: serverTimestamp(),
-            log: pruneLogForFirestore([...(gameData.log || []), buildGameLogEntry({ currentGame: gameData, playerId: user.uid, playerName: safeName || 'Unknown', type: 'PLAYER_JOIN', category: 'setup', message: `${safeName || 'Unknown'} joined the game.` })])
-          }, 'PLAYER_JOIN'));
-        } else {
-          throw new Error('Game is full.');
+        {
+          id: bolasId,
+          name: 'Nicol Bolas',
+          life: startingLife,
+          turnOrder: 1,
+          isScriptedOpponent: true,
+          counters: { poison: 0, energy: 0, experience: 0 },
+          manaPool: clearManaPool(),
+          statuses: { monarch: false, initiative: false, citysBlessing: false, ringBearerLevel: 0, custom: [] },
+          emblems: [],
+          deckExtras: getEmptyDeckExtras(),
+          handRevealed: false,
+          lastSeenChatAt: Date.now()
         }
-      });
+      ],
+      phase: 'main1',
+      dayNight: null,
+      activePlayerIndex: 0,
+      priorityIndex: 0,
+      priorityPlayerId: user.uid,
+      turnPlayerId: user.uid,
+      turnNumber: 1,
+      consecutivePasses: 0,
+      stack: [],
+      cards: buildTutorialDuelCards(user.uid, bolasId),
+      targets: [],
+      reveals: [],
+      autopass: {},
+      undoStack: [],
+      combat: getEmptyCombatState(),
+      log: [buildGameLogEntry({
+        currentGame: { turnNumber: 1, turnPlayerId: user.uid, phase: 'main1' },
+        playerId: user.uid,
+        playerName: safeName || 'Unknown',
+        type: 'TUTORIAL_CREATE',
+        category: 'setup',
+        message: `${safeName || 'Unknown'} began the tutorial battle against Nicol Bolas.`
+      })]
+    };
 
-      await upsertUserGameMembership(user.uid, safeCode, 'player', { myName: safeName, title: gameTitle });
-      setActiveGameId(safeCode);
-    } catch (e) {
-      console.error(e);
-      setInitError(e.message);
-    } finally {
-      setIsActionLoading(false);
-    }
-  };
+    checkpoint('before tutorial Firestore write', { gameId: shortCode });
+    await setDoc(doc(db, 'games_v3', shortCode), initialData);
+    await upsertUserGameMembership(user.uid, shortCode, 'player', { myName: safeName, title: initialData.title, isTutorial: true });
+    checkpoint('after tutorial Firestore write', { gameId: shortCode });
+    checkpoint('before opening tutorial game', { gameId: shortCode });
+    setActiveGameId(shortCode);
+  });
 
-  const watchGame = async (playerNameInput, code) => {
-    if (!user) return;
-    setIsActionLoading(true);
-    setInitError(null);
+  const joinGame = async (playerNameInput, code) => runLobbyAction('joinGame', async (checkpoint) => {
+    checkpoint('clicked Join Game');
+    if (!user) throw new Error('Authentication is not ready yet.');
+    checkpoint('currentUser exists / uid', { uid: user.uid });
     const safeName = (playerNameInput || '').trim();
+    checkpoint('display name resolved', { displayName: safeName || '(blank)' });
     setPlayerName(safeName);
-    try {
-      const safeCode = (code || '').trim().toUpperCase();
-      const gameRef = doc(db, 'games_v3', safeCode);
-      let gameTitle = '';
+    checkpoint('input code', { code });
+    const safeCode = (code || '').trim().toUpperCase();
+    checkpoint('normalized code', { code: safeCode });
+    const gameRef = doc(db, 'games_v3', safeCode);
+    let gameTitle = '';
+    let gameExists = false;
 
-      await runTransaction(db, async (transaction) => {
-        const gameDoc = await transaction.get(gameRef);
-        if (!gameDoc.exists()) throw new Error('Game not found! Check the code.');
+    checkpoint('before Firestore lookup', { gameId: safeCode });
+    await runTransaction(db, async (transaction) => {
+      const gameDoc = await transaction.get(gameRef);
+      gameExists = gameDoc.exists();
+      checkpoint('after Firestore lookup', { gameId: safeCode, exists: gameExists });
+      checkpoint('whether game exists', { exists: gameExists });
+      if (!gameExists) throw new Error('Game not found! Check the code.');
 
-        const gameData = gameDoc.data();
-        gameTitle = (gameData.title || '').trim();
-        if (gameData.allowSpectators === false) throw new Error('Spectators are not allowed in this game.');
+      const gameData = gameDoc.data();
+      gameTitle = (gameData.title || '').trim();
+      const players = gameData.players || [];
+      const existingPlayerIndex = players.findIndex((p) => p.id === user.uid);
+      checkpoint('before joining/updating players', { existingPlayer: existingPlayerIndex >= 0, playerCount: players.length });
 
-        const players = gameData.players || [];
-        const isPlayer = players.some((p) => p.id === user.uid);
-        const spectatorIds = gameData.spectatorIds || [];
-        const isSpectator = spectatorIds.includes(user.uid);
+      if (existingPlayerIndex >= 0) {
+        const newPlayers = [...players];
+        newPlayers[existingPlayerIndex] = { ...newPlayers[existingPlayerIndex], name: safeName, lastSeenChatAt: Date.now() };
+        transaction.update(gameRef, normalizeGameUpdatesForFirestore({
+          players: newPlayers,
+          undoStack: gameData.undoStack || [],
+          updatedAt: serverTimestamp(),
+          log: pruneLogForFirestore([...(gameData.log || []), buildGameLogEntry({ currentGame: gameData, playerId: user.uid, playerName: safeName || 'Unknown', type: 'PLAYER_REJOIN', category: 'setup', message: `${safeName || 'Unknown'} rejoined the game.` })])
+        }, 'PLAYER_REJOIN'));
+      } else if (players.length < 2) {
+        const newPlayer = {
+          id: user.uid,
+          name: safeName,
+          life: getStartingLifeForMode(getGameMode(gameData)),
+          turnOrder: players.length,
+          counters: { poison: 0, energy: 0, experience: 0 },
+          manaPool: clearManaPool(),
+          statuses: { monarch: false, initiative: false, citysBlessing: false, ringBearerLevel: 0, custom: [] },
+          emblems: [],
+          deckExtras: getEmptyDeckExtras(),
+          handRevealed: false,
+          lastSeenChatAt: Date.now()
+        };
+        transaction.update(gameRef, normalizeGameUpdatesForFirestore({
+          players: [...players, newPlayer],
+          undoStack: gameData.undoStack || [],
+          updatedAt: serverTimestamp(),
+          log: pruneLogForFirestore([...(gameData.log || []), buildGameLogEntry({ currentGame: gameData, playerId: user.uid, playerName: safeName || 'Unknown', type: 'PLAYER_JOIN', category: 'setup', message: `${safeName || 'Unknown'} joined the game.` })])
+        }, 'PLAYER_JOIN'));
+      } else {
+        throw new Error('Game is full.');
+      }
+    });
 
-        if (!isPlayer && !isSpectator) transaction.update(gameRef, { spectatorIds: [...spectatorIds, user.uid] });
-      });
+    checkpoint('after joining/updating players', { gameId: safeCode });
+    await upsertUserGameMembership(user.uid, safeCode, 'player', { myName: safeName, title: gameTitle });
+    checkpoint('before opening game', { gameId: safeCode });
+    setActiveGameId(safeCode);
+  });
 
-      await upsertUserGameMembership(user.uid, safeCode, 'spectator', { myName: safeName, title: gameTitle });
-      setActiveGameId(safeCode);
-    } catch (e) {
-      console.error(e);
-      setInitError(e.message);
-    } finally {
-      setIsActionLoading(false);
-    }
-  };
+  const watchGame = async (playerNameInput, code) => runLobbyAction('watchGame', async (checkpoint) => {
+    checkpoint('clicked Watch Game');
+    if (!user) throw new Error('Authentication is not ready yet.');
+    checkpoint('currentUser exists / uid', { uid: user.uid });
+    const safeName = (playerNameInput || '').trim();
+    checkpoint('display name resolved', { displayName: safeName || '(blank)' });
+    setPlayerName(safeName);
+    const safeCode = (code || '').trim().toUpperCase();
+    checkpoint('normalized code', { code: safeCode });
+    const gameRef = doc(db, 'games_v3', safeCode);
+    let gameTitle = '';
+
+    checkpoint('before Firestore lookup', { gameId: safeCode });
+    await runTransaction(db, async (transaction) => {
+      const gameDoc = await transaction.get(gameRef);
+      checkpoint('after Firestore lookup', { gameId: safeCode, exists: gameDoc.exists() });
+      if (!gameDoc.exists()) throw new Error('Game not found! Check the code.');
+
+      const gameData = gameDoc.data();
+      gameTitle = (gameData.title || '').trim();
+      if (gameData.allowSpectators === false) throw new Error('Spectators are not allowed in this game.');
+
+      const players = gameData.players || [];
+      const isPlayer = players.some((p) => p.id === user.uid);
+      const spectatorIds = gameData.spectatorIds || [];
+      const isSpectator = spectatorIds.includes(user.uid);
+
+      if (!isPlayer && !isSpectator) transaction.update(gameRef, { spectatorIds: [...spectatorIds, user.uid] });
+    });
+
+    checkpoint('after joining/updating spectators', { gameId: safeCode });
+    await upsertUserGameMembership(user.uid, safeCode, 'spectator', { myName: safeName, title: gameTitle });
+    checkpoint('before opening game', { gameId: safeCode });
+    setActiveGameId(safeCode);
+  });
 
   useEffect(() => {
     if (isExitingRef.current || !pendingUrlEntry || !user || isActionLoading || isAuthStartupLoading || activeGameId) return;
@@ -14903,6 +15010,9 @@ export default function App() {
       errorMsg={initError}
       currentUser={user}
       isActionLoading={isActionLoading}
+      loadingAction={loadingAction}
+      lobbyActionDebug={lobbyActionDebug}
+      onLobbyActionDebugCheckpoint={recordLobbyActionCheckpoint}
     />
   );
 }

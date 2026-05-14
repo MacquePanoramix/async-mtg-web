@@ -24,6 +24,37 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
+
+const FIRESTORE_RESOURCE_EXHAUSTED_MESSAGE = 'Firebase quota/rate limit reached. The app is making too many Firestore requests or the free quota is temporarily exhausted.';
+
+const isResourceExhaustedError = (error) => {
+  const code = String(error?.code || '').toLowerCase();
+  const message = String(error?.message || error || '').toLowerCase();
+  return code === 'resource-exhausted'
+    || message.includes('quota exceeded')
+    || message.includes('resource-exhausted');
+};
+
+const createLobbyFirestoreCounter = (actionName) => {
+  const counts = { getDoc: 0, getDocs: 0, setDoc: 0, updateDoc: 0, runTransaction: 0 };
+  const log = (operation, meta = {}) => {
+    counts[operation] = (counts[operation] || 0) + 1;
+    if (import.meta.env.DEV) {
+      console.info('[Lobby Firestore]', actionName, operation, { ...meta, count: counts[operation], totals: { ...counts } });
+    }
+  };
+  return {
+    counts,
+    getDoc: (ref, meta) => { log('getDoc', meta); return getDoc(ref); },
+    getDocs: (ref, meta) => { log('getDocs', meta); return getDocs(ref); },
+    setDoc: (ref, data, options, meta) => { log('setDoc', meta); return options ? setDoc(ref, data, options) : setDoc(ref, data); },
+    updateDoc: (ref, data, meta) => { log('updateDoc', meta); return updateDoc(ref, data); },
+    runTransaction: (database, callback, meta) => { log('runTransaction', meta); return runTransaction(database, callback); },
+    logTotals: () => {
+      if (import.meta.env.DEV) console.info('[Lobby Firestore]', actionName, 'totals', { ...counts });
+    }
+  };
+};
 // REMOVED: const appId... (no longer needed)
 
 // --- Constants & Types ---
@@ -7085,8 +7116,11 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         setLoading(false);
       },
       (err) => {
-        recordPerfListenerEvent({ type: 'error', gameId, listenerInstanceId, reason: err?.message || String(err) });
+        const message = isResourceExhaustedError(err) ? FIRESTORE_RESOURCE_EXHAUSTED_MESSAGE : (err?.message || String(err));
+        recordPerfListenerEvent({ type: 'error', gameId, listenerInstanceId, reason: message });
         console.error(err);
+        setNotification(message);
+        setLoading(false);
       }
     );
     return () => {
@@ -14123,6 +14157,20 @@ export default function App() {
   const [pendingUrlEntry, setPendingUrlEntry] = useState(null);
   const isExitingRef = useRef(false);
   const suggestedName = myGames.find((g) => (g.myName || '').trim())?.myName || '';
+  const getCachedMembership = (roomCode) => myGames.find((game) => game.id === roomCode || game.roomCode === roomCode) || null;
+
+  const shouldUpsertCachedMembership = (roomCode, role, extraFields = {}) => {
+    const cached = getCachedMembership(roomCode);
+    if (!cached) return true;
+    const expectedName = (extraFields.myName || '').trim();
+    const expectedTitle = (extraFields.title || '').trim();
+    if ((cached.role || '') !== role) return true;
+    if (expectedName && (cached.myName || '').trim() !== expectedName) return true;
+    if (expectedTitle && (cached.title || '').trim() !== expectedTitle) return true;
+    if (extraFields.isTutorial && !cached.isTutorial) return true;
+    return false;
+  };
+
 
   const clearPersistedJoinState = () => {
     const keysToClear = [
@@ -14163,11 +14211,11 @@ export default function App() {
     clearGameUrlParams();
   };
 
-  const upsertUserGameMembership = async (uid, roomCode, role, extraFields = {}) => {
+  const upsertUserGameMembership = async (uid, roomCode, role, extraFields = {}, firestoreOps = null) => {
     const trimmedName = (extraFields.myName || '').trim();
     const trimmedTitle = (extraFields.title || '').trim();
     const membershipRef = doc(db, 'users', uid, 'games', roomCode);
-    await setDoc(membershipRef, {
+    const payload = {
       roomCode,
       role,
       gameId: roomCode,
@@ -14176,7 +14224,12 @@ export default function App() {
       ...(extraFields.isTutorial ? { isTutorial: true } : {}),
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp()
-    }, { merge: true });
+    };
+    if (firestoreOps) {
+      await firestoreOps.setDoc(membershipRef, payload, { merge: true }, { path: `users/${uid}/games/${roomCode}` });
+    } else {
+      await setDoc(membershipRef, payload, { merge: true });
+    }
   };
 
   const recordLobbyActionCheckpoint = (actionName, checkpoint, details = {}) => {
@@ -14186,7 +14239,14 @@ export default function App() {
       errorMessage: details.errorMessage || '',
       errorCode: details.errorCode || ''
     };
-    setLobbyActionDebug((current) => ({ ...current, ...debugUpdate }));
+    setLobbyActionDebug((current) => (
+      current.action === debugUpdate.action
+        && current.checkpoint === debugUpdate.checkpoint
+        && current.errorMessage === debugUpdate.errorMessage
+        && current.errorCode === debugUpdate.errorCode
+        ? current
+        : { ...current, ...debugUpdate }
+    ));
     console.info('[Lobby action]', actionName, checkpoint, details);
   };
 
@@ -14197,6 +14257,7 @@ export default function App() {
     setIsActionLoading(true);
     setInitError(null);
     recordLobbyActionCheckpoint(actionName, 'started');
+    const firestoreOps = createLobbyFirestoreCounter(actionName);
 
     let lastCheckpoint = 'started';
     let timedOut = false;
@@ -14227,12 +14288,13 @@ export default function App() {
     }, 12000);
 
     try {
-      const result = await asyncFn(checkpoint);
+      const result = await asyncFn(checkpoint, firestoreOps);
       checkpoint('completed');
       return result;
     } catch (e) {
-      const message = e?.message || String(e) || 'Unknown lobby action error';
-      const code = e?.code || '';
+      const quotaError = isResourceExhaustedError(e);
+      const message = quotaError ? FIRESTORE_RESOURCE_EXHAUSTED_MESSAGE : (e?.message || String(e) || 'Unknown lobby action error');
+      const code = quotaError ? (e?.code || 'resource-exhausted') : (e?.code || '');
       console.error('[Lobby action]', actionName, 'failed', e);
       setLobbyActionDebug((current) => ({
         ...current,
@@ -14245,6 +14307,7 @@ export default function App() {
       return undefined;
     } finally {
       window.clearTimeout(timeoutId);
+      firestoreOps.logTotals();
       if (lobbyActionRunIdRef.current === runId) {
         setLoadingAction('');
         setIsActionLoading(false);
@@ -14429,10 +14492,13 @@ export default function App() {
       return;
     }
 
-    const q = query(collection(db, 'users', user.uid, 'games'), orderBy('updatedAt', 'desc'));
+    const q = query(collection(db, 'users', user.uid, 'games'), orderBy('updatedAt', 'desc'), limit(20));
     const unsub = onSnapshot(q, (snap) => {
       setMyGames(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-    }, (e) => setInitError(e.message));
+    }, (e) => {
+      console.error('My Games listener failed', e);
+      setInitError(isResourceExhaustedError(e) ? FIRESTORE_RESOURCE_EXHAUSTED_MESSAGE : e.message);
+    });
 
     return () => unsub();
   }, [user]);
@@ -14444,7 +14510,7 @@ export default function App() {
     console.log('currentUser providerData', user.providerData);
   }, [user]);
 
-  const createGame = async (playerNameInput, gameTitleInput, selectedGameMode = GAME_MODES.REGULAR) => runLobbyAction('createGame', async (checkpoint) => {
+  const createGame = async (playerNameInput, gameTitleInput, selectedGameMode = GAME_MODES.REGULAR) => runLobbyAction('createGame', async (checkpoint, firestoreOps) => {
     checkpoint('clicked Create Game');
     if (!user) throw new Error('Authentication is not ready yet.');
     checkpoint('currentUser exists / uid', { uid: user.uid });
@@ -14505,15 +14571,15 @@ export default function App() {
     };
 
     checkpoint('before Firestore write', { gameId: shortCode });
-    await setDoc(doc(db, 'games_v3', shortCode), { ...initialData, id: shortCode });
-    await upsertUserGameMembership(user.uid, shortCode, 'player', { myName: safeName, title: safeTitle });
+    await firestoreOps.setDoc(doc(db, 'games_v3', shortCode), { ...initialData, id: shortCode }, undefined, { path: `games_v3/${shortCode}` });
+    await upsertUserGameMembership(user.uid, shortCode, 'player', { myName: safeName, title: safeTitle }, firestoreOps);
     checkpoint('after Firestore write', { gameId: shortCode });
     checkpoint('before setting/opening current game', { gameId: shortCode });
     setActiveGameId(shortCode);
     checkpoint('after setting/opening current game', { gameId: shortCode });
   });
 
-  const startTutorialGame = async (playerNameInput) => runLobbyAction('startTutorial', async (checkpoint) => {
+  const startTutorialGame = async (playerNameInput) => runLobbyAction('startTutorial', async (checkpoint, firestoreOps) => {
     checkpoint('confirmed start');
     if (!user) throw new Error('Authentication is not ready yet.');
     checkpoint('currentUser exists / uid', { uid: user.uid });
@@ -14522,17 +14588,17 @@ export default function App() {
     setPlayerName(safeName);
 
     checkpoint('before tutorial Firestore lookup');
-    const existingTutorialRefs = await getDocs(query(collection(db, 'users', user.uid, 'games'), where('isTutorial', '==', true), limit(1)));
+    const existingTutorialRefs = await firestoreOps.getDocs(query(collection(db, 'users', user.uid, 'games'), where('isTutorial', '==', true), limit(1)), { path: `users/${user.uid}/games`, isTutorial: true });
     checkpoint('after tutorial Firestore lookup', { count: existingTutorialRefs.docs.length });
     for (const membershipDoc of existingTutorialRefs.docs) {
       const candidateId = membershipDoc.data()?.roomCode || membershipDoc.id;
       if (!candidateId) continue;
-      const candidateSnap = await getDoc(doc(db, 'games_v3', candidateId));
+      const candidateSnap = await firestoreOps.getDoc(doc(db, 'games_v3', candidateId), { path: `games_v3/${candidateId}`, purpose: 'tutorial reuse' });
       if (candidateSnap.exists() && candidateSnap.data()?.isTutorial) {
         const candidateData = candidateSnap.data() || {};
         const shouldSeedExistingTutorial = shouldSeedTutorialCardsForPlayer(candidateData.cards || [], user.uid);
         checkpoint('before tutorial Firestore write', { gameId: candidateId, reusingExisting: true });
-        await updateDoc(doc(db, 'games_v3', candidateId), {
+        await firestoreOps.updateDoc(doc(db, 'games_v3', candidateId), {
           tutorial: {
             scriptVersion: candidateData.tutorial?.scriptVersion || TUTORIAL_SCRIPT_VERSION,
             stepId: candidateData.tutorial?.finished ? 'intro' : (candidateData.tutorial?.stepId || 'intro'),
@@ -14545,7 +14611,7 @@ export default function App() {
           },
           ...(shouldSeedExistingTutorial ? { cards: buildTutorialDuelCards(user.uid, candidateData.players?.find((p) => p?.isScriptedOpponent)?.id || `tutorial-bolas-${candidateId}`) } : {}),
           updatedAt: serverTimestamp()
-        });
+        }, { path: `games_v3/${candidateId}`, purpose: 'tutorial reset' });
         checkpoint('after tutorial Firestore write', { gameId: candidateId, reusingExisting: true });
         checkpoint('before opening tutorial game', { gameId: candidateId });
         setActiveGameId(candidateId);
@@ -14632,14 +14698,14 @@ export default function App() {
     };
 
     checkpoint('before tutorial Firestore write', { gameId: shortCode });
-    await setDoc(doc(db, 'games_v3', shortCode), initialData);
-    await upsertUserGameMembership(user.uid, shortCode, 'player', { myName: safeName, title: initialData.title, isTutorial: true });
+    await firestoreOps.setDoc(doc(db, 'games_v3', shortCode), initialData, undefined, { path: `games_v3/${shortCode}`, purpose: 'tutorial create' });
+    await upsertUserGameMembership(user.uid, shortCode, 'player', { myName: safeName, title: initialData.title, isTutorial: true }, firestoreOps);
     checkpoint('after tutorial Firestore write', { gameId: shortCode });
     checkpoint('before opening tutorial game', { gameId: shortCode });
     setActiveGameId(shortCode);
   });
 
-  const joinGame = async (playerNameInput, code) => runLobbyAction('joinGame', async (checkpoint) => {
+  const joinGame = async (playerNameInput, code) => runLobbyAction('joinGame', async (checkpoint, firestoreOps) => {
     checkpoint('clicked Join Game');
     if (!user) throw new Error('Authentication is not ready yet.');
     checkpoint('currentUser exists / uid', { uid: user.uid });
@@ -14650,33 +14716,33 @@ export default function App() {
     const safeCode = (code || '').trim().toUpperCase();
     checkpoint('normalized code', { code: safeCode });
     const gameRef = doc(db, 'games_v3', safeCode);
-    let gameTitle = '';
-    let gameExists = false;
 
     checkpoint('before Firestore lookup', { gameId: safeCode });
-    await runTransaction(db, async (transaction) => {
-      const gameDoc = await transaction.get(gameRef);
-      gameExists = gameDoc.exists();
-      checkpoint('after Firestore lookup', { gameId: safeCode, exists: gameExists });
-      checkpoint('whether game exists', { exists: gameExists });
-      if (!gameExists) throw new Error('Game not found! Check the code.');
+    const initialGameDoc = await firestoreOps.getDoc(gameRef, { path: `games_v3/${safeCode}`, purpose: 'join lookup' });
+    checkpoint('after Firestore lookup', { gameId: safeCode, exists: initialGameDoc.exists() });
+    if (!initialGameDoc.exists()) throw new Error('Game not found! Check the code.');
 
-      const gameData = gameDoc.data();
-      gameTitle = (gameData.title || '').trim();
-      const players = gameData.players || [];
-      const existingPlayerIndex = players.findIndex((p) => p.id === user.uid);
-      checkpoint('before joining/updating players', { existingPlayer: existingPlayerIndex >= 0, playerCount: players.length });
+    const initialGameData = initialGameDoc.data() || {};
+    const gameTitle = (initialGameData.title || '').trim();
+    const initialPlayers = initialGameData.players || [];
+    const existingPlayer = initialPlayers.find((p) => p.id === user.uid);
+    checkpoint('whether game exists', { exists: true });
+    checkpoint('before joining/updating players', { existingPlayer: Boolean(existingPlayer), playerCount: initialPlayers.length });
 
-      if (existingPlayerIndex >= 0) {
-        const newPlayers = [...players];
-        newPlayers[existingPlayerIndex] = { ...newPlayers[existingPlayerIndex], name: safeName, lastSeenChatAt: Date.now() };
-        transaction.update(gameRef, normalizeGameUpdatesForFirestore({
-          players: newPlayers,
-          undoStack: gameData.undoStack || [],
-          updatedAt: serverTimestamp(),
-          log: pruneLogForFirestore([...(gameData.log || []), buildGameLogEntry({ currentGame: gameData, playerId: user.uid, playerName: safeName || 'Unknown', type: 'PLAYER_REJOIN', category: 'setup', message: `${safeName || 'Unknown'} rejoined the game.` })])
-        }, 'PLAYER_REJOIN'));
-      } else if (players.length < 2) {
+    if (existingPlayer) {
+      checkpoint('already joined; skipping game write', { gameId: safeCode });
+    } else if (initialPlayers.length >= 2) {
+      throw new Error('Game is full.');
+    } else {
+      checkpoint('before player transaction', { gameId: safeCode });
+      await firestoreOps.runTransaction(db, async (transaction) => {
+        const gameDoc = await transaction.get(gameRef);
+        if (!gameDoc.exists()) throw new Error('Game not found! Check the code.');
+        const gameData = gameDoc.data() || {};
+        const players = gameData.players || [];
+        if (players.some((p) => p.id === user.uid)) return;
+        if (players.length >= 2) throw new Error('Game is full.');
+
         const newPlayer = {
           id: user.uid,
           name: safeName,
@@ -14696,18 +14762,21 @@ export default function App() {
           updatedAt: serverTimestamp(),
           log: pruneLogForFirestore([...(gameData.log || []), buildGameLogEntry({ currentGame: gameData, playerId: user.uid, playerName: safeName || 'Unknown', type: 'PLAYER_JOIN', category: 'setup', message: `${safeName || 'Unknown'} joined the game.` })])
         }, 'PLAYER_JOIN'));
-      } else {
-        throw new Error('Game is full.');
-      }
-    });
+      }, { path: `games_v3/${safeCode}`, purpose: 'join player' });
+      checkpoint('after player transaction', { gameId: safeCode });
+    }
 
     checkpoint('after joining/updating players', { gameId: safeCode });
-    await upsertUserGameMembership(user.uid, safeCode, 'player', { myName: safeName, title: gameTitle });
+    if (shouldUpsertCachedMembership(safeCode, 'player', { myName: safeName, title: gameTitle })) {
+      await upsertUserGameMembership(user.uid, safeCode, 'player', { myName: safeName, title: gameTitle }, firestoreOps);
+    } else {
+      checkpoint('membership unchanged; skipping membership write', { gameId: safeCode });
+    }
     checkpoint('before opening game', { gameId: safeCode });
     setActiveGameId(safeCode);
   });
 
-  const watchGame = async (playerNameInput, code) => runLobbyAction('watchGame', async (checkpoint) => {
+  const watchGame = async (playerNameInput, code) => runLobbyAction('watchGame', async (checkpoint, firestoreOps) => {
     checkpoint('clicked Watch Game');
     if (!user) throw new Error('Authentication is not ready yet.');
     checkpoint('currentUser exists / uid', { uid: user.uid });
@@ -14717,28 +14786,45 @@ export default function App() {
     const safeCode = (code || '').trim().toUpperCase();
     checkpoint('normalized code', { code: safeCode });
     const gameRef = doc(db, 'games_v3', safeCode);
-    let gameTitle = '';
 
     checkpoint('before Firestore lookup', { gameId: safeCode });
-    await runTransaction(db, async (transaction) => {
-      const gameDoc = await transaction.get(gameRef);
-      checkpoint('after Firestore lookup', { gameId: safeCode, exists: gameDoc.exists() });
-      if (!gameDoc.exists()) throw new Error('Game not found! Check the code.');
+    const initialGameDoc = await firestoreOps.getDoc(gameRef, { path: `games_v3/${safeCode}`, purpose: 'watch lookup' });
+    checkpoint('after Firestore lookup', { gameId: safeCode, exists: initialGameDoc.exists() });
+    if (!initialGameDoc.exists()) throw new Error('Game not found! Check the code.');
 
-      const gameData = gameDoc.data();
-      gameTitle = (gameData.title || '').trim();
-      if (gameData.allowSpectators === false) throw new Error('Spectators are not allowed in this game.');
+    const initialGameData = initialGameDoc.data() || {};
+    const gameTitle = (initialGameData.title || '').trim();
+    if (initialGameData.allowSpectators === false) throw new Error('Spectators are not allowed in this game.');
 
-      const players = gameData.players || [];
-      const isPlayer = players.some((p) => p.id === user.uid);
-      const spectatorIds = gameData.spectatorIds || [];
-      const isSpectator = spectatorIds.includes(user.uid);
+    const players = initialGameData.players || [];
+    const isPlayer = players.some((p) => p.id === user.uid);
+    const spectatorIds = initialGameData.spectatorIds || [];
+    const isSpectator = spectatorIds.includes(user.uid);
 
-      if (!isPlayer && !isSpectator) transaction.update(gameRef, { spectatorIds: [...spectatorIds, user.uid] });
-    });
+    if (isPlayer || isSpectator) {
+      checkpoint('already has game access; skipping spectator write', { gameId: safeCode, isPlayer, isSpectator });
+    } else {
+      checkpoint('before spectator transaction', { gameId: safeCode });
+      await firestoreOps.runTransaction(db, async (transaction) => {
+        const gameDoc = await transaction.get(gameRef);
+        if (!gameDoc.exists()) throw new Error('Game not found! Check the code.');
+        const gameData = gameDoc.data() || {};
+        if (gameData.allowSpectators === false) throw new Error('Spectators are not allowed in this game.');
+        const latestPlayers = gameData.players || [];
+        const latestSpectatorIds = gameData.spectatorIds || [];
+        if (latestPlayers.some((p) => p.id === user.uid) || latestSpectatorIds.includes(user.uid)) return;
+        transaction.update(gameRef, { spectatorIds: [...latestSpectatorIds, user.uid], updatedAt: serverTimestamp() });
+      }, { path: `games_v3/${safeCode}`, purpose: 'watch spectator' });
+      checkpoint('after spectator transaction', { gameId: safeCode });
+    }
 
     checkpoint('after joining/updating spectators', { gameId: safeCode });
-    await upsertUserGameMembership(user.uid, safeCode, 'spectator', { myName: safeName, title: gameTitle });
+    const membershipRole = isPlayer ? 'player' : 'spectator';
+    if (shouldUpsertCachedMembership(safeCode, membershipRole, { myName: safeName, title: gameTitle })) {
+      await upsertUserGameMembership(user.uid, safeCode, membershipRole, { myName: safeName, title: gameTitle }, firestoreOps);
+    } else {
+      checkpoint('membership unchanged; skipping membership write', { gameId: safeCode, role: membershipRole });
+    }
     checkpoint('before opening game', { gameId: safeCode });
     setActiveGameId(safeCode);
   });

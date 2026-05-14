@@ -5600,6 +5600,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const tutorialStepActivationRef = useRef(null);
   const tutorialAdvanceDelayTimerRef = useRef(null);
   const g07ScriptedHandIgnoredRef = useRef(false);
+  const tutorialSetupAppliedRef = useRef({ stepId: null, signature: null });
 
   // Chat State
   const [chatOpen, setChatOpen] = useState(false);
@@ -6140,7 +6141,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       RESOLVE_STACK_TOP: ['resolve_stack_item', 'counter_stack_item', 'cast_delver', 'final_in_response', 'P1_10_resolve_bolt', 'P2_09_resolve_delver', 'B2_04_resolve_knight', 'B3_06_resolve_slip', 'P4_05_cast_ponder', 'F8_resolve_reverberate', 'F9_resolve_bolt_copy_lethal', 'F10_resolve_negate_original'],
       COUNTER_STACK_TOP: ['counter_stack_item', 'final_in_response', 'B3_09_fizzle_doom_blade', 'F10_resolve_negate_original'],
       PASS_PRIORITY: ['pass_priority', 'final_trial', 'async_oath', 'P1_11_pass', 'P2_10_pass', 'B2_05_bolas_pass', 'P3_08_pass', 'B3_11_bolas_pass', 'P4_15_pass', 'B4_09_bolas_pass'],
-      MANUAL_SET_STEP: payload?.phaseId === 'combat_attackers' ? ['set_attackers_phase', 'P4_09_attackers_step'] : (payload?.phaseId === 'untap' ? ['P2_01_untap', 'P3_01_untap', 'P4_01_untap_phase_in'] : (payload?.phaseId === 'upkeep' ? ['P3_02_upkeep'] : (payload?.phaseId === 'draw' ? ['P2_02_draw_slip', 'P3_05_draw_ponder', 'P4_02_draw_mountain'] : (payload?.phaseId === 'main1' ? ['P2_03_main1', 'P3_06_main1', 'P4_03_main1'] : (payload?.phaseId === 'combat_begin' ? ['P4_08_begin_combat'] : (payload?.phaseId === 'combat_end' ? ['P4_14_end_combat'] : [])))))),
+      MANUAL_SET_STEP: payload?.phaseId === 'combat_attackers' ? ['set_attackers_phase', 'P4_09_attackers_step'] : (payload?.phaseId === 'untap' ? ['P2_01_untap', 'P3_01_untap', 'P4_01_untap_phase_in'] : (payload?.phaseId === 'upkeep' ? ['P3_02_upkeep'] : (payload?.phaseId === 'draw' ? [] : (payload?.phaseId === 'main1' ? ['P2_03_main1', 'P3_06_main1', 'P4_03_main1'] : (payload?.phaseId === 'combat_begin' ? ['P4_08_begin_combat'] : (payload?.phaseId === 'combat_end' ? ['P4_14_end_combat'] : [])))))),
       SET_COMBAT_DAMAGE_STEP: payload?.combatDamageStep === COMBAT_DAMAGE_STEPS.FIRST_STRIKE ? ['first_strike_step', 'B4_05_first_strike_damage'] : (payload?.combatDamageStep === COMBAT_DAMAGE_STEPS.REGULAR ? ['regular_damage_step', 'P4_12_regular_damage', 'B4_08_regular_damage'] : []),
       SET_ATTACK_TARGET: ['declare_attacker_player', 'attack_planeswalker_battle_note', 'P4_10_attack_bolas'],
       TOGGLE_BLOCK_TARGET: ['declare_blocker_note', 'B4_04_block_with_llanowar'],
@@ -6365,6 +6366,17 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const ensureTutorialStepSetup = useCallback(async (stepId) => {
     if (!gameId || !game?.isTutorial || game?.tutorial?.inactive || !userId) return;
     if (!game || typeof game !== 'object') return;
+    const logTutorialPhaseDebug = (details = {}) => {
+      console.debug('[Tutorial phase]', {
+        stepId,
+        requestedPhase: details.requestedPhase || null,
+        currentPhase: game?.phase || null,
+        didWrite: Boolean(details.didWrite),
+        reason: details.reason || null,
+        setupAppliedSignature: details.setupAppliedSignature || tutorialSetupAppliedRef.current?.signature || null,
+        actionSource: 'setup'
+      });
+    };
     const needs = {
       play_land: [{ name: 'Mountain', zone: ZONES.HAND, ownerId: userId, controllerId: userId }],
       tap_mountain_red: [{ name: 'Mountain', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId, tapped: false }],
@@ -6615,9 +6627,11 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     } else if (['P2_01_untap', 'P3_01_untap', 'P4_01_untap_phase_in', 'B4_01_bolas_untaps'].includes(stepId)) {
       forcedPhase = 'untap';
       forcedTurnPlayerId = stepId === 'B4_01_bolas_untaps' ? (opponentId || game.turnPlayerId) : userId;
-    } else if (['P2_02_draw_slip', 'P3_05_draw_ponder', 'P4_02_draw_mountain', 'B2_01_bolas_draw_mountain'].includes(stepId)) {
+    } else if (stepId === 'B2_01_bolas_draw_mountain') {
       forcedPhase = 'draw';
-      forcedTurnPlayerId = stepId === 'B2_01_bolas_draw_mountain' ? (opponentId || game.turnPlayerId) : userId;
+      forcedTurnPlayerId = opponentId || game.turnPlayerId;
+    } else if (['P2_02_draw_slip', 'P3_05_draw_ponder', 'P4_02_draw_mountain'].includes(stepId)) {
+      forcedTurnPlayerId = userId;
     } else if (['P3_02_upkeep', 'P3_03_delver_reveal_ponder', 'P3_04_transform_delver'].includes(stepId)) {
       forcedPhase = 'upkeep';
       forcedTurnPlayerId = userId;
@@ -6739,7 +6753,28 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       }
     }
 
-    const updates = { updatedAt: serverTimestamp() };
+    const desiredSetupSignature = JSON.stringify({
+      needs: needs.map((need) => ({
+        name: need.name,
+        zone: need.zone,
+        ownerId: need.ownerId || null,
+        controllerId: need.controllerId || null,
+        tapped: need.tapped === true,
+        stack: need.stack === true,
+        targetName: need.targetName || null,
+        activeFaceIndex: Number.isInteger(need.activeFaceIndex) ? need.activeFaceIndex : null
+      })),
+      forcedPhase: forcedPhase || null,
+      forcedTurnPlayerId: forcedTurnPlayerId || null,
+      forcedStack: forcedStack ? (forcedStack || []).map((item) => ({ name: item?.name || null, sourceId: item?.sourceId || null, controllerId: item?.controllerId || null })) : null,
+      forcedCombat: forcedCombat || null
+    });
+    if (tutorialSetupAppliedRef.current?.stepId === stepId && tutorialSetupAppliedRef.current?.signature === desiredSetupSignature) {
+      logTutorialPhaseDebug({ requestedPhase: forcedPhase, didWrite: false, reason: 'setup already applied for signature', setupAppliedSignature: desiredSetupSignature });
+      return;
+    }
+
+    const updates = {};
     const appendTutorialLogOnce = (message, type = 'TUTORIAL_SCRIPT', category = 'tutorial') => {
       const hasMessage = (game.log || []).some((entry) => String(entry?.message || entry?.desc || '').includes(message));
       if (hasMessage) return;
@@ -6770,7 +6805,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     if (stepId === 'F1_tap_mountain_bolt') updateBolasLife(3, 'Several turns later, Insectile, the Curse, and earlier spells have pushed Nicol Bolas to 3 life.');
     if (changed) {
       updates.cards = nextCards;
-      updates.stack = nextStack;
+      if (JSON.stringify(nextStack || []) !== JSON.stringify(game.stack || [])) updates.stack = nextStack;
     }
     if (forcedPhase && game.phase !== forcedPhase) updates.phase = forcedPhase;
     if (forcedTurnPlayerId) {
@@ -6781,16 +6816,30 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       if (forcedActiveIndex >= 0 && game.priorityIndex !== forcedActiveIndex) updates.priorityIndex = forcedActiveIndex;
       if (game.consecutivePasses) updates.consecutivePasses = 0;
     }
-    if (forcedStack) updates.stack = forcedStack;
-    if (forcedCombat) updates.combat = forcedCombat;
+    if (forcedStack && JSON.stringify(forcedStack) !== JSON.stringify(game.stack || [])) updates.stack = forcedStack;
+    if (forcedCombat && JSON.stringify(forcedCombat) !== JSON.stringify(game.combat || getEmptyCombatState())) updates.combat = forcedCombat;
 
-    if (Object.keys(updates).length > 1) {
-      await updateDoc(doc(db, 'games_v3', gameId), updates);
+    const updateKeys = Object.keys(updates);
+    if (updateKeys.length > 0) {
+      setTutorialSyncPending(true);
+      try {
+        await updateDoc(doc(db, 'games_v3', gameId), { ...updates, updatedAt: serverTimestamp() });
+      } finally {
+        setTutorialSyncPending(false);
+      }
+      tutorialSetupAppliedRef.current = { stepId, signature: desiredSetupSignature };
+      logTutorialPhaseDebug({ requestedPhase: forcedPhase, didWrite: true, reason: `applied setup fields: ${updateKeys.join(',')}`, setupAppliedSignature: desiredSetupSignature });
+    } else {
+      tutorialSetupAppliedRef.current = { stepId, signature: desiredSetupSignature };
+      logTutorialPhaseDebug({ requestedPhase: forcedPhase, didWrite: false, reason: 'setup already matched live game', setupAppliedSignature: desiredSetupSignature });
     }
     setTutorialOverlayError(null);
     } catch (error) {
       console.error('Tutorial step setup failed', error);
-      setTutorialOverlayError('Tutorial step unavailable. Skip or restart tutorial.');
+      const message = isResourceExhaustedError(error)
+        ? 'Tutorial sync hit Firebase quota. Wait a moment, then retry this step.'
+        : 'Tutorial step unavailable. Skip or restart tutorial.';
+      setTutorialOverlayError(message);
     }
   }, [buildTutorialCardInstance, game, gameId, opponent?.id, userId]);
 
@@ -7928,7 +7977,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       setTimeout(() => setNotification(null), 2000);
       return;
     }
-    maybeCompleteTutorialAction(actionType, payload);
+    if (actionType !== 'MANUAL_SET_STEP') maybeCompleteTutorialAction(actionType, payload);
     // UPDATED: Path
     const gameRef = doc(db, 'games_v3', gameId);
     const perfRunTransaction = async (label, callback) => {
@@ -8158,6 +8207,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     }
 
     if (['MANUAL_SET_STEP', 'START_EXTRA_COMBAT', 'GO_EXTRA_MAIN', 'START_EXTRA_TURN', 'SET_ACTIVE_PLAYER'].includes(actionType)) {
+      let manualPhaseDidWrite = false;
+      let manualPhaseSkipReason = null;
       await perfRunTransaction('runTransaction', async (transaction) => {
         const snap = await transaction.get(gameRef);
         if (!snap.exists()) return;
@@ -8194,6 +8245,10 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         if (actionType === 'MANUAL_SET_STEP') {
           const targetPhase = PHASES.find((phase) => phase.id === payload.phaseId);
           if (!targetPhase) return;
+          if (currentGame.phase === targetPhase.id) {
+            manualPhaseSkipReason = 'phase already current in transaction; skipped write';
+            return;
+          }
           const nextCombatState = shouldClearCombatState(currentGame.phase, targetPhase.id)
             ? getEmptyCombatState()
             : (currentGame.combat || getEmptyCombatState());
@@ -8262,6 +8317,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             START_EXTRA_TURN: 'started an extra turn',
             SET_ACTIVE_PLAYER: 'changed the active player'
           };
+          manualPhaseDidWrite = actionType === 'MANUAL_SET_STEP' ? true : manualPhaseDidWrite;
           transaction.update(gameRef, normalizeGameUpdatesForFirestore({
             ...manualUpdates,
             undoStack: appendUndoEntry(currentGame, buildUndoEntry({
@@ -8276,6 +8332,17 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       });
       setAutoPassConfig(getDefaultAutoPassConfig());
       setTimeControlsOpen(false);
+      if (game?.isTutorial && actionType === 'MANUAL_SET_STEP') {
+        console.debug('[Tutorial phase]', {
+          stepId: (optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.stepId || 'intro',
+          requestedPhase: payload?.phaseId || null,
+          currentPhase: game?.phase || null,
+          didWrite: manualPhaseDidWrite,
+          reason: manualPhaseDidWrite ? 'manual phase write committed' : (manualPhaseSkipReason || 'manual phase write skipped'),
+          setupAppliedSignature: tutorialSetupAppliedRef.current?.signature || null,
+          actionSource: 'user'
+        });
+      }
       await maybeCompleteTutorialAction(actionType, payload);
       return;
     }
@@ -9865,7 +9932,10 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     }
     } catch (error) {
       clearOptimisticGame(error?.message || 'Firestore action failed', perfActionId);
-      setNotification(`Action failed: ${error?.message || String(error)}`);
+      const tutorialQuotaMessage = game?.isTutorial && isResourceExhaustedError(error)
+        ? 'Tutorial sync hit Firebase quota/rate limit. Wait a moment, then try again.'
+        : null;
+      setNotification(tutorialQuotaMessage || `Action failed: ${error?.message || String(error)}`);
       setTimeout(() => setNotification(null), 3500);
       failPerfAction(perfActionId, error);
       debugActionsError(`handleAction threw: ${actionType}`, {
@@ -10939,10 +11009,29 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const handleSetManualStep = (phaseId) => {
     const targetPhase = PHASES.find((phase) => phase.id === phaseId);
     if (!targetPhase) return;
+    const liveStepId = (optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.stepId || 'intro';
+    const logTutorialPhaseDebug = (details = {}) => {
+      if (!game?.isTutorial) return;
+      console.debug('[Tutorial phase]', {
+        stepId: liveStepId,
+        requestedPhase: phaseId,
+        currentPhase: game?.phase || null,
+        didWrite: Boolean(details.didWrite),
+        reason: details.reason || null,
+        setupAppliedSignature: tutorialSetupAppliedRef.current?.signature || null,
+        actionSource: 'user'
+      });
+    };
+    if (game?.phase === phaseId) {
+      logTutorialPhaseDebug({ didWrite: false, reason: 'phase already current; skipped redundant manual write' });
+      if (game?.isTutorial) maybeCompleteTutorialAction('MANUAL_SET_STEP', { phaseId });
+      return;
+    }
     const currentIndex = PHASES.findIndex((phase) => phase.id === game.phase);
     const targetIndex = PHASES.findIndex((phase) => phase.id === phaseId);
     const isFarJump = currentIndex >= 0 && targetIndex >= 0 && Math.abs(targetIndex - currentIndex) > 1;
     if (isFarJump && !confirmTimeControl(`Set step to ${targetPhase.label}?`)) return;
+    logTutorialPhaseDebug({ didWrite: true, reason: 'manual phase write requested' });
     handleAction('MANUAL_SET_STEP', { phaseId });
   };
   const handleSetCombatDamageStep = (combatDamageStep) => handleAction('SET_COMBAT_DAMAGE_STEP', { combatDamageStep });
@@ -12234,6 +12323,9 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
               <section>
                 <h3 className="text-sm font-black uppercase tracking-wider text-slate-300 mb-2">Set current step</h3>
+                {game?.isTutorial && tutorialSyncPending && (
+                  <div className="mb-2 rounded-lg border border-purple-500/30 bg-purple-950/30 px-3 py-2 text-xs font-bold text-purple-100">Syncing tutorial step…</div>
+                )}
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                   {PHASES.map((phase) => {
                     const isCurrent = phase.id === game.phase;
@@ -12241,7 +12333,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                       <button
                         key={phase.id}
                         onClick={() => handleSetManualStep(phase.id)}
-                        className={`min-h-12 rounded-xl border px-3 py-2 text-sm font-bold ${isCurrent ? 'bg-purple-700 border-purple-400 text-white' : 'bg-slate-800 border-slate-700 text-slate-100 hover:bg-slate-700 hover:border-slate-500'}`}
+                        disabled={game?.isTutorial && tutorialSyncPending}
+                        className={`min-h-12 rounded-xl border px-3 py-2 text-sm font-bold ${game?.isTutorial && tutorialSyncPending ? 'cursor-wait border-slate-800 bg-slate-900 text-slate-500' : (isCurrent ? 'bg-purple-700 border-purple-400 text-white' : 'bg-slate-800 border-slate-700 text-slate-100 hover:bg-slate-700 hover:border-slate-500')}`}
                         aria-pressed={isCurrent}
                       >
                         {phase.label}

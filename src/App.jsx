@@ -2258,30 +2258,6 @@ const normalizeUndoEntryForFirestore = (entry = {}) => {
 
 const undoEntryIncludesCardSnapshot = (entry = {}) => Array.isArray(entry?.previousState?.cards);
 
-
-const isBaseVersionConflictError = (error) => {
-  const message = String(error?.message || error || '').toLowerCase();
-  return (
-    message.includes('stored version') ||
-    message.includes('required base version') ||
-    message.includes('stale baseversion') ||
-    message.includes('stale base version') ||
-    message.includes('version conflict')
-  );
-};
-
-const isTutorialRetryableAction = (actionType) => [
-  'MANUAL_SET_STEP',
-  'PASS',
-  'PASS_PRIORITY',
-  'AUTO_PASS',
-  'AUTOPASS',
-  'AUTOPASS_CONFIG',
-  'TUTORIAL_STEP_SETUP'
-].includes(actionType);
-
-const getGameVersionForDebug = (candidate) => candidate?.version ?? candidate?.baseVersion ?? candidate?.updatedAt?.seconds ?? null;
-
 const pruneUndoStackForFirestore = (undoStack = [], { maxEntries = MAX_UNDO_STACK_ENTRIES, maxCardSnapshotEntries = MAX_UNDO_STACK_CARD_SNAPSHOT_ENTRIES, budgetBytes = FIRESTORE_UNDO_STACK_BUDGET_BYTES } = {}) => {
   if (!Array.isArray(undoStack)) return undoStack;
   let pruned = undoStack.map(normalizeUndoEntryForFirestore).slice(-maxEntries);
@@ -5561,7 +5537,6 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const [tutorialOverlayError, setTutorialOverlayError] = useState(null);
   const [optimisticTutorialState, setOptimisticTutorialState] = useState(null);
   const [tutorialSyncPending, setTutorialSyncPending] = useState(false);
-  const [tutorialSetupPending, setTutorialSetupPending] = useState(false);
   const [tutorialDebugTiming, setTutorialDebugTiming] = useState({ lastAction: null, localAdvanceMs: null, firestoreWriteMs: null, lastCompletionEvent: null, ignoredCompletion: null });
   const [tutorialActivationDebug, setTutorialActivationDebug] = useState(null);
   const [quickStartOpen, setQuickStartOpen] = useState(false);
@@ -5571,7 +5546,6 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const tutorialStepActivationIdRef = useRef(0);
   const tutorialStepActivationRef = useRef(null);
   const tutorialAdvanceDelayTimerRef = useRef(null);
-  const tutorialSetupPendingRef = useRef(false);
   const g07ScriptedHandIgnoredRef = useRef(false);
 
   // Chat State
@@ -5626,8 +5600,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     ...(tutorialActivationDebug || {}),
     localStep: optimisticTutorialState?.stepId || displayedTutorialState?.stepId || null,
     serverStep: serverTutorialState?.stepId || null,
-    pendingSync: tutorialSyncPending,
-    setupPending: tutorialSetupPending
+    pendingSync: tutorialSyncPending
   } : null;
 
   const getTutorialStepBaseline = useCallback((stepId) => {
@@ -5680,11 +5653,6 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       setTutorialActivationDebug(null);
       return undefined;
     }
-    if (tutorialSetupPending) {
-      tutorialStepActivationRef.current = null;
-      setTutorialActivationDebug((current) => ({ ...(current || {}), setupPending: true, stepId: currentTutorialStep.id }));
-      return undefined;
-    }
     const existingActivation = tutorialStepActivationRef.current;
     if (existingActivation?.stepId === currentTutorialStep.id) return undefined;
     if (tutorialAdvanceDelayTimerRef.current) {
@@ -5709,7 +5677,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       requiredAction: activation.requiredAction
     });
     return undefined;
-  }, [currentTutorialStep?.id, getTutorialStepBaseline, isTutorialGame, tutorialSetupPending]);
+  }, [currentTutorialStep?.id, getTutorialStepBaseline, isTutorialGame]);
 
   const focusTutorialTarget = useCallback(() => {
     const anchor = Array.isArray(currentTutorialAnchor) ? currentTutorialAnchor[0] : currentTutorialAnchor;
@@ -6110,10 +6078,6 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     if (stepId === 'P1_11_pass' && actionType === 'PASS_PRIORITY') {
       if ((game?.stack || []).length > 0) return ignoreActionCompletion('P1_11 requires an empty stack before passing toward end of turn');
       if (game?.priorityPlayerId && game.priorityPlayerId !== userId) return ignoreActionCompletion('P1_11 requires Luis to have priority before tapping Pass');
-    }
-    const currentStepRulesPhase = currentTutorialStep?.rules?.phase || TUTORIAL_RULES_BY_STEP_ID[stepId]?.phase || null;
-    if (actionType === 'MANUAL_SET_STEP' && payload?.phaseId && currentStepRulesPhase === payload.phaseId) {
-      return advanceTutorialStepFrom(stepId, { markCompleted: true, actionLabel: `step:${stepId}:phase:${payload.phaseId}` });
     }
     const actionStepMap = {
       DRAW_CARD: ['beginning_phase_draw', 'P2_02_draw_slip', 'P3_05_draw_ponder', 'P4_02_draw_mountain', 'P4_07_draw_ponder'],
@@ -6548,8 +6512,6 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     let nextStack = Array.isArray(game.stack) ? [...game.stack] : [];
     let changed = false;
 
-    tutorialSetupPendingRef.current = true;
-    setTutorialSetupPending(true);
     try {
     needs.forEach((need) => {
       const matching = nextCards.find((card) => (card.name === need.name || card.card_faces?.some((face) => face?.name === need.name)) && (!need.ownerId || card.ownerId === need.ownerId));
@@ -6770,31 +6732,12 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     if (forcedCombat) updates.combat = forcedCombat;
 
     if (Object.keys(updates).length > 1) {
-      try {
-        await updateDoc(doc(db, 'games_v3', gameId), updates);
-      } catch (error) {
-        if (!isBaseVersionConflictError(error)) throw error;
-        if (isPerfActionsEnabled() || isDebugActionsEnabled()) {
-          console.debug('[Tutorial base-version retry]', { actionType: 'TUTORIAL_STEP_SETUP', oldBaseVersion: getGameVersionForDebug(game), retryCount: 1 });
-        }
-        const latestSnap = await getDoc(doc(db, 'games_v3', gameId));
-        if (!latestSnap.exists()) throw error;
-        const latestGame = { ...latestSnap.data(), combat: normalizeCombatState(latestSnap.data().combat) };
-        latestFirestoreGameRef.current = latestGame;
-        setFirestoreGame(latestGame);
-        await updateDoc(doc(db, 'games_v3', gameId), updates);
-        if (isPerfActionsEnabled() || isDebugActionsEnabled()) {
-          console.debug('[Tutorial base-version retry]', { actionType: 'TUTORIAL_STEP_SETUP', oldBaseVersion: getGameVersionForDebug(game), latestBaseVersion: getGameVersionForDebug(latestGame), retryCount: 1, retrySucceeded: true });
-        }
-      }
+      await updateDoc(doc(db, 'games_v3', gameId), updates);
     }
     setTutorialOverlayError(null);
     } catch (error) {
       console.error('Tutorial step setup failed', error);
       setTutorialOverlayError('Tutorial step unavailable. Skip or restart tutorial.');
-    } finally {
-      tutorialSetupPendingRef.current = false;
-      setTutorialSetupPending(false);
     }
   }, [buildTutorialCardInstance, game, gameId, opponent?.id, userId]);
 
@@ -7548,22 +7491,13 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const isAutoPassEnabled = autoPassConfig.mode !== AUTO_PASS_MODE.OFF;
   const autoPassControlsDisabled = !isPlayer || !game;
 
-  const writeAutoPassConfig = async (nextConfig) => {
-    if (!gameId || !userId || !isPlayer) return;
-    try {
-      await updateDoc(doc(db, 'games_v3', gameId), { [`autopass.${userId}`]: nextConfig });
-    } catch (error) {
-      if (!(isTutorialGame && isBaseVersionConflictError(error))) throw error;
-      const recovered = await retryTutorialControlActionAfterConflict('AUTOPASS_CONFIG', { config: nextConfig }, error);
-      if (!recovered) throw error;
-    }
-  };
-
   const disableAutoPass = async (showNote = false, note = 'AutoPass turned off.') => {
     const nextConfig = getDefaultAutoPassConfig();
     setAutoPassConfig(nextConfig);
     setAutoPassMenuOpen(false);
-    await writeAutoPassConfig(nextConfig);
+    if (gameId && userId && isPlayer) {
+      await updateDoc(doc(db, 'games_v3', gameId), { [`autopass.${userId}`]: nextConfig });
+    }
     if (showNote) {
       setNotification(note);
       setTimeout(() => setNotification(null), 2000);
@@ -7581,7 +7515,9 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     setAutoPassConfig(nextConfig);
     lastAutoPassSignatureRef.current = null;
     setAutoPassMenuOpen(false);
-    await writeAutoPassConfig(nextConfig);
+    if (gameId && userId && isPlayer) {
+      await updateDoc(doc(db, 'games_v3', gameId), { [`autopass.${userId}`]: nextConfig });
+    }
     if (mode === AUTO_PASS_MODE.END_OF_TURN) {
       await maybeCompleteTutorialStep('P1_11_pass', { detail: 'autoPassUntilEndOfTurn' });
     }
@@ -7590,7 +7526,9 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const setAutoPassStopOnOpponentAction = async (enabled) => {
     const nextConfig = normalizeAutoPassConfig({ ...autoPassConfig, stopOnOpponentAction: enabled });
     setAutoPassConfig(nextConfig);
-    await writeAutoPassConfig(nextConfig);
+    if (gameId && userId && isPlayer) {
+      await updateDoc(doc(db, 'games_v3', gameId), { [`autopass.${userId}`]: nextConfig });
+    }
   };
 
   const autoPassLabel = autoPassConfig.mode === AUTO_PASS_MODE.END_OF_TURN
@@ -7892,181 +7830,6 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     finishPerfAction(perfActionId);
   };
 
-  const retryTutorialControlActionAfterConflict = async (actionType, payload = {}, originalError) => {
-    if (!isTutorialGame || !gameId || !userId || !isTutorialRetryableAction(actionType)) return false;
-    const originalBaseVersion = getGameVersionForDebug(game);
-    const gameRef = doc(db, 'games_v3', gameId);
-    const maxRetries = 2;
-
-    for (let retryCount = 1; retryCount <= maxRetries; retryCount += 1) {
-      const latestSnap = await getDoc(gameRef);
-      if (!latestSnap.exists()) return false;
-      const latestGame = { ...latestSnap.data(), combat: normalizeCombatState(latestSnap.data().combat) };
-      latestFirestoreGameRef.current = latestGame;
-      setFirestoreGame(latestGame);
-      const targetPhaseAlreadyReached = actionType === 'MANUAL_SET_STEP'
-        && payload?.phaseId
-        && latestGame.phase === payload.phaseId;
-
-      if (isPerfActionsEnabled() || isDebugActionsEnabled()) {
-        console.debug('[Tutorial base-version retry]', {
-          actionType,
-          oldBaseVersion: originalBaseVersion,
-          latestBaseVersion: getGameVersionForDebug(latestGame),
-          retryCount,
-          targetPhaseAlreadyReached,
-          originalError: originalError?.message || String(originalError || '')
-        });
-      }
-
-      if (targetPhaseAlreadyReached) {
-        await maybeCompleteTutorialAction(actionType, payload);
-        if (isPerfActionsEnabled() || isDebugActionsEnabled()) {
-          console.debug('[Tutorial base-version retry]', {
-            actionType,
-            oldBaseVersion: originalBaseVersion,
-            latestBaseVersion: getGameVersionForDebug(latestGame),
-            retryCount,
-            retrySucceeded: true,
-            targetPhaseAlreadyReached: true
-          });
-        }
-        return true;
-      }
-
-      try {
-        if (actionType === 'MANUAL_SET_STEP') {
-          const targetPhase = PHASES.find((phase) => phase.id === payload.phaseId);
-          if (!targetPhase) return false;
-          await runTransaction(db, async (transaction) => {
-            const snap = await transaction.get(gameRef);
-            if (!snap.exists()) return;
-            const currentGame = snap.data();
-            const currentPlayers = currentGame.players || [];
-            const currentPlayer = currentPlayers.find((player) => player.id === userId);
-            if (!currentPlayer) return;
-            if (currentGame.phase === targetPhase.id) return;
-            const currentActiveIndex = Number.isInteger(currentGame.activePlayerIndex) ? currentGame.activePlayerIndex : 0;
-            const safeActiveIndex = currentPlayers[currentActiveIndex] ? currentActiveIndex : 0;
-            const activePlayerId = currentGame.turnPlayerId || currentPlayers[safeActiveIndex]?.id || currentPlayers[0]?.id || null;
-            const activePlayerIndex = currentPlayers.findIndex((player) => player.id === activePlayerId);
-            const resolvedActiveIndex = activePlayerIndex >= 0 ? activePlayerIndex : safeActiveIndex;
-            const resolvedActivePlayerId = currentPlayers[resolvedActiveIndex]?.id || activePlayerId;
-            const resetAutoPass = Object.fromEntries(currentPlayers.map((player) => [player.id, getDefaultAutoPassConfig()]));
-            const actor = currentPlayer.name || myPlayer?.name || displayName || 'Player';
-            const nextCombatState = shouldClearCombatState(currentGame.phase, targetPhase.id)
-              ? getEmptyCombatState()
-              : (currentGame.combat || getEmptyCombatState());
-            const logEntry = buildGameLogEntry({
-              currentGame,
-              playerId: userId,
-              playerName: actor,
-              type: 'MANUAL_SET_STEP',
-              category: 'phase',
-              message: `${actor} manually set the step to ${targetPhase.label}.`,
-              phase: targetPhase.id,
-              phaseLabel: targetPhase.label
-            });
-            transaction.update(gameRef, normalizeGameUpdatesForFirestore({
-              phase: targetPhase.id,
-              combat: nextCombatState,
-              consecutivePasses: 0,
-              priorityIndex: resolvedActiveIndex,
-              priorityPlayerId: resolvedActivePlayerId || currentGame.priorityPlayerId || null,
-              autopass: resetAutoPass,
-              log: arrayUnion(logEntry),
-              undoStack: appendUndoEntry(currentGame, buildUndoEntry({
-                currentGame,
-                actorId: userId,
-                actorName: actor,
-                actionLabel: `changed phase to ${targetPhase.label}`
-              })),
-              updatedAt: serverTimestamp()
-            }, 'MANUAL_SET_STEP_RETRY'));
-          });
-          setAutoPassConfig(getDefaultAutoPassConfig());
-          setTimeControlsOpen(false);
-        } else if (actionType === 'PASS' || actionType === 'PASS_PRIORITY' || actionType === 'AUTO_PASS' || actionType === 'AUTOPASS') {
-          const turnStartEvents = [];
-          await runTransaction(db, async (transaction) => {
-            const snap = await transaction.get(gameRef);
-            if (!snap.exists()) return;
-            const currentGame = snap.data();
-            const currentPlayers = currentGame.players || [];
-            const currentPlayer = currentPlayers.find((player) => player.id === userId);
-            if (!currentPlayer) return;
-            const actor = currentPlayer.name || myPlayer?.name || displayName || 'Player';
-            const logEntry = buildGameLogEntry({
-              currentGame,
-              playerId: userId,
-              playerName: actor,
-              type: 'PASS_PRIORITY',
-              category: 'priority',
-              message: `${actor} passed priority.`
-            });
-            const advancedGame = advancePassPriorityState(currentGame, logEntry, (event) => turnStartEvents.push(event), {
-              getBattlefieldWidthForController: (controllerId) => controllerId === userId ? getCurrentBattlefieldWidthPx() : BATTLEFIELD_DEFAULT_WIDTH_PX
-            });
-            transaction.update(gameRef, normalizeGameUpdatesForFirestore({
-              phase: advancedGame.phase,
-              turnNumber: advancedGame.turnNumber,
-              activePlayerIndex: advancedGame.activePlayerIndex,
-              turnPlayerId: advancedGame.turnPlayerId,
-              priorityIndex: advancedGame.priorityIndex,
-              priorityPlayerId: advancedGame.priorityPlayerId,
-              consecutivePasses: advancedGame.consecutivePasses,
-              stack: advancedGame.stack,
-              cards: advancedGame.cards,
-              combat: advancedGame.combat || getEmptyCombatState(),
-              log: advancedGame.log,
-              updatedAt: serverTimestamp()
-            }, 'PASS_PRIORITY_RETRY'));
-          });
-          if (turnStartEvents.length > 0) await Promise.all(turnStartEvents.map((event) => appendEvent(gameId, event)));
-        } else if (actionType === 'AUTOPASS_CONFIG') {
-          const latestConfig = normalizeAutoPassConfig(payload?.config || getDefaultAutoPassConfig());
-          await updateDoc(gameRef, { [`autopass.${userId}`]: latestConfig });
-        } else {
-          return false;
-        }
-
-        const postRetrySnap = await getDoc(gameRef);
-        const postRetryGame = postRetrySnap.exists() ? { ...postRetrySnap.data(), combat: normalizeCombatState(postRetrySnap.data().combat) } : null;
-        if (postRetryGame) {
-          latestFirestoreGameRef.current = postRetryGame;
-          setFirestoreGame(postRetryGame);
-        }
-        const retryPhaseReached = actionType === 'MANUAL_SET_STEP' && payload?.phaseId && postRetryGame?.phase === payload.phaseId;
-        if (isPerfActionsEnabled() || isDebugActionsEnabled()) {
-          console.debug('[Tutorial base-version retry]', {
-            actionType,
-            oldBaseVersion: originalBaseVersion,
-            latestBaseVersion: getGameVersionForDebug(postRetryGame || latestGame),
-            retryCount,
-            retrySucceeded: true,
-            targetPhaseAlreadyReached: retryPhaseReached
-          });
-        }
-        await maybeCompleteTutorialAction(actionType, payload);
-        return true;
-      } catch (retryError) {
-        if (isPerfActionsEnabled() || isDebugActionsEnabled()) {
-          console.debug('[Tutorial base-version retry]', {
-            actionType,
-            oldBaseVersion: originalBaseVersion,
-            latestBaseVersion: getGameVersionForDebug(latestGame),
-            retryCount,
-            retrySucceeded: false,
-            targetPhaseAlreadyReached,
-            message: retryError?.message || String(retryError)
-          });
-        }
-        if (retryCount >= maxRetries || !isBaseVersionConflictError(retryError)) return false;
-      }
-    }
-    return false;
-  };
-
   const handleAction = async (actionType, payload = {}) => {
     const perfActionId = startPerfAction({ actionType, payload, currentGame: game });
     const clientActionId = perfActionId || `ca-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
@@ -8109,6 +7872,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       setTimeout(() => setNotification(null), 2000);
       return;
     }
+    maybeCompleteTutorialAction(actionType, payload);
     // UPDATED: Path
     const gameRef = doc(db, 'games_v3', gameId);
     const perfRunTransaction = async (label, callback) => {
@@ -10044,12 +9808,6 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       await Promise.all(pendingRecapEvents.map((event) => appendEvent(gameId, event)));
     }
     } catch (error) {
-      const canTutorialRetry = isTutorialGame && isBaseVersionConflictError(error) && isTutorialRetryableAction(actionType);
-      if (canTutorialRetry) {
-        clearOptimisticGame(error?.message || 'Firestore action needs a fresh tutorial state', perfActionId);
-        const recovered = await retryTutorialControlActionAfterConflict(actionType, payload, error);
-        if (recovered) return;
-      }
       clearOptimisticGame(error?.message || 'Firestore action failed', perfActionId);
       setNotification(`Action failed: ${error?.message || String(error)}`);
       setTimeout(() => setNotification(null), 3500);
@@ -11123,10 +10881,6 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const currentCombatDamageStepLabel = getCombatDamageStepLabel(currentCombatDamageStep);
   const confirmTimeControl = (message) => (typeof window === 'undefined' ? true : window.confirm(message));
   const handleSetManualStep = (phaseId) => {
-    if (isTutorialGame && tutorialSetupPendingRef.current) {
-      if (isPerfActionsEnabled() || isDebugActionsEnabled()) console.debug('[Tutorial setup pending] phase control delayed', { phaseId });
-      return;
-    }
     const targetPhase = PHASES.find((phase) => phase.id === phaseId);
     if (!targetPhase) return;
     const currentIndex = PHASES.findIndex((phase) => phase.id === game.phase);
@@ -12431,8 +12185,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                       <button
                         key={phase.id}
                         onClick={() => handleSetManualStep(phase.id)}
-                        disabled={isTutorialGame && tutorialSetupPending}
-                        className={`min-h-12 rounded-xl border px-3 py-2 text-sm font-bold disabled:cursor-wait disabled:opacity-60 ${isCurrent ? 'bg-purple-700 border-purple-400 text-white' : 'bg-slate-800 border-slate-700 text-slate-100 hover:bg-slate-700 hover:border-slate-500'}`}
+                        className={`min-h-12 rounded-xl border px-3 py-2 text-sm font-bold ${isCurrent ? 'bg-purple-700 border-purple-400 text-white' : 'bg-slate-800 border-slate-700 text-slate-100 hover:bg-slate-700 hover:border-slate-500'}`}
                         aria-pressed={isCurrent}
                       >
                         {phase.label}

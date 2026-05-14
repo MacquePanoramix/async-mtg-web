@@ -33,7 +33,7 @@ const GAME_MODES = {
   COMMANDER: 'commander'
 };
 
-const TUTORIAL_SCRIPT_VERSION = 10;
+const TUTORIAL_SCRIPT_VERSION = 11;
 const TUTORIAL_RULES_BY_STEP_ID = {
   intro: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Inspect room code', sourceCardOrEffect: 'Async room setup', boardPrecondition: 'Tutorial duel exists', stackPrecondition: 'Stack may be empty', completionCondition: 'Room code tapped', tutorialTargetAnchor: 'room-code' },
   room_code: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Copy room code', sourceCardOrEffect: 'Async room setup', boardPrecondition: 'Tutorial duel exists', stackPrecondition: 'Stack may be empty', completionCondition: 'Room code tapped', tutorialTargetAnchor: 'room-code' },
@@ -50,7 +50,7 @@ const TUTORIAL_RULES_BY_STEP_ID = {
   resolve_stack_item: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Resolve copied Lightning Bolt', sourceCardOrEffect: 'Lightning Bolt copy from Reverberate', boardPrecondition: 'Lightning Bolt copy on top of stack', stackPrecondition: 'Copy on top; Negate and original beneath', expectedZoneChange: 'Lightning Bolt copy leaves stack', completionCondition: 'Resolve top stack item', tutorialTargetAnchor: 'stack-panel', teachesPriorityWithStack: true },
   counter_stack_item: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Resolve Negate, then counter original Bolt if it remains', sourceCardOrEffect: 'Negate targeting original Lightning Bolt', boardPrecondition: 'Negate and original Lightning Bolt remain on stack', stackPrecondition: 'Negate can counter original Lightning Bolt; stack should be cleared before phase changes', expectedZoneChange: 'Negate and original Bolt leave stack', completionCondition: 'Negate and original Bolt are cleared from the stack', tutorialTargetAnchor: 'stack-panel', teachesPriorityWithStack: true },
   pass_priority: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'end', requiredAction: 'Pass priority after stack is empty', sourceCardOrEffect: 'Turn priority after main-phase stack lesson', boardPrecondition: 'No pending spell lesson', stackPrecondition: 'Stack empty', completionCondition: 'Pass priority tapped', tutorialTargetAnchor: 'pass-button' },
-  game_log: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'end', requiredAction: 'Open log/chat', sourceCardOrEffect: 'Async communication', boardPrecondition: 'Log available', stackPrecondition: 'Stack empty', completionCondition: 'Log/chat opened', tutorialTargetAnchor: 'chat-button' },
+  game_log: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'end', requiredAction: 'Open game log', sourceCardOrEffect: 'Async communication', boardPrecondition: 'Log available', stackPrecondition: 'Stack empty', completionCondition: 'Game Log opened', tutorialTargetAnchor: 'game-log-button' },
   beginning_phase_draw: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'draw', requiredAction: 'Set draw step and draw for turn', sourceCardOrEffect: 'Normal draw step', boardPrecondition: 'Player starting Turn 2', stackPrecondition: 'Stack empty', expectedZoneChange: 'Top library card -> hand', completionCondition: 'Draw card action', tutorialTargetAnchor: 'phase-indicator' },
   cast_delver: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Play Island, then cast and resolve Delver of Secrets', sourceCardOrEffect: 'Delver of Secrets creature spell', boardPrecondition: 'Delver in hand; Island in hand or on battlefield as blue source', stackPrecondition: 'Stack empty before cast; Delver resolves before leaving main phase', expectedZoneChange: 'Island: hand -> battlefield; Delver: hand -> stack -> battlefield', completionCondition: 'Cast/resolve Delver action', tutorialTargetAnchor: 'hand-area', teachesPriorityWithStack: true },
   bolas_removal: { actor: 'bolas', turnOwner: 'bolas', activePlayer: 'bolas', phase: 'main1', requiredAction: 'Inspect Doom Blade on stack', sourceCardOrEffect: 'Doom Blade targeting Delver', boardPrecondition: 'Delver on battlefield', stackPrecondition: 'Doom Blade on stack targeting Delver', completionCondition: 'Stack inspected', tutorialTargetAnchor: 'stack-button', teachesPriorityWithStack: true },
@@ -94,9 +94,9 @@ const TUTORIAL_RULES_BY_STEP_ID = {
   final_bolas_response: { actor: 'bolas', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Inspect Bolas response', sourceCardOrEffect: 'Negate targeting final Lightning Bolt', boardPrecondition: 'Final Lightning Bolt on stack', stackPrecondition: 'Negate above final spell', completionCondition: 'Stack opened', tutorialTargetAnchor: 'stack-button', teachesPriorityWithStack: true },
   final_in_response: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Answer on stack', sourceCardOrEffect: 'Reverberate/counter-answer to Bolas response', boardPrecondition: 'Bolas response on stack', stackPrecondition: 'Player response can be placed above Bolas response', completionCondition: 'Stack response action', tutorialTargetAnchor: 'stack-panel', teachesPriorityWithStack: true },
   final_trial: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Pass priority to finish', sourceCardOrEffect: 'Priority after final stack exchange', boardPrecondition: 'Winning line represented', stackPrecondition: 'Stack resolved or intentionally being passed through', completionCondition: 'Pass priority tapped', tutorialTargetAnchor: 'pass-button', teachesPriorityWithStack: true },
-  async_oath: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'end', requiredAction: 'Open log/chat and pass priority', sourceCardOrEffect: 'Async table etiquette after duel', boardPrecondition: 'Duel ending', stackPrecondition: 'Stack empty', completionCondition: 'Log/pass action', tutorialTargetAnchor: 'chat-button' },
+  async_oath: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'end', requiredAction: 'Open game log and pass priority', sourceCardOrEffect: 'Async table etiquette after duel', boardPrecondition: 'Duel ending', stackPrecondition: 'Stack empty', completionCondition: 'Game Log/pass action', tutorialTargetAnchor: 'game-log-button' },
   watch_cleanup_note: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'end', requiredAction: 'Copy room code for sharing', sourceCardOrEffect: 'Async room sharing', boardPrecondition: 'Room code visible', stackPrecondition: 'Stack empty', completionCondition: 'Room code tapped', tutorialTargetAnchor: 'room-code' },
-  manual_toolbox_note: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'end', requiredAction: 'Open log/chat notes', sourceCardOrEffect: 'Manual tabletop responsibility', boardPrecondition: 'Game can continue as manual board', stackPrecondition: 'Stack empty', completionCondition: 'Log/chat focused', tutorialTargetAnchor: 'chat-button' },
+  manual_toolbox_note: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'end', requiredAction: 'Open game log notes', sourceCardOrEffect: 'Manual tabletop responsibility', boardPrecondition: 'Game can continue as manual board', stackPrecondition: 'Stack empty', completionCondition: 'Game Log focused', tutorialTargetAnchor: 'game-log-button' },
   tutorial_complete: { actor: 'system', turnOwner: 'player', activePlayer: 'player', phase: 'end', requiredAction: 'Finish tutorial', sourceCardOrEffect: 'Tutorial complete', boardPrecondition: 'Final step reached', stackPrecondition: 'No tutorial stack required', completionCondition: 'Finish/continue selected', tutorialTargetAnchor: null }
 };
 
@@ -426,9 +426,9 @@ const TUTORIAL_DUEL_STEPS = [
   makeDuelStep({ id: 'P1_08_target_bolas', act: 'Act 1 / Luis Turn 1 — Main 1', title: 'Target Nicol Bolas', sourceCard: 'Lightning Bolt', requiredAction: 'Choose Nicol Bolas as Lightning Bolt’s target.', exactUiAction: 'Tap Nicol Bolas/opponent player panel → Done.', manaPayment: '{R} paid from Mountain.', legalPreconditions: 'Nicol Bolas is a legal player target; Done is disabled with 0 targets.', completionCondition: 'Lightning Bolt is on stack targeting Nicol Bolas.', showMeAnchor: 'opponent-player-target', storyText: TUTORIAL_STORY_TEXT.P1_08_target_bolas, bolasLine: TUTORIAL_BOLAS_LINES.P1_08_target_bolas }),
   makeDuelStep({ id: 'P1_09_inspect_stack', act: 'Act 1 / Luis Turn 1 — Main 1', title: 'Inspect Stack', sourceCard: 'Lightning Bolt', requiredAction: 'Open the stack.', exactUiAction: 'Tap Stack.', legalPreconditions: 'Lightning Bolt is on stack targeting Nicol Bolas.', completionCondition: 'Stack panel opened with Lightning Bolt visible.', showMeAnchor: 'stack-button', storyText: TUTORIAL_STORY_TEXT.P1_09_inspect_stack, bolasLine: TUTORIAL_BOLAS_LINES.P1_09_inspect_stack }),
   makeDuelStep({ id: 'P1_10_resolve_bolt', act: 'Act 1 / Luis Turn 1 — Main 1', title: 'Resolve Bolt for Real Damage', sourceCard: 'Lightning Bolt', sourceEffect: '3 damage to any target', requiredAction: 'Resolve Lightning Bolt and apply damage.', exactUiAction: 'Resolve top stack item.', manaPayment: 'Clear/spend Luis {R}.', legalPreconditions: 'Bolas has no lands yet and cannot cast Negate; Bolt targets Nicol Bolas.', completionCondition: 'Stack empty; Lightning Bolt in Luis graveyard; Bolas life is 17.', showMeAnchor: 'stack-panel', expectedLifeTotals: { bolasBefore: 20, bolasAfter: 17 }, expectedDamage: 'Lightning Bolt deals 3 damage to Nicol Bolas.', storyText: TUTORIAL_STORY_TEXT.P1_10_resolve_bolt, bolasLine: TUTORIAL_BOLAS_LINES.P1_10_resolve_bolt }),
-  makeDuelStep({ id: 'P1_11_pass', act: 'Act 1 / Luis Turn 1 — End', title: 'Pass Turn', requiredAction: 'Pass/end turn.', exactUiAction: 'Tap Pass with stack empty.', legalPreconditions: 'Main phase with stack empty after Bolt resolved.', completionCondition: 'Pass action with stack empty.', showMeAnchor: 'pass-button', storyText: TUTORIAL_STORY_TEXT.P1_11_pass, bolasLine: TUTORIAL_BOLAS_LINES.P1_11_pass }),
-  makeDuelStep({ id: 'B1_01_bolas_island', act: 'Act 2 / Bolas Turn 1', title: 'Bolas Plays Island', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', sourceCard: 'Island', requiredAction: 'Inspect Bolas’s land play in the log.', exactUiAction: 'Open log/chat.', legalPreconditions: 'Bolas Turn 1; Island in Bolas opening hand.', completionCondition: 'Log/chat opened after setup logs “Nicol Bolas plays Island.”', showMeAnchor: 'chat-button', storyText: TUTORIAL_STORY_TEXT.B1_01_bolas_island, bolasLine: TUTORIAL_BOLAS_LINES.B1_01_bolas_island }),
-  makeDuelStep({ id: 'B1_02_bolas_pass', act: 'Act 2 / Bolas Turn 1', title: 'Bolas Passes', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', requiredAction: 'Acknowledge Bolas passing.', exactUiAction: 'Tap Pass.', legalPreconditions: 'Bolas controls Island and takes no further action.', completionCondition: 'Pass tapped.', showMeAnchor: 'pass-button', storyText: TUTORIAL_STORY_TEXT.B1_02_bolas_pass, bolasLine: TUTORIAL_BOLAS_LINES.B1_02_bolas_pass }),
+  makeDuelStep({ id: 'P1_11_pass', act: 'Act 1 / Luis Turn 1 — End', title: 'Let the Turn Fall Away', requiredAction: 'Use AutoPass until end of turn, then pass priority.', exactUiAction: 'Open AutoPass, choose Until End of Turn, then tap Pass when it is your priority.', legalPreconditions: 'Main phase with stack empty after Bolt resolved and Luis has priority.', completionCondition: 'AutoPass until end of turn selected or Luis passes priority with stack empty.', showMeAnchor: 'autopass-button', storyText: TUTORIAL_STORY_TEXT.P1_11_pass, bolasLine: TUTORIAL_BOLAS_LINES.P1_11_pass }),
+  makeDuelStep({ id: 'B1_01_bolas_island', act: 'Act 2 / Bolas Turn 1', title: 'Bolas Plays Island', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', sourceCard: 'Island', requiredAction: 'Inspect Bolas’s land play in the Game Log.', exactUiAction: 'Open the Game Log.', legalPreconditions: 'Bolas Turn 1 Main 1; Island is on Bolas’s battlefield.', completionCondition: 'Game Log opened and contains “Nicol Bolas played Island.”', showMeAnchor: 'game-log-button', storyText: TUTORIAL_STORY_TEXT.B1_01_bolas_island, bolasLine: TUTORIAL_BOLAS_LINES.B1_01_bolas_island }),
+  makeDuelStep({ id: 'B1_02_bolas_pass', act: 'Act 2 / Bolas Turn 1', title: 'Bolas Passes', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', requiredAction: 'Open the Game Log and confirm Bolas passed the turn.', exactUiAction: 'Open the Game Log.', legalPreconditions: 'Bolas controls Island and the scripted opponent has passed the turn.', completionCondition: 'Game Log opened and contains “Nicol Bolas passed the turn.”', showMeAnchor: 'game-log-button', storyText: TUTORIAL_STORY_TEXT.B1_02_bolas_pass, bolasLine: TUTORIAL_BOLAS_LINES.B1_02_bolas_pass }),
   makeDuelStep({ id: 'P2_01_untap', act: 'Act 3 / Luis Turn 2', title: 'Untap', phase: 'untap', requiredAction: 'Set phase to Untap.', exactUiAction: 'Use phase controls → Untap.', legalPreconditions: 'Luis Turn 2 begins; Mountain untaps.', completionCondition: 'Phase is Untap.', showMeAnchor: 'phase-controls', storyText: TUTORIAL_STORY_TEXT.P2_01_untap, bolasLine: TUTORIAL_BOLAS_LINES.P2_01_untap }),
   makeDuelStep({ id: 'P2_02_draw_slip', act: 'Act 3 / Luis Turn 2', title: 'Draw Slip Out', phase: 'draw', sourceCard: 'Draw step', requiredAction: 'Move to Draw and draw Slip Out the Back.', exactUiAction: 'Phase controls → Draw → Draw.', legalPreconditions: 'Top Luis library card is Slip Out the Back.', completionCondition: 'Slip Out the Back moves library → hand.', showMeAnchor: 'library-menu-button', storyText: TUTORIAL_STORY_TEXT.P2_02_draw_slip, bolasLine: TUTORIAL_BOLAS_LINES.P2_02_draw_slip }),
   makeDuelStep({ id: 'P2_03_main1', act: 'Act 3 / Luis Turn 2', title: 'Main 1', requiredAction: 'Move to Main 1.', exactUiAction: 'Use phase controls → Main 1.', legalPreconditions: 'Draw step complete.', completionCondition: 'Phase Main 1.', showMeAnchor: 'phase-controls', storyText: TUTORIAL_STORY_TEXT.P2_03_main1, bolasLine: TUTORIAL_BOLAS_LINES.P2_03_main1 }),
@@ -439,7 +439,7 @@ const TUTORIAL_DUEL_STEPS = [
   makeDuelStep({ id: 'P2_08_cast_delver', act: 'Act 3 / Luis Turn 2', title: 'Cast Delver', sourceCard: 'Delver of Secrets', requiredAction: 'Cast Delver of Secrets.', exactUiAction: 'Tap Cast Spell, not Cast + Target.', manaPayment: '{U} from Island.', legalPreconditions: 'Delver costs {U} and has no target.', completionCondition: 'Delver is on stack.', showMeAnchor: 'card-detail', storyText: TUTORIAL_STORY_TEXT.P2_08_cast_delver, bolasLine: TUTORIAL_BOLAS_LINES.P2_08_cast_delver }),
   makeDuelStep({ id: 'P2_09_resolve_delver', act: 'Act 3 / Luis Turn 2', title: 'Resolve Delver', sourceCard: 'Delver of Secrets', requiredAction: 'Resolve Delver from stack.', exactUiAction: 'Open Stack → Resolve top item.', manaPayment: 'Clear/spend {U}.', legalPreconditions: 'Delver is a creature spell on stack.', completionCondition: 'Delver on battlefield and stack empty.', showMeAnchor: 'stack-panel', storyText: TUTORIAL_STORY_TEXT.P2_09_resolve_delver, bolasLine: TUTORIAL_BOLAS_LINES.P2_09_resolve_delver }),
   makeDuelStep({ id: 'P2_10_pass', act: 'Act 3 / Luis Turn 2', title: 'Pass Turn', requiredAction: 'Pass/end turn.', exactUiAction: 'Tap Pass.', legalPreconditions: 'Stack empty after Delver resolves.', completionCondition: 'Pass action.', showMeAnchor: 'pass-button', storyText: TUTORIAL_STORY_TEXT.P2_10_pass, bolasLine: TUTORIAL_BOLAS_LINES.P2_10_pass }),
-  makeDuelStep({ id: 'B2_01_bolas_draw_mountain', act: 'Act 4 / Bolas Turn 2', title: 'Bolas Draws', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', phase: 'draw', sourceCard: 'Draw step', requiredAction: 'Inspect Bolas turn note.', exactUiAction: 'Open log/chat.', legalPreconditions: 'Bolas untaps Island and draws Mountain.', completionCondition: 'Log/chat opened.', showMeAnchor: 'chat-button', storyText: TUTORIAL_STORY_TEXT.B2_01_bolas_draw_mountain, bolasLine: TUTORIAL_BOLAS_LINES.B2_01_bolas_draw_mountain }),
+  makeDuelStep({ id: 'B2_01_bolas_draw_mountain', act: 'Act 4 / Bolas Turn 2', title: 'Bolas Draws', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', phase: 'draw', sourceCard: 'Draw step', requiredAction: 'Inspect Bolas turn note.', exactUiAction: 'Open the Game Log.', legalPreconditions: 'Bolas untaps Island and draws Mountain.', completionCondition: 'Game Log opened.', showMeAnchor: 'game-log-button', storyText: TUTORIAL_STORY_TEXT.B2_01_bolas_draw_mountain, bolasLine: TUTORIAL_BOLAS_LINES.B2_01_bolas_draw_mountain }),
   makeDuelStep({ id: 'B2_02_bolas_swamp', act: 'Act 4 / Bolas Turn 2', title: 'Bolas Plays Swamp', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', sourceCard: 'Swamp', requiredAction: 'Inspect Bolas battlefield.', exactUiAction: 'Open/inspect Bolas battlefield.', legalPreconditions: 'Swamp in Bolas opening hand; visible Bolas battlefield is Island + Swamp.', completionCondition: 'Bolas battlefield inspected.', showMeAnchor: 'opponent-battlefield', storyText: TUTORIAL_STORY_TEXT.B2_02_bolas_swamp, bolasLine: TUTORIAL_BOLAS_LINES.B2_02_bolas_swamp }),
   makeDuelStep({ id: 'B2_03_bolas_cast_knight', act: 'Act 4 / Bolas Turn 2', title: 'Bolas Casts Knight', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', sourceCard: 'Knight of Malice', requiredAction: 'Inspect Knight of Malice on stack.', exactUiAction: 'Open Stack and inspect Knight.', manaPayment: 'Bolas taps Swamp for {B} and Island for {1}.', legalPreconditions: 'Knight in Bolas hand; Island and Swamp untapped.', completionCondition: 'Stack opened / Knight inspected.', showMeAnchor: 'stack-button', storyText: TUTORIAL_STORY_TEXT.B2_03_bolas_cast_knight, bolasLine: TUTORIAL_BOLAS_LINES.B2_03_bolas_cast_knight }),
   makeDuelStep({ id: 'B2_04_resolve_knight', act: 'Act 4 / Bolas Turn 2', title: 'Resolve Knight', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', sourceCard: 'Knight of Malice', requiredAction: 'Resolve Knight of Malice.', exactUiAction: 'Resolve top stack item.', legalPreconditions: 'Knight is on stack.', completionCondition: 'Knight on Bolas battlefield and stack empty.', showMeAnchor: 'stack-panel', storyText: TUTORIAL_STORY_TEXT.B2_04_resolve_knight, bolasLine: TUTORIAL_BOLAS_LINES.B2_04_resolve_knight }),
@@ -452,7 +452,7 @@ const TUTORIAL_DUEL_STEPS = [
   makeDuelStep({ id: 'P3_06_main1', act: 'Act 5 / Luis Turn 3', title: 'Main 1', requiredAction: 'Move to Main 1.', exactUiAction: 'Phase controls → Main 1.', legalPreconditions: 'Draw step complete.', completionCondition: 'Phase Main 1.', showMeAnchor: 'phase-controls', storyText: TUTORIAL_STORY_TEXT.P3_06_main1, bolasLine: TUTORIAL_BOLAS_LINES.P3_06_main1 }),
   makeDuelStep({ id: 'P3_07_play_mountain', act: 'Act 5 / Luis Turn 3', title: 'Play Second Mountain', sourceCard: 'Mountain', requiredAction: 'Play second Mountain.', exactUiAction: 'Tap Mountain → Play Land.', legalPreconditions: 'Second Mountain in hand; keep Island untapped for Slip Out next turn.', completionCondition: 'Second Mountain on battlefield.', showMeAnchor: 'hand-area', storyText: TUTORIAL_STORY_TEXT.P3_07_play_mountain, bolasLine: TUTORIAL_BOLAS_LINES.P3_07_play_mountain }),
   makeDuelStep({ id: 'P3_08_pass', act: 'Act 5 / Luis Turn 3', title: 'Pass Without Ponder', requiredAction: 'Pass.', exactUiAction: 'Tap Pass.', legalPreconditions: 'Island remains untapped; Ponder stays in hand.', completionCondition: 'Pass tapped.', showMeAnchor: 'pass-button', storyText: TUTORIAL_STORY_TEXT.P3_08_pass, bolasLine: TUTORIAL_BOLAS_LINES.P3_08_pass }),
-  makeDuelStep({ id: 'B3_01_bolas_swamp', act: 'Act 6 / Bolas Turn 3', title: 'Bolas Plays Second Swamp', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', sourceCard: 'Swamp', requiredAction: 'Inspect Bolas land play.', exactUiAction: 'Open log/chat.', legalPreconditions: 'Bolas untaps Island and Swamp, then plays second Swamp.', completionCondition: 'Log/chat opened.', showMeAnchor: 'chat-button', storyText: TUTORIAL_STORY_TEXT.B3_01_bolas_swamp, bolasLine: TUTORIAL_BOLAS_LINES.B3_01_bolas_swamp }),
+  makeDuelStep({ id: 'B3_01_bolas_swamp', act: 'Act 6 / Bolas Turn 3', title: 'Bolas Plays Second Swamp', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', sourceCard: 'Swamp', requiredAction: 'Inspect Bolas land play.', exactUiAction: 'Open the Game Log.', legalPreconditions: 'Bolas untaps Island and Swamp, then plays second Swamp.', completionCondition: 'Game Log opened.', showMeAnchor: 'game-log-button', storyText: TUTORIAL_STORY_TEXT.B3_01_bolas_swamp, bolasLine: TUTORIAL_BOLAS_LINES.B3_01_bolas_swamp }),
   makeDuelStep({ id: 'B3_02_bolas_doom_blade', act: 'Act 6 / Bolas Turn 3', title: 'Bolas Casts Doom Blade', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', sourceCard: 'Doom Blade', requiredAction: 'Inspect Doom Blade on stack.', exactUiAction: 'Open stack and inspect Doom Blade.', manaPayment: 'Bolas taps Swamp for {B} and Island for {1}.', legalPreconditions: 'Doom Blade in Bolas hand; Insectile Aberration is a legal nonblack creature target.', completionCondition: 'Doom Blade inspected.', showMeAnchor: 'stack-button', storyText: TUTORIAL_STORY_TEXT.B3_02_bolas_doom_blade, bolasLine: TUTORIAL_BOLAS_LINES.B3_02_bolas_doom_blade }),
   makeDuelStep({ id: 'B3_03_tap_island_slip', act: 'Act 6 / Bolas Turn 3', title: 'Tap Island for Slip Out', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', sourceCard: 'Island', requiredAction: 'Tap Island for {U}.', exactUiAction: 'Tap Luis’s untapped Island.', manaPayment: 'Island produces {U}.', legalPreconditions: 'Luis kept Island untapped.', completionCondition: 'Island tapped.', showMeAnchor: 'own-battlefield', storyText: TUTORIAL_STORY_TEXT.B3_03_tap_island_slip, bolasLine: TUTORIAL_BOLAS_LINES.B3_03_tap_island_slip }),
   makeDuelStep({ id: 'B3_04_add_u_slip', act: 'Act 6 / Bolas Turn 3', title: 'Add Blue for Slip Out', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', sourceCard: 'Island', requiredAction: 'Add {U}.', exactUiAction: 'Player Counters & Statuses → Mana Pool → +U.', manaPayment: 'Luis mana pool U1.', legalPreconditions: 'Island tapped.', completionCondition: 'Luis mana pool U1.', showMeAnchor: 'mana-pool-panel', storyText: TUTORIAL_STORY_TEXT.B3_04_add_u_slip, bolasLine: TUTORIAL_BOLAS_LINES.B3_04_add_u_slip }),
@@ -478,7 +478,7 @@ const TUTORIAL_DUEL_STEPS = [
   makeDuelStep({ id: 'P4_13_apply_insectile_damage', act: 'Act 7 / Luis Turn 4', title: 'Apply Combat Damage', phase: 'combat_damage', sourceCard: 'Insectile Aberration', requiredAction: 'Apply Insectile combat damage to Nicol Bolas.', exactUiAction: 'Use the guided damage application / adjust Bolas life to 13.', legalPreconditions: 'Insectile is 4 power because of +1/+1 counter; unblocked.', completionCondition: 'Bolas life is 13.', showMeAnchor: 'opponent-player-target', expectedLifeTotals: { bolasBefore: 17, bolasAfter: 13 }, expectedDamage: 'Insectile Aberration deals 4 combat damage to Nicol Bolas.', storyText: TUTORIAL_STORY_TEXT.P4_13_apply_insectile_damage, bolasLine: TUTORIAL_BOLAS_LINES.P4_13_apply_insectile_damage }),
   makeDuelStep({ id: 'P4_14_end_combat', act: 'Act 7 / Luis Turn 4', title: 'End Combat', phase: 'combat_end', requiredAction: 'Move to End Combat.', exactUiAction: 'Phase → End Combat.', legalPreconditions: 'Combat damage applied and logged.', completionCondition: 'Phase End Combat.', showMeAnchor: 'phase-controls', storyText: TUTORIAL_STORY_TEXT.P4_14_end_combat, bolasLine: TUTORIAL_BOLAS_LINES.P4_14_end_combat }),
   makeDuelStep({ id: 'P4_15_pass', act: 'Act 7 / Luis Turn 4', title: 'Pass Turn', requiredAction: 'Pass.', exactUiAction: 'Tap Pass.', legalPreconditions: 'Stack empty.', completionCondition: 'Pass tapped.', showMeAnchor: 'pass-button', storyText: TUTORIAL_STORY_TEXT.P4_15_pass, bolasLine: TUTORIAL_BOLAS_LINES.P4_15_pass }),
-  makeDuelStep({ id: 'B4_01_bolas_untaps', act: 'Act 8 / Bolas Turn 4', title: 'Bolas Untaps', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', phase: 'untap', sourceCard: 'Chapter snapshot', requiredAction: 'Inspect legal snapshot log.', exactUiAction: 'Open log/chat.', legalPreconditions: 'Snapshot logs Luis played Forest, cast Llanowar Elves, and both players passed to Bolas combat.', completionCondition: 'Log opened.', showMeAnchor: 'chat-button', storyText: TUTORIAL_STORY_TEXT.B4_01_bolas_untaps, bolasLine: TUTORIAL_BOLAS_LINES.B4_01_bolas_untaps }),
+  makeDuelStep({ id: 'B4_01_bolas_untaps', act: 'Act 8 / Bolas Turn 4', title: 'Bolas Untaps', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', phase: 'untap', sourceCard: 'Chapter snapshot', requiredAction: 'Inspect legal snapshot log.', exactUiAction: 'Open the Game Log.', legalPreconditions: 'Snapshot logs Luis played Forest, cast Llanowar Elves, and both players passed to Bolas combat.', completionCondition: 'Log opened.', showMeAnchor: 'game-log-button', storyText: TUTORIAL_STORY_TEXT.B4_01_bolas_untaps, bolasLine: TUTORIAL_BOLAS_LINES.B4_01_bolas_untaps }),
   makeDuelStep({ id: 'B4_02_bolas_combat', act: 'Act 8 / Bolas Turn 4', title: 'Bolas Moves to Combat', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', phase: 'combat_begin', requiredAction: 'Open Combat Summary.', exactUiAction: 'Open Combat Summary.', legalPreconditions: 'Bolas moves through beginning of combat to attackers.', completionCondition: 'Combat Summary opened.', showMeAnchor: 'combat-summary', storyText: TUTORIAL_STORY_TEXT.B4_02_bolas_combat, bolasLine: TUTORIAL_BOLAS_LINES.B4_02_bolas_combat }),
   makeDuelStep({ id: 'B4_03_knight_attacks', act: 'Act 8 / Bolas Turn 4', title: 'Knight Attacks Luis', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', phase: 'combat_attackers', sourceCard: 'Knight of Malice', requiredAction: 'Inspect Knight attacking Luis.', exactUiAction: 'Inspect Combat Summary.', legalPreconditions: 'Knight has been controlled since a prior turn and can attack.', completionCondition: 'Combat Summary shows Knight attacking Luis.', showMeAnchor: 'combat-summary', storyText: TUTORIAL_STORY_TEXT.B4_03_knight_attacks, bolasLine: TUTORIAL_BOLAS_LINES.B4_03_knight_attacks }),
   makeDuelStep({ id: 'B4_04_block_with_llanowar', act: 'Act 8 / Bolas Turn 4', title: 'Block with Llanowar', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', phase: 'combat_blockers', sourceCard: 'Llanowar Elves', requiredAction: 'Declare Llanowar blocking Knight of Malice.', exactUiAction: 'Tap Llanowar Elves → Block → choose attacking Knight.', legalPreconditions: 'Luis is defending player; Llanowar is untapped and can block.', completionCondition: 'Llanowar blocks Knight.', showMeAnchor: 'own-battlefield', storyText: TUTORIAL_STORY_TEXT.B4_04_block_with_llanowar, bolasLine: TUTORIAL_BOLAS_LINES.B4_04_block_with_llanowar }),
@@ -498,7 +498,7 @@ const TUTORIAL_DUEL_STEPS = [
   makeDuelStep({ id: 'F8_resolve_reverberate', act: 'Act 10 / Final Stack Lesson', title: 'Resolve Reverberate', sourceCard: 'Reverberate', requiredAction: 'Resolve Reverberate.', exactUiAction: 'Resolve top stack item.', legalPreconditions: 'Reverberate is on top of stack targeting Lightning Bolt.', completionCondition: 'Lightning Bolt copy exists on stack targeting Nicol Bolas.', showMeAnchor: 'stack-panel', storyText: TUTORIAL_STORY_TEXT.F8_resolve_reverberate, bolasLine: TUTORIAL_BOLAS_LINES.F8_resolve_reverberate }),
   makeDuelStep({ id: 'F9_resolve_bolt_copy_lethal', act: 'Act 10 / Final Stack Lesson', title: 'Resolve Bolt Copy for Lethal', sourceCard: 'Lightning Bolt copy', requiredAction: 'Resolve Lightning Bolt copy.', exactUiAction: 'Resolve top Lightning Bolt copy.', legalPreconditions: 'Bolas life is 3 and copy targets Nicol Bolas.', completionCondition: 'Bolas life <= 0; log says Nicol Bolas is defeated.', showMeAnchor: 'stack-panel', expectedLifeTotals: { bolasBefore: 3, bolasAfter: 0 }, expectedDamage: 'Lightning Bolt copy deals 3 damage to Nicol Bolas.', storyText: TUTORIAL_STORY_TEXT.F9_resolve_bolt_copy_lethal, bolasLine: TUTORIAL_BOLAS_LINES.F9_resolve_bolt_copy_lethal }),
   makeDuelStep({ id: 'F10_resolve_negate_original', act: 'Act 10 / Final Stack Lesson', title: 'Resolve Negate and Original Bolt', sourceCard: 'Negate', requiredAction: 'Resolve remaining stack.', exactUiAction: 'Resolve Negate; it counters original Lightning Bolt.', legalPreconditions: 'Copy has already dealt lethal; Negate still targets original Lightning Bolt.', completionCondition: 'Stack empty; original Bolt in graveyard; Negate in Bolas graveyard.', showMeAnchor: 'stack-panel', storyText: TUTORIAL_STORY_TEXT.F10_resolve_negate_original, bolasLine: TUTORIAL_BOLAS_LINES.F10_resolve_negate_original }),
-  makeDuelStep({ id: 'F11_victory_complete', act: 'Act 10 / Final Stack Lesson', title: 'Victory: Nicol Bolas Defeated', sourceCard: 'Lightning Bolt copy', requiredAction: 'Inspect final log and finish tutorial.', exactUiAction: 'Open log/chat, then Finish Tutorial.', legalPreconditions: 'Bolas life <= 0; stack empty; log includes “Nicol Bolas is defeated.”', completionCondition: 'Victory/tutorial-complete screen appears only after Bolas life <= 0.', showMeAnchor: 'chat-button', completion: 'finish', storyText: TUTORIAL_STORY_TEXT.F11_victory_complete, bolasLine: TUTORIAL_BOLAS_LINES.F11_victory_complete })
+  makeDuelStep({ id: 'F11_victory_complete', act: 'Act 10 / Final Stack Lesson', title: 'Victory: Nicol Bolas Defeated', sourceCard: 'Lightning Bolt copy', requiredAction: 'Inspect final log and finish tutorial.', exactUiAction: 'Open the Game Log, then Finish Tutorial.', legalPreconditions: 'Bolas life <= 0; stack empty; log includes “Nicol Bolas is defeated.”', completionCondition: 'Victory/tutorial-complete screen appears only after Bolas life <= 0.', showMeAnchor: 'game-log-button', completion: 'finish', storyText: TUTORIAL_STORY_TEXT.F11_victory_complete, bolasLine: TUTORIAL_BOLAS_LINES.F11_victory_complete })
 ];
 
 const TUTORIAL_SCRIPT_STEPS = withTutorialRules(TUTORIAL_DUEL_STEPS);
@@ -5616,6 +5616,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       selectedCardId: selectedCard?.instanceId || null,
       stackDetailOpen: Boolean(stackDetailOpen),
       chatOpen: Boolean(chatOpen),
+      recapOpen: Boolean(recapOpen),
       libraryMenuOpen: Boolean(libraryMenuOpen),
       libraryBatchOpen: Boolean(libraryBatchOpen),
       tokenModalOpen: Boolean(tokenModal),
@@ -5631,11 +5632,12 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       counterCardId: counterCard?.instanceId || null,
       counterTotal: counterCard?.counters ? Object.values(counterCard.counters).reduce((sum, value) => sum + (Number(value) || 0), 0) : 0
     };
-  }, [chatOpen, game?.cards, game?.combat, game?.phase, game?.stack, libraryBatchOpen, libraryMenuOpen, playerStatsOpen, revealsOpen, selectedCard?.instanceId, stackDetailOpen, tokenModal, userId]);
+  }, [chatOpen, game?.cards, game?.combat, game?.phase, game?.stack, libraryBatchOpen, libraryMenuOpen, playerStatsOpen, recapOpen, revealsOpen, selectedCard?.instanceId, stackDetailOpen, tokenModal, userId]);
 
   const summarizeTutorialBaseline = (baseline = {}) => ({
     selectedCardId: baseline.selectedCardId || null,
     stackDetailOpen: Boolean(baseline.stackDetailOpen),
+    recapOpen: Boolean(baseline.recapOpen),
     phase: baseline.phase || null,
     stackCount: baseline.stackCount || 0,
     handCount: baseline.handCount || 0,
@@ -5682,7 +5684,15 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     if (!anchor || typeof document === 'undefined') return;
     const targetAnchor = anchor === 'battlefields' ? 'own-battlefield' : anchor;
     if (targetAnchor === 'stack-button' || targetAnchor === 'stack-panel') setStackDetailOpen(true);
-    if (targetAnchor === 'chat-button') { setChatOpen(true); maybeCompleteTutorialStep('game_log'); maybeCompleteTutorialStep('async_oath'); maybeCompleteTutorialStep('manual_toolbox_note'); }
+    if (targetAnchor === 'chat-button') setChatOpen(true);
+    if (targetAnchor === 'game-log-button' || targetAnchor === 'log-button') {
+      setRecapOpen(true);
+      maybeCompleteTutorialStep('game_log', { detail: 'recapOpen' });
+      maybeCompleteTutorialStep('manual_toolbox_note', { detail: 'recapOpen' });
+      maybeCompleteTutorialStep('async_oath', { detail: 'recapOpen' });
+      maybeCompleteTutorialStep('B1_01_bolas_island', { detail: 'recapOpen' });
+      maybeCompleteTutorialStep('B1_02_bolas_pass', { detail: 'recapOpen' });
+    }
     if (targetAnchor === 'library-menu-button' || targetAnchor === 'mulligan-button') setLibraryMenuOpen(true);
     if (targetAnchor === 'token-tools') { setLibraryMenuOpen(false); setTokenModal(getDefaultCustomToken()); }
     if (targetAnchor === 'player-counters-button' || targetAnchor === 'player-counters-panel' || targetAnchor === 'mana-pool-panel' || targetAnchor === 'status-panel') setPlayerStatsOpen(true);
@@ -6002,6 +6012,17 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     return updateTutorialState({ inactive: true, finished: true }, { actionLabel: 'explore tutorial' });
   };
 
+  const gameLogHasMessage = (message) => (game?.log || []).some((entry) => String(entry?.message || entry?.desc || '').includes(message));
+  const tutorialBolasBattlefieldHasIsland = () => {
+    const bolasId = opponent?.id || (game?.players || []).find((player) => /Nicol Bolas/i.test(player?.name || ''))?.id || null;
+    return Boolean(bolasId && (game?.cards || []).some((card) => (card.name === 'Island' || card.card_faces?.some((face) => face?.name === 'Island')) && card.controllerId === bolasId && card.ownerId === bolasId && card.zone === ZONES.BATTLEFIELD));
+  };
+  const canCompleteGameLogTutorialStep = (stepId) => {
+    if (stepId === 'B1_01_bolas_island') return gameLogHasMessage('Nicol Bolas played Island') && tutorialBolasBattlefieldHasIsland();
+    if (stepId === 'B1_02_bolas_pass') return gameLogHasMessage('Nicol Bolas passed the turn');
+    return true;
+  };
+
   const maybeCompleteTutorialStep = (stepId, { source = 'user-action', eventAt = getActionPerfNow(), detail = '' } = {}) => {
     const liveStepId = (optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.stepId || 'intro';
     const activation = tutorialStepActivationRef.current;
@@ -6022,11 +6043,15 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       if (detail === 'selectedCard' && baseline.selectedCardId) return ignore('card detail was already open at step activation');
       if (detail === 'stackDetailOpen' && baseline.stackDetailOpen) return ignore('stack panel was already open at step activation');
       if (detail === 'chatOpen' && baseline.chatOpen) return ignore('chat was already open at step activation');
+      if (detail === 'recapOpen' && baseline.recapOpen) return ignore('game log was already open at step activation');
       if (detail === 'libraryMenuOpen' && baseline.libraryMenuOpen) return ignore('library tools were already open at step activation');
       if (detail === 'libraryBatchOpen' && baseline.libraryBatchOpen) return ignore('batch library panel was already open at step activation');
       if (detail === 'tokenModalOpen' && baseline.tokenModalOpen) return ignore('token tools were already open at step activation');
       if (detail === 'playerStatsOpen' && baseline.playerStatsOpen) return ignore('player panel was already open at step activation');
       if (detail === 'revealsOpen' && baseline.revealsOpen) return ignore('reveal panel was already open at step activation');
+    }
+    if (detail === 'recapOpen' && !canCompleteGameLogTutorialStep(stepId)) {
+      return ignore('game log opened before the expected tutorial log entry/state existed');
     }
     if (stepId === 'G07_undo_mulligan' && source !== 'undo-handler') {
       return ignore('G07_undo_mulligan waits for actual Undo action; scripted hand match alone is ignored');
@@ -6050,6 +6075,10 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     };
     if (!activation || activation.stepId !== stepId) return ignoreActionCompletion('step not armed after activation');
     if (eventAt < activation.enteredAt) return ignoreActionCompletion('action before step activation');
+    if (stepId === 'P1_11_pass' && actionType === 'PASS_PRIORITY') {
+      if ((game?.stack || []).length > 0) return ignoreActionCompletion('P1_11 requires an empty stack before passing toward end of turn');
+      if (game?.priorityPlayerId && game.priorityPlayerId !== userId) return ignoreActionCompletion('P1_11 requires Luis to have priority before tapping Pass');
+    }
     const actionStepMap = {
       DRAW_CARD: ['beginning_phase_draw', 'P2_02_draw_slip', 'P3_05_draw_ponder', 'P4_02_draw_mountain', 'P4_07_draw_ponder'],
       PLAY_LAND: ['play_land', 'P1_01_play_mountain', 'P2_04_play_island', 'P3_07_play_mountain', 'P4_04_play_third_mountain'],
@@ -6057,7 +6086,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       COPY_STACK_ITEM: ['copy_stack_item', 'final_in_response', 'F8_resolve_reverberate'],
       RESOLVE_STACK_TOP: ['resolve_stack_item', 'counter_stack_item', 'cast_delver', 'final_in_response', 'P1_10_resolve_bolt', 'P2_09_resolve_delver', 'B2_04_resolve_knight', 'B3_06_resolve_slip', 'P4_05_cast_ponder', 'F8_resolve_reverberate', 'F9_resolve_bolt_copy_lethal', 'F10_resolve_negate_original'],
       COUNTER_STACK_TOP: ['counter_stack_item', 'final_in_response', 'B3_09_fizzle_doom_blade', 'F10_resolve_negate_original'],
-      PASS_PRIORITY: ['pass_priority', 'final_trial', 'async_oath', 'P1_11_pass', 'B1_02_bolas_pass', 'P2_10_pass', 'B2_05_bolas_pass', 'P3_08_pass', 'B3_11_bolas_pass', 'P4_15_pass', 'B4_09_bolas_pass'],
+      PASS_PRIORITY: ['pass_priority', 'final_trial', 'async_oath', 'P1_11_pass', 'P2_10_pass', 'B2_05_bolas_pass', 'P3_08_pass', 'B3_11_bolas_pass', 'P4_15_pass', 'B4_09_bolas_pass'],
       MANUAL_SET_STEP: payload?.phaseId === 'combat_attackers' ? ['set_attackers_phase', 'P4_09_attackers_step'] : (payload?.phaseId === 'untap' ? ['P2_01_untap', 'P3_01_untap', 'P4_01_untap_phase_in'] : (payload?.phaseId === 'upkeep' ? ['P3_02_upkeep'] : (payload?.phaseId === 'draw' ? ['P2_02_draw_slip', 'P3_05_draw_ponder', 'P4_02_draw_mountain'] : (payload?.phaseId === 'main1' ? ['P2_03_main1', 'P3_06_main1', 'P4_03_main1'] : (payload?.phaseId === 'combat_begin' ? ['P4_08_begin_combat'] : (payload?.phaseId === 'combat_end' ? ['P4_14_end_combat'] : [])))))),
       SET_COMBAT_DAMAGE_STEP: payload?.combatDamageStep === COMBAT_DAMAGE_STEPS.FIRST_STRIKE ? ['first_strike_step', 'B4_05_first_strike_damage'] : (payload?.combatDamageStep === COMBAT_DAMAGE_STEPS.REGULAR ? ['regular_damage_step', 'P4_12_regular_damage', 'B4_08_regular_damage'] : []),
       SET_ATTACK_TARGET: ['declare_attacker_player', 'attack_planeswalker_battle_note', 'P4_10_attack_bolas'],
@@ -6253,13 +6282,13 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     if (!isTutorialGame) return;
     const liveStepId = (optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.stepId || 'intro';
     if (stackDetailOpen && ['inspect_stack', 'bolas_negate', 'bolas_removal', 'final_bolas_response', 'P1_09_inspect_stack', 'B2_03_bolas_cast_knight', 'B3_02_bolas_doom_blade', 'F4_bolas_negate_real_mana'].includes(liveStepId)) maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'stackDetailOpen' });
-    if (chatOpen && ['game_log', 'async_oath', 'manual_toolbox_note', 'B1_01_bolas_island', 'B2_01_bolas_draw_mountain', 'B3_01_bolas_swamp', 'B4_01_bolas_untaps', 'F11_victory_complete'].includes(liveStepId)) maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'chatOpen' });
+    if (recapOpen && ['game_log', 'async_oath', 'manual_toolbox_note', 'B1_01_bolas_island', 'B1_02_bolas_pass', 'B2_01_bolas_draw_mountain', 'B3_01_bolas_swamp', 'B4_01_bolas_untaps', 'F11_victory_complete'].includes(liveStepId)) maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'recapOpen' });
     if (libraryMenuOpen && ['open_library_tools', 'opponent_library_tools', 'G05_open_library_tools', 'P3_03_delver_reveal_ponder', 'P4_06_reorder_ponder', 'tool_ponder_reorder', 'tool_opt_scry', 'tool_consider_surveil', 'tool_portent_bolas_library', 'tool_praetors_grasp', 'tool_thought_scour', 'tool_light_up_stage'].includes(liveStepId)) maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'libraryMenuOpen' });
     if (libraryBatchOpen && liveStepId === 'batch_library_actions') maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'libraryBatchOpen' });
     if (tokenModal && ['deck_tokens_note', 'custom_token_note', 'tool_dragon_fodder', 'tool_goblin_template', 'tool_mirror_cell'].includes(liveStepId)) maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'tokenModalOpen' });
     if (playerStatsOpen && ['player_panel', 'dungeons_note', 'commander_note', 'tool_throne_monarch', 'tool_nadaar_dungeon', 'tool_celestus_day', 'tool_birthday_escape_ring', 'tool_vraskas_fall_poison', 'tool_attune_energy', 'tool_ezuri_experience', 'tool_chandra_emblem', 'tool_citys_blessing'].includes(liveStepId)) maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'playerStatsOpen' });
     if (revealsOpen && ['reveal_hand_note', 'tool_open_book_hex', 'tool_gitaxian_probe'].includes(liveStepId)) maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'revealsOpen' });
-  }, [isTutorialGame, stackDetailOpen, chatOpen, libraryMenuOpen, libraryBatchOpen, Boolean(tokenModal), playerStatsOpen, revealsOpen]);
+  }, [isTutorialGame, stackDetailOpen, chatOpen, recapOpen, libraryMenuOpen, libraryBatchOpen, Boolean(tokenModal), playerStatsOpen, revealsOpen, game?.log, game?.cards]);
 
   const buildTutorialCardInstance = useCallback((cardName, ownerId, zone = ZONES.HAND, controllerId = ownerId) => {
     const safeName = String(cardName || 'Tutorial Card');
@@ -6414,6 +6443,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       P2_08_cast_delver: [{ name: 'Delver of Secrets', zone: ZONES.HAND, ownerId: userId, controllerId: userId }],
       P2_09_resolve_delver: [{ name: 'Delver of Secrets', zone: 'stack_zone', ownerId: userId, controllerId: userId, stack: true }],
       B1_01_bolas_island: [{ name: 'Island', zone: ZONES.BATTLEFIELD, ownerId: opponent?.id || userId, controllerId: opponent?.id || userId }],
+      B1_02_bolas_pass: [{ name: 'Island', zone: ZONES.BATTLEFIELD, ownerId: opponent?.id || userId, controllerId: opponent?.id || userId }],
       B2_02_bolas_swamp: [{ name: 'Swamp', zone: ZONES.BATTLEFIELD, ownerId: opponent?.id || userId, controllerId: opponent?.id || userId }],
       B2_03_bolas_cast_knight: [
         { name: 'Island', zone: ZONES.BATTLEFIELD, ownerId: opponent?.id || userId, controllerId: opponent?.id || userId, tapped: true },
@@ -6484,7 +6514,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
     try {
     needs.forEach((need) => {
-      const matching = nextCards.find((card) => (card.name === need.name || card.card_faces?.some((face) => face?.name === need.name)) && card.ownerId === need.ownerId) || nextCards.find((card) => card.name === need.name || card.card_faces?.some((face) => face?.name === need.name));
+      const matching = nextCards.find((card) => (card.name === need.name || card.card_faces?.some((face) => face?.name === need.name)) && (!need.ownerId || card.ownerId === need.ownerId));
       let card = matching;
       if (!card) {
         card = buildTutorialCardInstance(need.name, need.ownerId || userId, need.zone, need.controllerId || need.ownerId || userId);
@@ -6498,8 +6528,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           changed = true;
         }
       }
-      if (card.zone !== need.zone || card.controllerId !== need.controllerId || (Number.isInteger(need.activeFaceIndex) && card.activeFaceIndex !== need.activeFaceIndex) || (need.zone === ZONES.BATTLEFIELD && card.tapped && need.tapped !== true) || (need.zone === ZONES.BATTLEFIELD && need.tapped === true && !card.tapped)) {
-        nextCards = nextCards.map((candidate) => candidate.instanceId === card.instanceId ? { ...candidate, zone: need.zone, controllerId: need.controllerId, ...(Number.isInteger(need.activeFaceIndex) ? { activeFaceIndex: need.activeFaceIndex } : {}), tapped: need.tapped === true, phasedOut: false } : candidate);
+      if (card.zone !== need.zone || card.controllerId !== need.controllerId || (need.ownerId && card.ownerId !== need.ownerId) || (Number.isInteger(need.activeFaceIndex) && card.activeFaceIndex !== need.activeFaceIndex) || (need.zone === ZONES.BATTLEFIELD && card.tapped && need.tapped !== true) || (need.zone === ZONES.BATTLEFIELD && need.tapped === true && !card.tapped)) {
+        nextCards = nextCards.map((candidate) => candidate.instanceId === card.instanceId ? { ...candidate, zone: need.zone, ownerId: need.ownerId || candidate.ownerId, controllerId: need.controllerId, ...(Number.isInteger(need.activeFaceIndex) ? { activeFaceIndex: need.activeFaceIndex } : {}), tapped: need.tapped === true, phasedOut: false } : candidate);
         card = nextCards.find((candidate) => candidate.instanceId === card.instanceId) || card;
         changed = true;
       }
@@ -6538,7 +6568,11 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     } else if (['P3_02_upkeep', 'P3_03_delver_reveal_ponder', 'P3_04_transform_delver'].includes(stepId)) {
       forcedPhase = 'upkeep';
       forcedTurnPlayerId = userId;
-    } else if (['B1_01_bolas_island', 'B1_02_bolas_pass', 'B2_02_bolas_swamp', 'B2_03_bolas_cast_knight', 'B2_04_resolve_knight', 'B2_05_bolas_pass', 'B3_01_bolas_swamp', 'B3_02_bolas_doom_blade', 'B3_03_tap_island_slip', 'B3_04_add_u_slip', 'B3_05_cast_slip', 'B3_06_resolve_slip', 'B3_07_add_counter', 'B3_08_phase_insectile', 'B3_09_fizzle_doom_blade', 'B3_10_add_phase_reminder', 'B3_11_bolas_pass', 'F4_bolas_negate_real_mana'].includes(stepId)) {
+    } else if (stepId === 'B1_02_bolas_pass') {
+      forcedPhase = 'untap';
+      forcedTurnPlayerId = userId;
+      forcedStack = [];
+    } else if (['B1_01_bolas_island', 'B2_02_bolas_swamp', 'B2_03_bolas_cast_knight', 'B2_04_resolve_knight', 'B2_05_bolas_pass', 'B3_01_bolas_swamp', 'B3_02_bolas_doom_blade', 'B3_03_tap_island_slip', 'B3_04_add_u_slip', 'B3_05_cast_slip', 'B3_06_resolve_slip', 'B3_07_add_counter', 'B3_08_phase_insectile', 'B3_09_fizzle_doom_blade', 'B3_10_add_phase_reminder', 'B3_11_bolas_pass', 'F4_bolas_negate_real_mana'].includes(stepId)) {
       forcedPhase = 'main1';
       forcedTurnPlayerId = opponentId || game.turnPlayerId;
     } else if (['P4_08_begin_combat', 'B4_02_bolas_combat'].includes(stepId)) {
@@ -6653,6 +6687,18 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     }
 
     const updates = { updatedAt: serverTimestamp() };
+    const appendTutorialLogOnce = (message, type = 'TUTORIAL_SCRIPT', category = 'tutorial') => {
+      const hasMessage = (game.log || []).some((entry) => String(entry?.message || entry?.desc || '').includes(message));
+      if (hasMessage) return;
+      updates.log = pruneLogForFirestore([...(updates.log || game.log || []), buildGameLogEntry({
+        currentGame: { ...game, phase: forcedPhase || game.phase, turnPlayerId: forcedTurnPlayerId || game.turnPlayerId },
+        playerId: opponentId || userId,
+        playerName: 'Nicol Bolas',
+        type,
+        category,
+        message
+      })]);
+    };
     const updateBolasLife = (lifeTotal, reason) => {
       const currentPlayers = Array.isArray(game.players) ? game.players : [];
       const bolasPlayer = currentPlayers.find((player) => /Nicol Bolas/i.test(player?.name || ''));
@@ -6660,6 +6706,13 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       updates.players = currentPlayers.map((player) => player.id === bolasPlayer.id ? { ...player, life: lifeTotal } : player);
       updates.log = pruneLogForFirestore([...(game.log || []), buildGameLogEntry({ currentGame: game, playerId: userId, playerName: 'Tutorial', type: 'TUTORIAL_SNAPSHOT', category: 'tutorial', message: reason })]);
     };
+    if (stepId === 'B1_01_bolas_island') {
+      updateBolasLife(17, 'Lightning Bolt resolved earlier: Nicol Bolas is at 17 life.');
+      appendTutorialLogOnce('Nicol Bolas played Island.', 'PLAY_LAND', 'card');
+    }
+    if (stepId === 'B1_02_bolas_pass') {
+      appendTutorialLogOnce('Nicol Bolas passed the turn.', 'PASS_TURN', 'priority');
+    }
     if (stepId === 'P4_13_apply_insectile_damage') updateBolasLife(13, 'Insectile Aberration deals 4 combat damage to Nicol Bolas. Nicol Bolas goes to 13.');
     if (stepId === 'F1_tap_mountain_bolt') updateBolasLife(3, 'Several turns later, Insectile, the Curse, and earlier spells have pushed Nicol Bolas to 3 life.');
     if (changed) {
@@ -6667,7 +6720,14 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       updates.stack = nextStack;
     }
     if (forcedPhase && game.phase !== forcedPhase) updates.phase = forcedPhase;
-    if (forcedTurnPlayerId && game.turnPlayerId !== forcedTurnPlayerId) updates.turnPlayerId = forcedTurnPlayerId;
+    if (forcedTurnPlayerId) {
+      if (game.turnPlayerId !== forcedTurnPlayerId) updates.turnPlayerId = forcedTurnPlayerId;
+      const forcedActiveIndex = (game.players || []).findIndex((player) => player.id === forcedTurnPlayerId);
+      if (forcedActiveIndex >= 0 && game.activePlayerIndex !== forcedActiveIndex) updates.activePlayerIndex = forcedActiveIndex;
+      if (game.priorityPlayerId !== forcedTurnPlayerId) updates.priorityPlayerId = forcedTurnPlayerId;
+      if (forcedActiveIndex >= 0 && game.priorityIndex !== forcedActiveIndex) updates.priorityIndex = forcedActiveIndex;
+      if (game.consecutivePasses) updates.consecutivePasses = 0;
+    }
     if (forcedStack) updates.stack = forcedStack;
     if (forcedCombat) updates.combat = forcedCombat;
 
@@ -7251,9 +7311,6 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
   const openChat = () => {
     setChatOpen(true);
-    maybeCompleteTutorialStep('game_log');
-    maybeCompleteTutorialStep('async_oath');
-    maybeCompleteTutorialStep('manual_toolbox_note');
     if (isSpectator) {
       setSpectatorLastSeenChatAt(Date.now());
     } else {
@@ -7263,6 +7320,11 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
   const openRecap = () => {
     setRecapOpen(true);
+    maybeCompleteTutorialStep('game_log', { detail: 'recapOpen' });
+    maybeCompleteTutorialStep('manual_toolbox_note', { detail: 'recapOpen' });
+    maybeCompleteTutorialStep('async_oath', { detail: 'recapOpen' });
+    maybeCompleteTutorialStep('B1_01_bolas_island', { detail: 'recapOpen' });
+    maybeCompleteTutorialStep('B1_02_bolas_pass', { detail: 'recapOpen' });
   };
 
   useLayoutEffect(() => {
@@ -7455,6 +7517,9 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     setAutoPassMenuOpen(false);
     if (gameId && userId && isPlayer) {
       await updateDoc(doc(db, 'games_v3', gameId), { [`autopass.${userId}`]: nextConfig });
+    }
+    if (mode === AUTO_PASS_MODE.END_OF_TURN) {
+      await maybeCompleteTutorialStep('P1_11_pass', { detail: 'autoPassUntilEndOfTurn' });
     }
   };
 
@@ -11193,8 +11258,9 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           </button>
           <button
             onClick={openRecap}
-            className="relative z-20 pointer-events-auto p-2 rounded hover:bg-slate-700 text-slate-400 hover:text-white"
-            title="Recap"
+            data-tutorial-anchor="game-log-button"
+            className={`relative z-20 pointer-events-auto p-2 rounded hover:bg-slate-700 text-slate-400 hover:text-white${getTutorialAnchorClass(currentTutorialAnchor, 'game-log-button', tutorialPulseAnchor)}`}
+            title="Game Log"
           >
             <BookOpen size={20} />
           </button>

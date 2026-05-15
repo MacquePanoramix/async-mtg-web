@@ -460,7 +460,7 @@ const TUTORIAL_DUEL_STEPS = [
   makeDuelStep({ id: 'P1_11_pass', act: 'Act 1 / Luis Turn 1 — End', title: 'Let the Turn Fall Away', requiredAction: 'Use AutoPass until end of turn, then pass priority.', exactUiAction: 'Open AutoPass, choose Until End of Turn, then tap Pass when it is your priority.', legalPreconditions: 'Main phase with stack empty after Bolt resolved and Luis has priority.', completionCondition: 'AutoPass until end of turn selected or Luis passes priority with stack empty.', showMeAnchor: 'autopass-button', storyText: TUTORIAL_STORY_TEXT.P1_11_pass, bolasLine: TUTORIAL_BOLAS_LINES.P1_11_pass }),
   makeDuelStep({ id: 'B1_01_bolas_island', act: 'Act 2 / Bolas Turn 1', title: 'Bolas Plays Island', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', sourceCard: 'Island', requiredAction: 'Inspect Bolas’s land play in the Game Log.', exactUiAction: 'Open the Game Log.', legalPreconditions: 'Bolas Turn 1 Main 1; Island is on Bolas’s battlefield.', completionCondition: 'Game Log opened and contains “Nicol Bolas played Island.”', showMeAnchor: 'game-log-button', storyText: TUTORIAL_STORY_TEXT.B1_01_bolas_island, bolasLine: TUTORIAL_BOLAS_LINES.B1_01_bolas_island }),
   makeDuelStep({ id: 'B1_02_bolas_pass', act: 'Act 2 / Bolas Turn 1', title: 'Bolas Passes', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', requiredAction: 'Open the Game Log and confirm Bolas passed the turn.', exactUiAction: 'Open the Game Log.', legalPreconditions: 'Bolas controls Island and the scripted opponent has passed the turn.', completionCondition: 'Game Log opened and contains “Nicol Bolas passed the turn.”', showMeAnchor: 'game-log-button', storyText: TUTORIAL_STORY_TEXT.B1_02_bolas_pass, bolasLine: TUTORIAL_BOLAS_LINES.B1_02_bolas_pass }),
-  makeDuelStep({ id: 'P2_02_reach_draw', act: 'Act 3 / Luis Turn 2', title: 'Let the Turn Reach Draw', phase: 'upkeep', sourceCard: 'Beginning phase', requiredAction: 'Advance from the beginning phase to the Draw step.', exactUiAction: 'Use Pass or AutoPass. Bolas will pass back automatically for the tutorial, then the game will reach Draw.', legalPreconditions: 'Luis Turn 2 is in Upkeep; Slip Out the Back remains on top of Luis’s library.', completionCondition: 'Current game phase is Draw after Luis passes and Bolas passes back for the tutorial.', showMeAnchor: 'autopass-button', storyText: TUTORIAL_STORY_TEXT.P2_02_reach_draw, bolasLine: TUTORIAL_BOLAS_LINES.P2_02_reach_draw }),
+  makeDuelStep({ id: 'P2_02_reach_draw', act: 'Act 3 / Luis Turn 2', title: 'Let the Turn Reach Draw', phase: 'untap', sourceCard: 'Beginning phase', requiredAction: 'Advance from the beginning phase to the Draw step.', exactUiAction: 'Use Pass or AutoPass to continue through the beginning phase until Draw.', legalPreconditions: 'Luis Turn 2 has begun in Untap; Slip Out the Back remains on top of Luis’s library.', completionCondition: 'Current game phase is Draw after a pass/autopass advance or the manual Draw shortcut.', showMeAnchor: 'autopass-button', storyText: TUTORIAL_STORY_TEXT.P2_02_reach_draw, bolasLine: TUTORIAL_BOLAS_LINES.P2_02_reach_draw }),
   makeDuelStep({ id: 'P2_02_draw_slip', act: 'Act 3 / Luis Turn 2', title: 'Draw Slip Out', phase: 'draw', sourceCard: 'Draw step', requiredAction: 'Draw one card: Slip Out the Back.', exactUiAction: 'Tap the blue Draw button.', legalPreconditions: 'Luis is in Draw and the top library card is Slip Out the Back.', completionCondition: 'Slip Out the Back moves from Luis’s library to Luis’s hand after the Draw action.', showMeAnchor: 'draw-button', storyText: TUTORIAL_STORY_TEXT.P2_02_draw_slip, bolasLine: TUTORIAL_BOLAS_LINES.P2_02_draw_slip }),
   makeDuelStep({ id: 'P2_03_main1', act: 'Act 3 / Luis Turn 2', title: 'Main 1', requiredAction: 'Move to Main 1.', exactUiAction: 'Use phase controls → Main 1.', legalPreconditions: 'Draw step complete.', completionCondition: 'Phase Main 1.', showMeAnchor: 'phase-controls', storyText: TUTORIAL_STORY_TEXT.P2_03_main1, bolasLine: TUTORIAL_BOLAS_LINES.P2_03_main1 }),
   makeDuelStep({ id: 'P2_04_play_island', act: 'Act 3 / Luis Turn 2', title: 'Play Island', sourceCard: 'Island', requiredAction: 'Play Island from hand.', exactUiAction: 'Tap Island → Play Land.', legalPreconditions: 'Island in hand; no land played this turn.', completionCondition: 'Island moves hand → battlefield.', showMeAnchor: 'hand-area', storyText: TUTORIAL_STORY_TEXT.P2_04_play_island, bolasLine: TUTORIAL_BOLAS_LINES.P2_04_play_island }),
@@ -5601,7 +5601,6 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const tutorialAdvanceDelayTimerRef = useRef(null);
   const g07ScriptedHandIgnoredRef = useRef(false);
   const tutorialSetupAppliedRef = useRef({ stepId: null, signature: null });
-  const scriptedTutorialBolasPassInFlightRef = useRef(false);
 
   // Chat State
   const [chatOpen, setChatOpen] = useState(false);
@@ -6045,7 +6044,6 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         targets: [],
         reveals: [],
         autopass: {},
-        tutorialScriptedActions: {},
         undoStack: [],
         combat: getEmptyCombatState(),
         updatedAt: serverTimestamp()
@@ -6191,11 +6189,21 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       ...((payload?.targetPlayerIds || []).map((targetPlayerId) => (game?.players || []).find((player) => player.id === targetPlayerId)?.name || ''))
     ].filter(Boolean);
     const stackItemForPayload = () => (game?.stack || []).find((item) => item?.id === payload?.stackItemId || item?.sourceId === payload?.stackItemId);
+    const passPriorityWouldAdvanceToPhase = (phaseId) => {
+      if (actionType !== 'PASS_PRIORITY' || (game?.stack || []).length > 0) return false;
+      const players = game?.players || [];
+      const currentPhaseIdx = PHASES.findIndex((phase) => phase.id === game?.phase);
+      if (currentPhaseIdx < 0) return false;
+      const nextPhase = PHASES[(currentPhaseIdx + 1) % PHASES.length]?.id;
+      if (!nextPhase) return false;
+      if (players.length < 2) return nextPhase === phaseId;
+      const allPassed = (Number(game?.consecutivePasses) + 1) >= players.length;
+      return allPassed && nextPhase === phaseId;
+    };
     const tutorialActionMatchesStep = () => {
       if (stepId === 'P2_02_reach_draw') {
-        // This step completes from the resulting Draw state after Luis passes
-        // and scripted Bolas passes back, not from the button tap alone.
-        return false;
+        if (actionType === 'MANUAL_SET_STEP') return payload?.phaseId === 'draw';
+        return passPriorityWouldAdvanceToPhase('draw');
       }
       if (stepId === 'P2_02_draw_slip') {
         const topLuisLibraryCard = (game?.cards || []).find((card) => card.ownerId === userId && card.zone === ZONES.LIBRARY);
@@ -6283,115 +6291,6 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     }
     return Promise.resolve(false);
   };
-
-  useEffect(() => {
-    if (!isTutorialGame || !gameId || !userId || scriptedTutorialBolasPassInFlightRef.current) return;
-    const liveStepId = (optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.stepId || 'intro';
-    if (liveStepId !== 'P2_02_reach_draw') return;
-    if (game?.phase === 'draw') return;
-    if (!['upkeep'].includes(game?.phase)) return;
-    if ((game?.stack || []).length > 0) return;
-    if (game?.tutorialScriptedActions?.bolasPassedForLuisTurn2Draw) return;
-
-    const bolasPlayer = (game?.players || []).find((player) => player?.isScriptedOpponent || /Nicol Bolas/i.test(player?.name || ''));
-    if (!bolasPlayer?.id || game?.priorityPlayerId !== bolasPlayer.id) return;
-
-    const activation = tutorialStepActivationRef.current;
-    if (!activation || activation.stepId !== 'P2_02_reach_draw') return;
-    const latestLogEntry = (game?.log || [])[(game?.log || []).length - 1] || null;
-    const luisJustPassedForStep = latestLogEntry?.type === 'PASS_PRIORITY'
-      && latestLogEntry?.playerId === userId
-      && latestLogEntry?.phase === 'upkeep'
-      && Number(latestLogEntry?.timestamp || 0) >= Number(activation.wallEnteredAt || 0);
-    if (!luisJustPassedForStep) return;
-
-    const currentSignature = `${gameId}:${game.turnNumber}:${game.phase}:${game.priorityPlayerId}:${latestLogEntry.timestamp}`;
-    scriptedTutorialBolasPassInFlightRef.current = currentSignature;
-    const turnStartEvents = [];
-    const gameRef = doc(db, 'games_v3', gameId);
-
-    runTransaction(db, async (transaction) => {
-      const snap = await transaction.get(gameRef);
-      if (!snap.exists()) return;
-      const currentGame = snap.data();
-      const currentTutorial = currentGame?.tutorial || {};
-      if (!currentGame?.isTutorial || currentTutorial?.inactive || currentTutorial?.stepId !== 'P2_02_reach_draw') return;
-      if (currentGame.phase === 'draw') return;
-      if (currentGame.phase !== 'upkeep') return;
-      if ((currentGame.stack || []).length > 0) return;
-      if (currentGame.tutorialScriptedActions?.bolasPassedForLuisTurn2Draw) return;
-
-      const currentBolasPlayer = (currentGame.players || []).find((player) => player?.isScriptedOpponent || /Nicol Bolas/i.test(player?.name || ''));
-      if (!currentBolasPlayer?.id || currentGame.priorityPlayerId !== currentBolasPlayer.id) return;
-
-      const currentLatestLogEntry = (currentGame.log || [])[(currentGame.log || []).length - 1] || null;
-      const currentLuisJustPassedForStep = currentLatestLogEntry?.type === 'PASS_PRIORITY'
-        && currentLatestLogEntry?.playerId === userId
-        && currentLatestLogEntry?.phase === 'upkeep'
-        && Number(currentLatestLogEntry?.timestamp || 0) >= Number(activation.wallEnteredAt || 0);
-      if (!currentLuisJustPassedForStep) return;
-
-      const passLogEntry = buildGameLogEntry({
-        currentGame,
-        playerId: currentBolasPlayer.id,
-        playerName: currentBolasPlayer.name || 'Nicol Bolas',
-        type: 'PASS_PRIORITY',
-        category: 'priority',
-        message: `${currentBolasPlayer.name || 'Nicol Bolas'} passed priority.`,
-        actorId: userId,
-        actorName: myPlayer?.name || displayName || 'Tutorial'
-      });
-      const currentGameWithBolasPassLog = {
-        ...currentGame,
-        log: [...(currentGame.log || []), passLogEntry]
-      };
-      const passedGame = advancePassPriorityState(currentGameWithBolasPassLog, passLogEntry, (event) => turnStartEvents.push(event));
-
-      transaction.update(gameRef, normalizeGameUpdatesForFirestore({
-        phase: passedGame.phase,
-        turnNumber: passedGame.turnNumber,
-        activePlayerIndex: passedGame.activePlayerIndex,
-        turnPlayerId: passedGame.turnPlayerId,
-        priorityIndex: passedGame.priorityIndex,
-        priorityPlayerId: passedGame.priorityPlayerId,
-        consecutivePasses: passedGame.consecutivePasses,
-        stack: passedGame.stack,
-        cards: passedGame.cards,
-        combat: passedGame.combat || getEmptyCombatState(),
-        log: passedGame.log,
-        tutorialScriptedActions: {
-          ...(currentGame.tutorialScriptedActions || {}),
-          bolasPassedForLuisTurn2Draw: true
-        },
-        updatedAt: serverTimestamp()
-      }, 'TUTORIAL_BOLAS_PASS_TO_DRAW'));
-    }).then(async () => {
-      if (turnStartEvents.length > 0) {
-        await Promise.all(turnStartEvents.map((event) => appendEvent(gameId, event)));
-      }
-    }).finally(() => {
-      scriptedTutorialBolasPassInFlightRef.current = false;
-    });
-  }, [isTutorialGame, gameId, userId, game, displayedTutorialState, myPlayer?.name, displayName]);
-
-  useEffect(() => {
-    if (!isTutorialGame || !userId) return;
-    const liveStepId = (optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.stepId || 'intro';
-    if (liveStepId !== 'P2_02_reach_draw') return;
-    if (game?.phase !== 'draw') return;
-
-    const activation = tutorialStepActivationRef.current;
-    if (!activation || activation.stepId !== 'P2_02_reach_draw') return;
-
-    const bolasPlayer = (game?.players || []).find((player) => player?.isScriptedOpponent || /Nicol Bolas/i.test(player?.name || ''));
-    const logsAfterActivation = (game?.log || []).filter((entry) => Number(entry?.timestamp || 0) >= Number(activation.wallEnteredAt || 0));
-    const luisPassedForStep = logsAfterActivation.some((entry) => entry?.type === 'PASS_PRIORITY' && entry?.playerId === userId && entry?.phase === 'upkeep');
-    const bolasPassedForStep = Boolean(game?.tutorialScriptedActions?.bolasPassedForLuisTurn2Draw)
-      || logsAfterActivation.some((entry) => entry?.type === 'PASS_PRIORITY' && entry?.playerId === bolasPlayer?.id && /Nicol Bolas/i.test(entry?.playerName || entry?.message || ''));
-    if (!luisPassedForStep || !bolasPassedForStep) return;
-
-    maybeCompleteTutorialStep('P2_02_reach_draw', { source: 'state-transition', detail: 'drawAfterScriptedBolasPass' });
-  }, [isTutorialGame, userId, game?.phase, game?.log, game?.tutorialScriptedActions, game?.players, displayedTutorialState]);
 
 
 
@@ -6758,10 +6657,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     if (['P1_01_play_mountain', 'P1_04_tap_mountain', 'P1_05_add_r', 'P1_06_open_bolt', 'P1_07_bolt_cast_target', 'P1_08_target_bolas', 'P1_09_inspect_stack', 'P1_10_resolve_bolt', 'P1_11_pass', 'P2_03_main1', 'P2_04_play_island', 'P2_05_tap_island', 'P2_06_add_u', 'P2_07_open_delver', 'P2_08_cast_delver', 'P2_09_resolve_delver', 'P2_10_pass', 'P3_06_main1', 'P3_07_play_mountain', 'P3_08_pass', 'P4_03_main1', 'P4_04_play_third_mountain', 'P4_05_cast_ponder', 'P4_06_reorder_ponder', 'P4_07_draw_ponder', 'F1_tap_mountain_bolt', 'F2_add_r', 'F3_cast_bolt_bolas', 'F5_tap_two_mountains', 'F6_add_rr', 'F7_reverberate_bolt', 'F8_resolve_reverberate', 'F9_resolve_bolt_copy_lethal', 'F10_resolve_negate_original'].includes(stepId)) {
       forcedPhase = 'main1';
       forcedTurnPlayerId = userId;
-    } else if (stepId === 'P2_02_reach_draw') {
-      forcedPhase = 'upkeep';
-      forcedTurnPlayerId = userId;
-    } else if (['P3_01_untap', 'P4_01_untap_phase_in', 'B4_01_bolas_untaps'].includes(stepId)) {
+    } else if (['P2_02_reach_draw', 'P3_01_untap', 'P4_01_untap_phase_in', 'B4_01_bolas_untaps'].includes(stepId)) {
       forcedPhase = 'untap';
       forcedTurnPlayerId = stepId === 'B4_01_bolas_untaps' ? (opponentId || game.turnPlayerId) : userId;
     } else if (stepId === 'B2_01_bolas_draw_mountain') {
@@ -14842,7 +14738,6 @@ export default function App() {
             finished: false,
             inactive: false
           },
-          tutorialScriptedActions: {},
           ...(shouldSeedExistingTutorial ? { cards: buildTutorialDuelCards(user.uid, candidateData.players?.find((p) => p?.isScriptedOpponent)?.id || `tutorial-bolas-${candidateId}`) } : {}),
           updatedAt: serverTimestamp()
         }, { path: `games_v3/${candidateId}`, purpose: 'tutorial reset' });
@@ -14919,7 +14814,6 @@ export default function App() {
       targets: [],
       reveals: [],
       autopass: {},
-      tutorialScriptedActions: {},
       undoStack: [],
       combat: getEmptyCombatState(),
       log: [buildGameLogEntry({

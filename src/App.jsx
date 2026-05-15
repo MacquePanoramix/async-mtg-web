@@ -321,8 +321,8 @@ const TUTORIAL_BOLAS_LINES = {
   P1_11_pass: 'Pass the turn. The universe exhales, and I inhale.',
   B1_01_bolas_island: 'An Island. Blue mana: the color of saying no with manners.',
   B1_02_bolas_pass: 'I pass because suspense is cheaper than mercy.',
-  P2_01_untap: 'Untap your toy empire. Even doomed things deserve posture.',
-  P2_02_draw_slip: 'Draw. Fate hands you a side door and calls it strategy.',
+  P2_02_reach_draw: 'A turn does not leap. It crawls, step by step, until the card at the top can no longer pretend it is safe.',
+  P2_02_draw_slip: 'Now draw. Fate hands you a side door and dares you to call it strategy.',
   P2_03_main1: 'Main phase. The portion where intentions become evidence.',
   P2_04_play_island: 'An Island joins you. Perhaps now your thoughts can swim.',
   P2_05_tap_island: 'Tap the Island. Blue mana prefers permission slips.',
@@ -460,8 +460,8 @@ const TUTORIAL_DUEL_STEPS = [
   makeDuelStep({ id: 'P1_11_pass', act: 'Act 1 / Luis Turn 1 — End', title: 'Let the Turn Fall Away', requiredAction: 'Use AutoPass until end of turn, then pass priority.', exactUiAction: 'Open AutoPass, choose Until End of Turn, then tap Pass when it is your priority.', legalPreconditions: 'Main phase with stack empty after Bolt resolved and Luis has priority.', completionCondition: 'AutoPass until end of turn selected or Luis passes priority with stack empty.', showMeAnchor: 'autopass-button', storyText: TUTORIAL_STORY_TEXT.P1_11_pass, bolasLine: TUTORIAL_BOLAS_LINES.P1_11_pass }),
   makeDuelStep({ id: 'B1_01_bolas_island', act: 'Act 2 / Bolas Turn 1', title: 'Bolas Plays Island', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', sourceCard: 'Island', requiredAction: 'Inspect Bolas’s land play in the Game Log.', exactUiAction: 'Open the Game Log.', legalPreconditions: 'Bolas Turn 1 Main 1; Island is on Bolas’s battlefield.', completionCondition: 'Game Log opened and contains “Nicol Bolas played Island.”', showMeAnchor: 'game-log-button', storyText: TUTORIAL_STORY_TEXT.B1_01_bolas_island, bolasLine: TUTORIAL_BOLAS_LINES.B1_01_bolas_island }),
   makeDuelStep({ id: 'B1_02_bolas_pass', act: 'Act 2 / Bolas Turn 1', title: 'Bolas Passes', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', requiredAction: 'Open the Game Log and confirm Bolas passed the turn.', exactUiAction: 'Open the Game Log.', legalPreconditions: 'Bolas controls Island and the scripted opponent has passed the turn.', completionCondition: 'Game Log opened and contains “Nicol Bolas passed the turn.”', showMeAnchor: 'game-log-button', storyText: TUTORIAL_STORY_TEXT.B1_02_bolas_pass, bolasLine: TUTORIAL_BOLAS_LINES.B1_02_bolas_pass }),
-  makeDuelStep({ id: 'P2_01_untap', act: 'Act 3 / Luis Turn 2', title: 'Untap', phase: 'untap', requiredAction: 'Set phase to Untap.', exactUiAction: 'Use phase controls → Untap.', legalPreconditions: 'Luis Turn 2 begins; Mountain untaps.', completionCondition: 'Phase is Untap.', showMeAnchor: 'phase-controls', storyText: TUTORIAL_STORY_TEXT.P2_01_untap, bolasLine: TUTORIAL_BOLAS_LINES.P2_01_untap }),
-  makeDuelStep({ id: 'P2_02_draw_slip', act: 'Act 3 / Luis Turn 2', title: 'Draw Slip Out', phase: 'draw', sourceCard: 'Draw step', requiredAction: 'Move to Draw and draw Slip Out the Back.', exactUiAction: 'Phase controls → Draw → Draw.', legalPreconditions: 'Top Luis library card is Slip Out the Back.', completionCondition: 'Slip Out the Back moves library → hand.', showMeAnchor: 'library-menu-button', storyText: TUTORIAL_STORY_TEXT.P2_02_draw_slip, bolasLine: TUTORIAL_BOLAS_LINES.P2_02_draw_slip }),
+  makeDuelStep({ id: 'P2_02_reach_draw', act: 'Act 3 / Luis Turn 2', title: 'Let the Turn Reach Draw', phase: 'untap', sourceCard: 'Beginning phase', requiredAction: 'Advance from the beginning phase to the Draw step.', exactUiAction: 'Use Pass or AutoPass to continue through the beginning phase until Draw.', legalPreconditions: 'Luis Turn 2 has begun in Untap; Slip Out the Back remains on top of Luis’s library.', completionCondition: 'Current game phase is Draw after a pass/autopass advance or the manual Draw shortcut.', showMeAnchor: 'autopass-button', storyText: TUTORIAL_STORY_TEXT.P2_02_reach_draw, bolasLine: TUTORIAL_BOLAS_LINES.P2_02_reach_draw }),
+  makeDuelStep({ id: 'P2_02_draw_slip', act: 'Act 3 / Luis Turn 2', title: 'Draw Slip Out', phase: 'draw', sourceCard: 'Draw step', requiredAction: 'Draw one card: Slip Out the Back.', exactUiAction: 'Tap the blue Draw button.', legalPreconditions: 'Luis is in Draw and the top library card is Slip Out the Back.', completionCondition: 'Slip Out the Back moves from Luis’s library to Luis’s hand after the Draw action.', showMeAnchor: 'draw-button', storyText: TUTORIAL_STORY_TEXT.P2_02_draw_slip, bolasLine: TUTORIAL_BOLAS_LINES.P2_02_draw_slip }),
   makeDuelStep({ id: 'P2_03_main1', act: 'Act 3 / Luis Turn 2', title: 'Main 1', requiredAction: 'Move to Main 1.', exactUiAction: 'Use phase controls → Main 1.', legalPreconditions: 'Draw step complete.', completionCondition: 'Phase Main 1.', showMeAnchor: 'phase-controls', storyText: TUTORIAL_STORY_TEXT.P2_03_main1, bolasLine: TUTORIAL_BOLAS_LINES.P2_03_main1 }),
   makeDuelStep({ id: 'P2_04_play_island', act: 'Act 3 / Luis Turn 2', title: 'Play Island', sourceCard: 'Island', requiredAction: 'Play Island from hand.', exactUiAction: 'Tap Island → Play Land.', legalPreconditions: 'Island in hand; no land played this turn.', completionCondition: 'Island moves hand → battlefield.', showMeAnchor: 'hand-area', storyText: TUTORIAL_STORY_TEXT.P2_04_play_island, bolasLine: TUTORIAL_BOLAS_LINES.P2_04_play_island }),
   makeDuelStep({ id: 'P2_05_tap_island', act: 'Act 3 / Luis Turn 2', title: 'Tap Island', sourceCard: 'Island', sourceEffect: '{T}: add {U}', requiredAction: 'Tap Island for {U}.', exactUiAction: 'Tap Island → Tap.', legalPreconditions: 'Island is untapped on battlefield.', completionCondition: 'Island tapped.', showMeAnchor: 'own-battlefield', storyText: TUTORIAL_STORY_TEXT.P2_05_tap_island, bolasLine: TUTORIAL_BOLAS_LINES.P2_05_tap_island }),
@@ -6140,8 +6140,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       COPY_STACK_ITEM: ['copy_stack_item', 'final_in_response', 'F8_resolve_reverberate'],
       RESOLVE_STACK_TOP: ['resolve_stack_item', 'counter_stack_item', 'cast_delver', 'final_in_response', 'P1_10_resolve_bolt', 'P2_09_resolve_delver', 'B2_04_resolve_knight', 'B3_06_resolve_slip', 'P4_05_cast_ponder', 'F8_resolve_reverberate', 'F9_resolve_bolt_copy_lethal', 'F10_resolve_negate_original'],
       COUNTER_STACK_TOP: ['counter_stack_item', 'final_in_response', 'B3_09_fizzle_doom_blade', 'F10_resolve_negate_original'],
-      PASS_PRIORITY: ['pass_priority', 'final_trial', 'async_oath', 'P1_11_pass', 'P2_10_pass', 'B2_05_bolas_pass', 'P3_08_pass', 'B3_11_bolas_pass', 'P4_15_pass', 'B4_09_bolas_pass'],
-      MANUAL_SET_STEP: payload?.phaseId === 'combat_attackers' ? ['set_attackers_phase', 'P4_09_attackers_step'] : (payload?.phaseId === 'untap' ? ['P2_01_untap', 'P3_01_untap', 'P4_01_untap_phase_in'] : (payload?.phaseId === 'upkeep' ? ['P3_02_upkeep'] : (payload?.phaseId === 'draw' ? [] : (payload?.phaseId === 'main1' ? ['P2_03_main1', 'P3_06_main1', 'P4_03_main1'] : (payload?.phaseId === 'combat_begin' ? ['P4_08_begin_combat'] : (payload?.phaseId === 'combat_end' ? ['P4_14_end_combat'] : [])))))),
+      PASS_PRIORITY: ['pass_priority', 'final_trial', 'async_oath', 'P1_11_pass', 'P2_02_reach_draw', 'P2_10_pass', 'B2_05_bolas_pass', 'P3_08_pass', 'B3_11_bolas_pass', 'P4_15_pass', 'B4_09_bolas_pass'],
+      MANUAL_SET_STEP: payload?.phaseId === 'combat_attackers' ? ['set_attackers_phase', 'P4_09_attackers_step'] : (payload?.phaseId === 'untap' ? ['P3_01_untap', 'P4_01_untap_phase_in'] : (payload?.phaseId === 'upkeep' ? ['P3_02_upkeep'] : (payload?.phaseId === 'draw' ? ['P2_02_reach_draw'] : (payload?.phaseId === 'main1' ? ['P2_03_main1', 'P3_06_main1', 'P4_03_main1'] : (payload?.phaseId === 'combat_begin' ? ['P4_08_begin_combat'] : (payload?.phaseId === 'combat_end' ? ['P4_14_end_combat'] : [])))))),
       SET_COMBAT_DAMAGE_STEP: payload?.combatDamageStep === COMBAT_DAMAGE_STEPS.FIRST_STRIKE ? ['first_strike_step', 'B4_05_first_strike_damage'] : (payload?.combatDamageStep === COMBAT_DAMAGE_STEPS.REGULAR ? ['regular_damage_step', 'P4_12_regular_damage', 'B4_08_regular_damage'] : []),
       SET_ATTACK_TARGET: ['declare_attacker_player', 'attack_planeswalker_battle_note', 'P4_10_attack_bolas'],
       TOGGLE_BLOCK_TARGET: ['declare_blocker_note', 'B4_04_block_with_llanowar'],
@@ -6189,7 +6189,26 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       ...((payload?.targetPlayerIds || []).map((targetPlayerId) => (game?.players || []).find((player) => player.id === targetPlayerId)?.name || ''))
     ].filter(Boolean);
     const stackItemForPayload = () => (game?.stack || []).find((item) => item?.id === payload?.stackItemId || item?.sourceId === payload?.stackItemId);
+    const passPriorityWouldAdvanceToPhase = (phaseId) => {
+      if (actionType !== 'PASS_PRIORITY' || (game?.stack || []).length > 0) return false;
+      const players = game?.players || [];
+      const currentPhaseIdx = PHASES.findIndex((phase) => phase.id === game?.phase);
+      if (currentPhaseIdx < 0) return false;
+      const nextPhase = PHASES[(currentPhaseIdx + 1) % PHASES.length]?.id;
+      if (!nextPhase) return false;
+      if (players.length < 2) return nextPhase === phaseId;
+      const allPassed = (Number(game?.consecutivePasses) + 1) >= players.length;
+      return allPassed && nextPhase === phaseId;
+    };
     const tutorialActionMatchesStep = () => {
+      if (stepId === 'P2_02_reach_draw') {
+        if (actionType === 'MANUAL_SET_STEP') return payload?.phaseId === 'draw';
+        return passPriorityWouldAdvanceToPhase('draw');
+      }
+      if (stepId === 'P2_02_draw_slip') {
+        const topLuisLibraryCard = (game?.cards || []).find((card) => card.ownerId === userId && card.zone === ZONES.LIBRARY);
+        return actionType === 'DRAW_CARD' && game?.phase === 'draw' && getCardDisplayName(topLuisLibraryCard) === 'Slip Out the Back';
+      }
       if (['tap_mountain_red', 'P1_04_tap_mountain', 'F1_tap_mountain_bolt', 'F5_tap_two_mountains'].includes(stepId)) {
         const card = getTutorialActionCard(payload?.cardId);
         return actionType === 'TAP_TOGGLE' && getCardDisplayName(card) === 'Mountain' && card?.zone === ZONES.BATTLEFIELD && !card?.tapped;
@@ -6501,6 +6520,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       P1_08_target_bolas: [{ name: 'Lightning Bolt', zone: ZONES.HAND, ownerId: userId, controllerId: userId }],
       P1_09_inspect_stack: [{ name: 'Lightning Bolt', zone: 'stack_zone', ownerId: userId, controllerId: userId, stack: true, targetName: 'Nicol Bolas' }],
       P1_10_resolve_bolt: [{ name: 'Lightning Bolt', zone: 'stack_zone', ownerId: userId, controllerId: userId, stack: true, targetName: 'Nicol Bolas' }],
+      P2_02_reach_draw: [{ name: 'Slip Out the Back', zone: ZONES.LIBRARY, ownerId: userId, controllerId: userId }],
+      P2_02_draw_slip: [{ name: 'Slip Out the Back', zone: ZONES.LIBRARY, ownerId: userId, controllerId: userId }],
       P2_04_play_island: [{ name: 'Island', zone: ZONES.HAND, ownerId: userId, controllerId: userId }],
       P2_05_tap_island: [{ name: 'Island', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId, tapped: false }],
       P2_06_add_u: [{ name: 'Island', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId, tapped: true }],
@@ -6615,6 +6636,18 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     });
 
     const findTutorialCard = (name, controllerId = null) => nextCards.find((card) => (card.name === name || card.card_faces?.some((face) => face?.name === name)) && (!controllerId || card.controllerId === controllerId));
+    if (['P2_02_reach_draw', 'P2_02_draw_slip'].includes(stepId)) {
+      const topLuisLibraryCard = nextCards.find((card) => card.ownerId === userId && card.zone === ZONES.LIBRARY);
+      const slipCard = nextCards.find((card) => card.ownerId === userId && card.zone === ZONES.LIBRARY && getCardDisplayName(card) === 'Slip Out the Back');
+      if (slipCard?.instanceId && topLuisLibraryCard?.instanceId !== slipCard.instanceId) {
+        nextCards = [
+          ...nextCards.filter((card) => card.instanceId !== slipCard.instanceId && !(card.ownerId === userId && card.zone === ZONES.LIBRARY)),
+          slipCard,
+          ...nextCards.filter((card) => card.instanceId !== slipCard.instanceId && card.ownerId === userId && card.zone === ZONES.LIBRARY)
+        ];
+        changed = true;
+      }
+    }
     const opponentId = opponent?.id || null;
     let forcedPhase = null;
     let forcedTurnPlayerId = null;
@@ -6624,13 +6657,16 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     if (['P1_01_play_mountain', 'P1_04_tap_mountain', 'P1_05_add_r', 'P1_06_open_bolt', 'P1_07_bolt_cast_target', 'P1_08_target_bolas', 'P1_09_inspect_stack', 'P1_10_resolve_bolt', 'P1_11_pass', 'P2_03_main1', 'P2_04_play_island', 'P2_05_tap_island', 'P2_06_add_u', 'P2_07_open_delver', 'P2_08_cast_delver', 'P2_09_resolve_delver', 'P2_10_pass', 'P3_06_main1', 'P3_07_play_mountain', 'P3_08_pass', 'P4_03_main1', 'P4_04_play_third_mountain', 'P4_05_cast_ponder', 'P4_06_reorder_ponder', 'P4_07_draw_ponder', 'F1_tap_mountain_bolt', 'F2_add_r', 'F3_cast_bolt_bolas', 'F5_tap_two_mountains', 'F6_add_rr', 'F7_reverberate_bolt', 'F8_resolve_reverberate', 'F9_resolve_bolt_copy_lethal', 'F10_resolve_negate_original'].includes(stepId)) {
       forcedPhase = 'main1';
       forcedTurnPlayerId = userId;
-    } else if (['P2_01_untap', 'P3_01_untap', 'P4_01_untap_phase_in', 'B4_01_bolas_untaps'].includes(stepId)) {
+    } else if (['P2_02_reach_draw', 'P3_01_untap', 'P4_01_untap_phase_in', 'B4_01_bolas_untaps'].includes(stepId)) {
       forcedPhase = 'untap';
       forcedTurnPlayerId = stepId === 'B4_01_bolas_untaps' ? (opponentId || game.turnPlayerId) : userId;
     } else if (stepId === 'B2_01_bolas_draw_mountain') {
       forcedPhase = 'draw';
       forcedTurnPlayerId = opponentId || game.turnPlayerId;
-    } else if (['P2_02_draw_slip', 'P3_05_draw_ponder', 'P4_02_draw_mountain'].includes(stepId)) {
+    } else if (stepId === 'P2_02_draw_slip') {
+      forcedPhase = 'draw';
+      forcedTurnPlayerId = userId;
+    } else if (['P3_05_draw_ponder', 'P4_02_draw_mountain'].includes(stepId)) {
       forcedTurnPlayerId = userId;
     } else if (['P3_02_upkeep', 'P3_03_delver_reveal_ponder', 'P3_04_transform_delver'].includes(stepId)) {
       forcedPhase = 'upkeep';

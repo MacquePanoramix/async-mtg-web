@@ -275,9 +275,7 @@ const TUTORIAL_LIBRARY_LUIS = ['Slip Out the Back', 'Mountain', 'Reverberate', '
 const TUTORIAL_OPENING_HAND_BOLAS = ['Island', 'Swamp', 'Swamp', 'Negate', 'Doom Blade', 'Knight of Malice', 'Vraska’s Fall'];
 const TUTORIAL_LIBRARY_BOLAS = ['Mountain', 'Cancel', 'Bonecrusher Giant', 'Swamp', 'Island'];
 const TUTORIAL_CARD_IMAGES_ERROR = 'Tutorial card images could not load. Try again.';
-const TUTORIAL_SCRYFALL_COLLECTION_URL = 'https://api.scryfall.com/cards/collection';
 const tutorialCardCatalogCache = new Map();
-let tutorialCardCatalogPromise = null;
 const TUTORIAL_TOOL_SOURCES = [
   ['tool_dragon_fodder', 'Act 9 / Tools — Dragon Fodder', 'Dragon Fodder tokens', 'Dragon Fodder', 'Luis taps Mountain plus another land, casts Dragon Fodder, resolves it, then opens Token Tools to create two 1/1 red Goblins.', '{1}{R}: Mountain + one land', 'Two Goblin tokens exist.', 'token-tools'],
   ['tool_goblin_template', 'Act 9 / Tools — Deck Token Template', 'Use Goblin token template', 'Dragon Fodder', 'Use the deck-derived Goblin token template created by Dragon Fodder.', 'Resolved Dragon Fodder', 'Goblin template used.', 'token-tools'],
@@ -1033,90 +1031,93 @@ const getTutorialDuelCardNames = () => [...new Set([
   ...TUTORIAL_OPENING_HAND_BOLAS,
   ...TUTORIAL_LIBRARY_BOLAS,
   ...TUTORIAL_STARTER_CARD_SEED.map((card) => card.name)
-].map(normalizeTutorialCardNameForLookup).filter((name) => name && !TUTORIAL_NON_SCRYFALL_CARD_NAMES.has(name)))];
+].map(normalizeTutorialCardNameForLookup).filter(Boolean))];
 
-const mapScryfallCollectionByTutorialName = (requestedNames = [], scryfallCards = []) => {
-  const byKey = new Map();
-  scryfallCards.forEach((card) => {
-    const compact = sanitizeScryfallCardForGame(card, { scryfallId: card.id });
-    const aliases = [card.name, compact.name, ...(Array.isArray(compact.card_faces) ? compact.card_faces.map((face) => face?.name) : [])]
-      .map(normalizeTutorialCatalogKey)
-      .filter(Boolean);
-    aliases.forEach((alias) => {
-      if (!byKey.has(alias)) byKey.set(alias, compact);
-    });
-  });
-  return new Map(requestedNames.map((name) => [normalizeTutorialCatalogKey(name), byKey.get(normalizeTutorialCatalogKey(name))]).filter(([, card]) => Boolean(card)));
+const getScryfallNamedImageUrl = (cardName = '', version = 'normal') => {
+  const lookupName = normalizeTutorialCardNameForLookup(cardName);
+  if (!lookupName || TUTORIAL_NON_SCRYFALL_CARD_NAMES.has(lookupName)) return null;
+  return `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(lookupName)}&format=image&version=${version}`;
 };
 
-const fetchTutorialCardCatalog = async () => {
-  const requiredNames = getTutorialDuelCardNames();
-  const missingNames = requiredNames.filter((name) => !tutorialCardCatalogCache.has(normalizeTutorialCatalogKey(name)));
-  if (missingNames.length === 0) return tutorialCardCatalogCache;
-  if (tutorialCardCatalogPromise) {
-    await tutorialCardCatalogPromise;
-    const stillMissing = requiredNames.filter((name) => !tutorialCardCatalogCache.has(normalizeTutorialCatalogKey(name)));
-    if (stillMissing.length === 0) return tutorialCardCatalogCache;
-  }
+const addStaticTutorialImageUris = (card = {}) => {
+  const lookupName = normalizeTutorialCardNameForLookup(card.name);
+  if (!lookupName || card.image_uri || card.image_uris || Array.isArray(card.card_faces) || TUTORIAL_NON_SCRYFALL_CARD_NAMES.has(lookupName)) return card;
+  const imageUris = {
+    small: getScryfallNamedImageUrl(lookupName, 'small'),
+    normal: getScryfallNamedImageUrl(lookupName, 'normal'),
+    large: getScryfallNamedImageUrl(lookupName, 'large')
+  };
+  return { ...card, image_uris: imageUris, image_uri: imageUris.normal };
+};
 
-  tutorialCardCatalogPromise = (async () => {
-    const response = await fetch(TUTORIAL_SCRYFALL_COLLECTION_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({ identifiers: missingNames.map((name) => ({ name })) })
+const addTutorialCatalogCard = (catalog, card = {}) => {
+  const compactCard = sanitizeScryfallCardForGame({ layout: 'normal', ...addStaticTutorialImageUris(card) }, card);
+  [compactCard.name, card.name, ...(Array.isArray(compactCard.card_faces) ? compactCard.card_faces.map((face) => face?.name) : [])]
+    .map(normalizeTutorialCatalogKey)
+    .filter(Boolean)
+    .forEach((key) => {
+      if (!catalog.has(key)) catalog.set(key, compactCard);
     });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(payload?.details || TUTORIAL_CARD_IMAGES_ERROR);
-    }
-    const notFoundNames = Array.isArray(payload?.not_found) ? payload.not_found.map((entry) => entry?.name).filter(Boolean) : [];
-    if (notFoundNames.length > 0) {
-      throw new Error(`${TUTORIAL_CARD_IMAGES_ERROR} Missing: ${notFoundNames.join(', ')}`);
-    }
-    const hydratedByKey = mapScryfallCollectionByTutorialName(missingNames, Array.isArray(payload?.data) ? payload.data : []);
-    const stillMissing = missingNames.filter((name) => !hydratedByKey.has(normalizeTutorialCatalogKey(name)));
-    if (stillMissing.length > 0) {
-      throw new Error(`${TUTORIAL_CARD_IMAGES_ERROR} Missing: ${stillMissing.join(', ')}`);
-    }
-    hydratedByKey.forEach((card, key) => tutorialCardCatalogCache.set(key, card));
-  })();
+};
 
-  try {
-    await tutorialCardCatalogPromise;
-  } finally {
-    tutorialCardCatalogPromise = null;
-  }
+const buildStaticTutorialCardCatalog = () => {
+  const catalog = new Map();
+  TUTORIAL_STARTER_CARD_SEED.forEach((card) => addTutorialCatalogCard(catalog, card));
+  getTutorialDuelCardNames().forEach((name) => {
+    if (catalog.has(normalizeTutorialCatalogKey(name))) return;
+    console.warn(`[Tutorial hydration] missing card: ${name}`);
+    addTutorialCatalogCard(catalog, getTutorialSeedByName(name));
+  });
+  return catalog;
+};
+
+const seedTutorialCardCatalogCache = () => {
+  if (tutorialCardCatalogCache.size > 0) return tutorialCardCatalogCache;
+  buildStaticTutorialCardCatalog().forEach((card, key) => tutorialCardCatalogCache.set(key, card));
   return tutorialCardCatalogCache;
 };
 
-const buildTutorialCardsFromDecklist = (deckEntries = [], catalog = tutorialCardCatalogCache) => deckEntries.map((entry) => {
-  const lookupName = normalizeTutorialCardNameForLookup(entry.name);
-  const hydratedCard = catalog.get(normalizeTutorialCatalogKey(lookupName));
-  if (!hydratedCard) throw new Error(`${TUTORIAL_CARD_IMAGES_ERROR} Missing: ${lookupName}`);
-  return sanitizeScryfallCardForGame(hydratedCard, {
-    id: `${entry.idPrefix}-${lookupName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${entry.orderIndex}`,
-    scryfallId: hydratedCard.scryfallId || hydratedCard.id,
-    instanceId: generateCardId(),
-    ownerId: entry.ownerId,
-    controllerId: entry.controllerId,
-    zone: entry.zone,
-    tapped: false,
-    counters: {},
-    tempDamage: 0,
-    faceDown: false,
-    x: 5 + (entry.orderIndex * 5),
-    y: 5
+const fetchTutorialCardCatalog = async () => seedTutorialCardCatalogCache();
+
+const getTutorialCatalogCard = (catalog, lookupName) => {
+  const catalogCard = catalog.get(normalizeTutorialCatalogKey(lookupName));
+  if (catalogCard) {
+    console.debug(`[Tutorial hydration] loaded static catalog card: ${lookupName}`);
+    return catalogCard;
+  }
+  console.warn(`[Tutorial hydration] missing card: ${lookupName}`);
+  const fallbackCard = sanitizeScryfallCardForGame({ layout: 'normal', ...addStaticTutorialImageUris(getTutorialSeedByName(lookupName)) });
+  console.warn(`[Tutorial hydration] used fallback for: ${lookupName}`);
+  return fallbackCard;
+};
+
+const buildTutorialCardsFromDecklist = (deckEntries = [], catalog = tutorialCardCatalogCache) => {
+  if (!Array.isArray(deckEntries) || deckEntries.length === 0) throw new Error('Tutorial decklist is empty.');
+  return deckEntries.map((entry) => {
+    const lookupName = normalizeTutorialCardNameForLookup(entry.name);
+    const hydratedCard = getTutorialCatalogCard(catalog, lookupName);
+    return sanitizeScryfallCardForGame(hydratedCard, {
+      id: `${entry.idPrefix}-${lookupName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${entry.orderIndex}`,
+      scryfallId: hydratedCard.scryfallId || hydratedCard.id,
+      instanceId: generateCardId(),
+      ownerId: entry.ownerId,
+      controllerId: entry.controllerId,
+      zone: entry.zone,
+      tapped: false,
+      counters: {},
+      tempDamage: 0,
+      faceDown: false,
+      x: 5 + (entry.orderIndex * 5),
+      y: 5
+    });
   });
-});
+};
 
 const hydrateTutorialDuelCards = async (playerId, bolasId) => {
-  try {
-    const catalog = await fetchTutorialCardCatalog();
-    return buildTutorialCardsFromDecklist(getTutorialDuelDeckEntries(playerId, bolasId), catalog);
-  } catch (error) {
-    console.error('Tutorial card hydration failed', error);
-    throw new Error(TUTORIAL_CARD_IMAGES_ERROR);
-  }
+  const catalog = await fetchTutorialCardCatalog();
+  const cards = buildTutorialCardsFromDecklist(getTutorialDuelDeckEntries(playerId, bolasId), catalog);
+  if (cards.length === 0) throw new Error(TUTORIAL_CARD_IMAGES_ERROR);
+  return cards;
 };
 
 

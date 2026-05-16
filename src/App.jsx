@@ -462,7 +462,7 @@ const TUTORIAL_DUEL_STEPS = [
   makeDuelStep({ id: 'B1_02_bolas_pass', act: 'Act 2 / Bolas Turn 1', title: 'Bolas Passes', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', requiredAction: 'Open the Game Log and confirm Bolas passed the turn.', exactUiAction: 'Open the Game Log.', legalPreconditions: 'Bolas controls Island and the scripted opponent has passed the turn.', completionCondition: 'Game Log opened and contains “Nicol Bolas passed the turn.”', showMeAnchor: 'game-log-button', storyText: TUTORIAL_STORY_TEXT.B1_02_bolas_pass, bolasLine: TUTORIAL_BOLAS_LINES.B1_02_bolas_pass }),
   makeDuelStep({ id: 'P2_02_reach_draw', act: 'Act 3 / Luis Turn 2', title: 'Let the Turn Reach Draw', phase: 'upkeep', sourceCard: 'Beginning phase', requiredAction: 'Advance from Upkeep to the Draw step.', exactUiAction: 'Tap Pass or use AutoPass. Bolas will pass back automatically for this tutorial, then the game will reach Draw.', legalPreconditions: 'Luis Turn 2 is in Upkeep; Slip Out the Back remains on top of Luis’s library.', completionCondition: 'Current game phase is Draw after Luis passes priority and Nicol Bolas passes back automatically.', showMeAnchor: 'autopass-button', storyText: TUTORIAL_STORY_TEXT.P2_02_reach_draw, bolasLine: TUTORIAL_BOLAS_LINES.P2_02_reach_draw }),
   makeDuelStep({ id: 'P2_02_draw_slip', act: 'Act 3 / Luis Turn 2', title: 'Draw Slip Out', phase: 'draw', sourceCard: 'Draw step', requiredAction: 'Draw one card: Slip Out the Back.', exactUiAction: 'Tap the blue Draw button.', legalPreconditions: 'Luis is in Draw and the top library card is Slip Out the Back.', completionCondition: 'Slip Out the Back moves from Luis’s library to Luis’s hand after the Draw action.', showMeAnchor: 'draw-button', storyText: TUTORIAL_STORY_TEXT.P2_02_draw_slip, bolasLine: TUTORIAL_BOLAS_LINES.P2_02_draw_slip }),
-  makeDuelStep({ id: 'P2_03_main1', act: 'Act 3 / Luis Turn 2', title: 'Main 1', requiredAction: 'Move to Main 1.', exactUiAction: 'Use phase controls → Main 1.', legalPreconditions: 'Draw step complete.', completionCondition: 'Phase Main 1.', showMeAnchor: 'phase-controls', storyText: TUTORIAL_STORY_TEXT.P2_03_main1, bolasLine: TUTORIAL_BOLAS_LINES.P2_03_main1 }),
+  makeDuelStep({ id: 'P2_03_main1', act: 'Act 3 / Luis Turn 2', title: 'Let the Turn Reach Main 1', requiredAction: 'Advance from Draw to Main 1.', exactUiAction: 'Use Pass or AutoPass. Bolas will pass back automatically for this tutorial, then the game will reach Main 1.', legalPreconditions: 'Luis Turn 2 is in Draw with the stack empty and Luis has priority.', completionCondition: 'Current game phase is Main 1 after Luis passes priority and Nicol Bolas passes back automatically.', showMeAnchor: 'autopass-button', storyText: TUTORIAL_STORY_TEXT.P2_03_main1, bolasLine: TUTORIAL_BOLAS_LINES.P2_03_main1 }),
   makeDuelStep({ id: 'P2_04_play_island', act: 'Act 3 / Luis Turn 2', title: 'Play Island', sourceCard: 'Island', requiredAction: 'Play Island from hand.', exactUiAction: 'Tap Island → Play Land.', legalPreconditions: 'Island in hand; no land played this turn.', completionCondition: 'Island moves hand → battlefield.', showMeAnchor: 'hand-area', storyText: TUTORIAL_STORY_TEXT.P2_04_play_island, bolasLine: TUTORIAL_BOLAS_LINES.P2_04_play_island }),
   makeDuelStep({ id: 'P2_05_tap_island', act: 'Act 3 / Luis Turn 2', title: 'Tap Island', sourceCard: 'Island', sourceEffect: '{T}: add {U}', requiredAction: 'Tap Island for {U}.', exactUiAction: 'Tap Island → Tap.', legalPreconditions: 'Island is untapped on battlefield.', completionCondition: 'Island tapped.', showMeAnchor: 'own-battlefield', storyText: TUTORIAL_STORY_TEXT.P2_05_tap_island, bolasLine: TUTORIAL_BOLAS_LINES.P2_05_tap_island }),
   makeDuelStep({ id: 'P2_06_add_u', act: 'Act 3 / Luis Turn 2', title: 'Add Blue Mana', sourceCard: 'Island', requiredAction: 'Add {U} to mana pool.', exactUiAction: 'Open Player Counters & Statuses → Mana Pool → + beside U.', manaPayment: 'Luis mana pool U1.', legalPreconditions: 'Island is tapped as the visible blue source.', completionCondition: 'Luis mana pool has U1.', showMeAnchor: 'mana-pool-panel', storyText: TUTORIAL_STORY_TEXT.P2_06_add_u, bolasLine: TUTORIAL_BOLAS_LINES.P2_06_add_u }),
@@ -475,12 +475,12 @@ const TUTORIAL_DUEL_STEPS = [
   makeDuelStep({ id: 'B2_03_bolas_cast_knight', act: 'Act 4 / Bolas Turn 2', title: 'Bolas Casts Knight', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', sourceCard: 'Knight of Malice', requiredAction: 'Inspect Knight of Malice on stack.', exactUiAction: 'Open Stack and inspect Knight.', manaPayment: 'Bolas taps Swamp for {B} and Island for {1}.', legalPreconditions: 'Knight in Bolas hand; Island and Swamp untapped.', completionCondition: 'Stack opened / Knight inspected.', showMeAnchor: 'stack-button', storyText: TUTORIAL_STORY_TEXT.B2_03_bolas_cast_knight, bolasLine: TUTORIAL_BOLAS_LINES.B2_03_bolas_cast_knight }),
   makeDuelStep({ id: 'B2_04_resolve_knight', act: 'Act 4 / Bolas Turn 2', title: 'Resolve Knight', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', sourceCard: 'Knight of Malice', requiredAction: 'Resolve Knight of Malice.', exactUiAction: 'Resolve top stack item.', legalPreconditions: 'Knight is on stack.', completionCondition: 'Knight on Bolas battlefield and stack empty.', showMeAnchor: 'stack-panel', storyText: TUTORIAL_STORY_TEXT.B2_04_resolve_knight, bolasLine: TUTORIAL_BOLAS_LINES.B2_04_resolve_knight }),
   makeDuelStep({ id: 'B2_05_bolas_pass', act: 'Act 4 / Bolas Turn 2', title: 'Bolas Passes', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', requiredAction: 'Tap Pass.', exactUiAction: 'Tap Pass.', legalPreconditions: 'Stack empty.', completionCondition: 'Pass tapped.', showMeAnchor: 'pass-button', storyText: TUTORIAL_STORY_TEXT.B2_05_bolas_pass, bolasLine: TUTORIAL_BOLAS_LINES.B2_05_bolas_pass }),
-  makeDuelStep({ id: 'P3_01_untap', act: 'Act 5 / Luis Turn 3', title: 'Untap', phase: 'untap', requiredAction: 'Move to Untap.', exactUiAction: 'Use phase controls → Untap.', legalPreconditions: 'Luis untaps Mountain and Island.', completionCondition: 'Phase Untap.', showMeAnchor: 'phase-controls', storyText: TUTORIAL_STORY_TEXT.P3_01_untap, bolasLine: TUTORIAL_BOLAS_LINES.P3_01_untap }),
-  makeDuelStep({ id: 'P3_02_upkeep', act: 'Act 5 / Luis Turn 3', title: 'Upkeep', phase: 'upkeep', requiredAction: 'Move to Upkeep.', exactUiAction: 'Use phase controls → Upkeep.', legalPreconditions: 'Delver trigger happens at upkeep.', completionCondition: 'Phase Upkeep.', showMeAnchor: 'phase-controls', storyText: TUTORIAL_STORY_TEXT.P3_02_upkeep, bolasLine: TUTORIAL_BOLAS_LINES.P3_02_upkeep }),
+  makeDuelStep({ id: 'P3_01_untap', act: 'Act 5 / Luis Turn 3', title: 'Untap Snapshot', phase: 'untap', requiredAction: 'Confirm Luis has reached Untap.', exactUiAction: 'Inspect your battlefield and confirm your permanents are untapped.', legalPreconditions: 'Luis Turn 3 has reached Untap.', completionCondition: 'Own battlefield inspected during Untap.', showMeAnchor: 'own-battlefield', storyText: TUTORIAL_STORY_TEXT.P3_01_untap, bolasLine: TUTORIAL_BOLAS_LINES.P3_01_untap }),
+  makeDuelStep({ id: 'P3_02_upkeep', act: 'Act 5 / Luis Turn 3', title: 'Let Upkeep Arrive', phase: 'upkeep', requiredAction: 'Advance to Upkeep.', exactUiAction: 'Use Pass or AutoPass to continue until Upkeep.', legalPreconditions: 'Delver trigger happens at upkeep.', completionCondition: 'Current game phase is Upkeep after a Pass or AutoPass advance.', showMeAnchor: 'autopass-button', storyText: TUTORIAL_STORY_TEXT.P3_02_upkeep, bolasLine: TUTORIAL_BOLAS_LINES.P3_02_upkeep }),
   makeDuelStep({ id: 'P3_03_delver_reveal_ponder', act: 'Act 5 / Luis Turn 3', title: 'Reveal Ponder', phase: 'upkeep', sourceCard: 'Delver of Secrets', sourceEffect: 'upkeep reveal trigger', requiredAction: 'Reveal top card for Delver.', exactUiAction: 'Open Library Tools → Reveal top 1.', legalPreconditions: 'Top card is Ponder, a sorcery.', completionCondition: 'Ponder revealed from top library.', showMeAnchor: 'library-menu-button', storyText: TUTORIAL_STORY_TEXT.P3_03_delver_reveal_ponder, bolasLine: TUTORIAL_BOLAS_LINES.P3_03_delver_reveal_ponder }),
   makeDuelStep({ id: 'P3_04_transform_delver', act: 'Act 5 / Luis Turn 3', title: 'Transform Delver', phase: 'upkeep', sourceCard: 'Delver of Secrets', requiredAction: 'Transform Delver into Insectile Aberration.', exactUiAction: 'Open Delver detail → Transform / switch face.', legalPreconditions: 'Ponder was revealed for Delver trigger.', completionCondition: 'Delver face is Insectile Aberration.', showMeAnchor: 'card-detail', storyText: TUTORIAL_STORY_TEXT.P3_04_transform_delver, bolasLine: TUTORIAL_BOLAS_LINES.P3_04_transform_delver }),
-  makeDuelStep({ id: 'P3_05_draw_ponder', act: 'Act 5 / Luis Turn 3', title: 'Draw Ponder', phase: 'draw', requiredAction: 'Move to Draw and draw Ponder.', exactUiAction: 'Phase → Draw → Draw.', legalPreconditions: 'Ponder remains on top after Delver reveal.', completionCondition: 'Ponder moves library → hand.', showMeAnchor: 'library-menu-button', storyText: TUTORIAL_STORY_TEXT.P3_05_draw_ponder, bolasLine: TUTORIAL_BOLAS_LINES.P3_05_draw_ponder }),
-  makeDuelStep({ id: 'P3_06_main1', act: 'Act 5 / Luis Turn 3', title: 'Main 1', requiredAction: 'Move to Main 1.', exactUiAction: 'Phase controls → Main 1.', legalPreconditions: 'Draw step complete.', completionCondition: 'Phase Main 1.', showMeAnchor: 'phase-controls', storyText: TUTORIAL_STORY_TEXT.P3_06_main1, bolasLine: TUTORIAL_BOLAS_LINES.P3_06_main1 }),
+  makeDuelStep({ id: 'P3_05_draw_ponder', act: 'Act 5 / Luis Turn 3', title: 'Draw Ponder', phase: 'draw', requiredAction: 'Advance to Draw, then draw Ponder.', exactUiAction: 'Use Pass or AutoPass to continue until Draw, then tap the blue Draw button.', legalPreconditions: 'Ponder remains on top after Delver reveal.', completionCondition: 'Ponder moves library → hand.', showMeAnchor: 'library-menu-button', storyText: TUTORIAL_STORY_TEXT.P3_05_draw_ponder, bolasLine: TUTORIAL_BOLAS_LINES.P3_05_draw_ponder }),
+  makeDuelStep({ id: 'P3_06_main1', act: 'Act 5 / Luis Turn 3', title: 'Let the Turn Reach Main 1', requiredAction: 'Advance to Main 1.', exactUiAction: 'Use Pass or AutoPass to continue until Main 1.', legalPreconditions: 'Draw step complete and stack empty.', completionCondition: 'Current game phase is Main 1 after a Pass or AutoPass advance.', showMeAnchor: 'autopass-button', storyText: TUTORIAL_STORY_TEXT.P3_06_main1, bolasLine: TUTORIAL_BOLAS_LINES.P3_06_main1 }),
   makeDuelStep({ id: 'P3_07_play_mountain', act: 'Act 5 / Luis Turn 3', title: 'Play Second Mountain', sourceCard: 'Mountain', requiredAction: 'Play second Mountain.', exactUiAction: 'Tap Mountain → Play Land.', legalPreconditions: 'Second Mountain in hand; keep Island untapped for Slip Out next turn.', completionCondition: 'Second Mountain on battlefield.', showMeAnchor: 'hand-area', storyText: TUTORIAL_STORY_TEXT.P3_07_play_mountain, bolasLine: TUTORIAL_BOLAS_LINES.P3_07_play_mountain }),
   makeDuelStep({ id: 'P3_08_pass', act: 'Act 5 / Luis Turn 3', title: 'Pass Without Ponder', requiredAction: 'Pass.', exactUiAction: 'Tap Pass.', legalPreconditions: 'Island remains untapped; Ponder stays in hand.', completionCondition: 'Pass tapped.', showMeAnchor: 'pass-button', storyText: TUTORIAL_STORY_TEXT.P3_08_pass, bolasLine: TUTORIAL_BOLAS_LINES.P3_08_pass }),
   makeDuelStep({ id: 'B3_01_bolas_swamp', act: 'Act 6 / Bolas Turn 3', title: 'Bolas Plays Second Swamp', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', sourceCard: 'Swamp', requiredAction: 'Inspect Bolas land play.', exactUiAction: 'Open the Game Log.', legalPreconditions: 'Bolas untaps Island and Swamp, then plays second Swamp.', completionCondition: 'Game Log opened.', showMeAnchor: 'game-log-button', storyText: TUTORIAL_STORY_TEXT.B3_01_bolas_swamp, bolasLine: TUTORIAL_BOLAS_LINES.B3_01_bolas_swamp }),
@@ -494,20 +494,20 @@ const TUTORIAL_DUEL_STEPS = [
   makeDuelStep({ id: 'B3_09_fizzle_doom_blade', act: 'Act 6 / Bolas Turn 3', title: 'Fizzle Doom Blade', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', sourceCard: 'Doom Blade', requiredAction: 'Counter/fizzle Doom Blade.', exactUiAction: 'Open stack → Counter/Fizzle Doom Blade.', legalPreconditions: 'Doom Blade target is phased out and illegal.', completionCondition: 'Doom Blade leaves stack.', showMeAnchor: 'stack-panel', storyText: TUTORIAL_STORY_TEXT.B3_09_fizzle_doom_blade, bolasLine: TUTORIAL_BOLAS_LINES.B3_09_fizzle_doom_blade }),
   makeDuelStep({ id: 'B3_10_add_phase_reminder', act: 'Act 6 / Bolas Turn 3', title: 'Add Phasing Reminder', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', sourceCard: 'Slip Out the Back', requiredAction: 'Add reminder “Phased out — returns at your next untap.”', exactUiAction: 'Open Insectile → Add Reminder.', legalPreconditions: 'Insectile is phased out.', completionCondition: 'Reminder added.', showMeAnchor: 'card-detail', storyText: TUTORIAL_STORY_TEXT.B3_10_add_phase_reminder, bolasLine: TUTORIAL_BOLAS_LINES.B3_10_add_phase_reminder }),
   makeDuelStep({ id: 'B3_11_bolas_pass', act: 'Act 6 / Bolas Turn 3', title: 'Bolas Passes', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', requiredAction: 'Tap Pass.', exactUiAction: 'Tap Pass.', legalPreconditions: 'Stack empty after Doom Blade fizzles.', completionCondition: 'Pass tapped.', showMeAnchor: 'pass-button', storyText: TUTORIAL_STORY_TEXT.B3_11_bolas_pass, bolasLine: TUTORIAL_BOLAS_LINES.B3_11_bolas_pass }),
-  makeDuelStep({ id: 'P4_01_untap_phase_in', act: 'Act 7 / Luis Turn 4', title: 'Untap and Phase In', phase: 'untap', sourceCard: 'Phasing rules', requiredAction: 'Move to Untap and phase Insectile back in.', exactUiAction: 'Phase → Untap; open Insectile → toggle Phase Out off if needed.', legalPreconditions: 'Phased-out permanents phase in during their controller’s untap.', completionCondition: 'Insectile is phased in.', showMeAnchor: 'phase-controls', storyText: TUTORIAL_STORY_TEXT.P4_01_untap_phase_in, bolasLine: TUTORIAL_BOLAS_LINES.P4_01_untap_phase_in }),
-  makeDuelStep({ id: 'P4_02_draw_mountain', act: 'Act 7 / Luis Turn 4', title: 'Draw Mountain', phase: 'draw', requiredAction: 'Move to Draw and draw.', exactUiAction: 'Phase → Draw → Draw.', legalPreconditions: 'Expected draw is Mountain.', completionCondition: 'Draw action.', showMeAnchor: 'library-menu-button', storyText: TUTORIAL_STORY_TEXT.P4_02_draw_mountain, bolasLine: TUTORIAL_BOLAS_LINES.P4_02_draw_mountain }),
-  makeDuelStep({ id: 'P4_03_main1', act: 'Act 7 / Luis Turn 4', title: 'Main 1', requiredAction: 'Move to Main 1.', exactUiAction: 'Phase → Main 1.', legalPreconditions: 'Draw complete.', completionCondition: 'Phase Main 1.', showMeAnchor: 'phase-controls', storyText: TUTORIAL_STORY_TEXT.P4_03_main1, bolasLine: TUTORIAL_BOLAS_LINES.P4_03_main1 }),
+  makeDuelStep({ id: 'P4_01_untap_phase_in', act: 'Act 7 / Luis Turn 4', title: 'Untap and Phase In', phase: 'untap', sourceCard: 'Phasing rules', requiredAction: 'Move to Untap and phase Insectile back in.', exactUiAction: 'Manual shortcut: use phase controls to set Untap, then open Insectile and toggle Phase Out off if needed.', legalPreconditions: 'Phased-out permanents phase in during their controller’s untap.', completionCondition: 'Insectile is phased in.', showMeAnchor: 'phase-controls', storyText: TUTORIAL_STORY_TEXT.P4_01_untap_phase_in, bolasLine: TUTORIAL_BOLAS_LINES.P4_01_untap_phase_in }),
+  makeDuelStep({ id: 'P4_02_draw_mountain', act: 'Act 7 / Luis Turn 4', title: 'Draw Mountain', phase: 'draw', requiredAction: 'Advance to Draw, then draw.', exactUiAction: 'Use Pass or AutoPass to continue until Draw, then tap the blue Draw button.', legalPreconditions: 'Expected draw is Mountain.', completionCondition: 'Draw action.', showMeAnchor: 'library-menu-button', storyText: TUTORIAL_STORY_TEXT.P4_02_draw_mountain, bolasLine: TUTORIAL_BOLAS_LINES.P4_02_draw_mountain }),
+  makeDuelStep({ id: 'P4_03_main1', act: 'Act 7 / Luis Turn 4', title: 'Let the Turn Reach Main 1', requiredAction: 'Advance to Main 1.', exactUiAction: 'Use Pass or AutoPass to continue until Main 1.', legalPreconditions: 'Draw complete and stack empty.', completionCondition: 'Current game phase is Main 1 after a Pass or AutoPass advance.', showMeAnchor: 'autopass-button', storyText: TUTORIAL_STORY_TEXT.P4_03_main1, bolasLine: TUTORIAL_BOLAS_LINES.P4_03_main1 }),
   makeDuelStep({ id: 'P4_04_play_third_mountain', act: 'Act 7 / Luis Turn 4', title: 'Play Third Mountain', sourceCard: 'Mountain', requiredAction: 'Play third Mountain.', exactUiAction: 'Tap Mountain → Play Land.', legalPreconditions: 'Mountain in hand.', completionCondition: 'Third Mountain on battlefield.', showMeAnchor: 'hand-area', storyText: TUTORIAL_STORY_TEXT.P4_04_play_third_mountain, bolasLine: TUTORIAL_BOLAS_LINES.P4_04_play_third_mountain }),
   makeDuelStep({ id: 'P4_05_cast_ponder', act: 'Act 7 / Luis Turn 4', title: 'Cast Ponder', sourceCard: 'Ponder', requiredAction: 'Tap Island, add U, cast Ponder, resolve Ponder.', exactUiAction: 'Tap Island → +U → open Ponder → Cast Spell → Resolve.', manaPayment: '{U}: Island.', legalPreconditions: 'Ponder in hand; Island available.', completionCondition: 'Ponder resolved.', showMeAnchor: 'hand-area', storyText: TUTORIAL_STORY_TEXT.P4_05_cast_ponder, bolasLine: TUTORIAL_BOLAS_LINES.P4_05_cast_ponder }),
   makeDuelStep({ id: 'P4_06_reorder_ponder', act: 'Act 7 / Luis Turn 4', title: 'Reorder Top Cards', sourceCard: 'Ponder', requiredAction: 'Reorder your top cards.', exactUiAction: 'Open Library Tools → Reorder Top.', legalPreconditions: 'Ponder resolved and allows top-card manipulation.', completionCondition: 'Top cards reordered.', showMeAnchor: 'library-menu-button', storyText: TUTORIAL_STORY_TEXT.P4_06_reorder_ponder, bolasLine: TUTORIAL_BOLAS_LINES.P4_06_reorder_ponder }),
   makeDuelStep({ id: 'P4_07_draw_ponder', act: 'Act 7 / Luis Turn 4', title: 'Draw from Ponder', sourceCard: 'Ponder', requiredAction: 'Draw one card from Ponder.', exactUiAction: 'Use Draw.', legalPreconditions: 'Ponder reorder completed.', completionCondition: 'Draw action.', showMeAnchor: 'library-menu-button', storyText: TUTORIAL_STORY_TEXT.P4_07_draw_ponder, bolasLine: TUTORIAL_BOLAS_LINES.P4_07_draw_ponder }),
-  makeDuelStep({ id: 'P4_08_begin_combat', act: 'Act 7 / Luis Turn 4', title: 'Beginning of Combat', phase: 'combat_begin', requiredAction: 'Move to Beginning of Combat.', exactUiAction: 'Phase → Beginning of Combat.', legalPreconditions: 'Main 1 complete and stack empty.', completionCondition: 'Phase Begin Combat.', showMeAnchor: 'phase-controls', storyText: TUTORIAL_STORY_TEXT.P4_08_begin_combat, bolasLine: TUTORIAL_BOLAS_LINES.P4_08_begin_combat }),
-  makeDuelStep({ id: 'P4_09_attackers_step', act: 'Act 7 / Luis Turn 4', title: 'Attackers Step', phase: 'combat_attackers', requiredAction: 'Move to Attackers step.', exactUiAction: 'Phase → Declare Attackers.', legalPreconditions: 'Beginning of Combat complete.', completionCondition: 'Phase Attackers.', showMeAnchor: 'phase-controls', storyText: TUTORIAL_STORY_TEXT.P4_09_attackers_step, bolasLine: TUTORIAL_BOLAS_LINES.P4_09_attackers_step }),
+  makeDuelStep({ id: 'P4_08_begin_combat', act: 'Act 7 / Luis Turn 4', title: 'Let Combat Begin', phase: 'combat_begin', requiredAction: 'Advance to Begin Combat.', exactUiAction: 'Use Pass or AutoPass to continue until Begin Combat.', legalPreconditions: 'Main 1 complete and stack empty.', completionCondition: 'Current game phase is Begin Combat after a Pass or AutoPass advance.', showMeAnchor: 'autopass-button', storyText: TUTORIAL_STORY_TEXT.P4_08_begin_combat, bolasLine: TUTORIAL_BOLAS_LINES.P4_08_begin_combat }),
+  makeDuelStep({ id: 'P4_09_attackers_step', act: 'Act 7 / Luis Turn 4', title: 'Let Attackers Arrive', phase: 'combat_attackers', requiredAction: 'Advance to Attackers.', exactUiAction: 'Use Pass or AutoPass to continue until Attackers.', legalPreconditions: 'Beginning of Combat complete and stack empty.', completionCondition: 'Current game phase is Attackers after a Pass or AutoPass advance.', showMeAnchor: 'autopass-button', storyText: TUTORIAL_STORY_TEXT.P4_09_attackers_step, bolasLine: TUTORIAL_BOLAS_LINES.P4_09_attackers_step }),
   makeDuelStep({ id: 'P4_10_attack_bolas', act: 'Act 7 / Luis Turn 4', title: 'Attack Bolas with Insectile', phase: 'combat_attackers', sourceCard: 'Insectile Aberration', requiredAction: 'Declare Insectile attacking Nicol Bolas.', exactUiAction: 'Tap Insectile → Attack → choose Nicol Bolas.', legalPreconditions: 'Insectile has been controlled since previous turn, is phased in, has flying, and Knight cannot block flying.', completionCondition: 'Insectile marked attacking Bolas.', showMeAnchor: 'own-battlefield', storyText: TUTORIAL_STORY_TEXT.P4_10_attack_bolas, bolasLine: TUTORIAL_BOLAS_LINES.P4_10_attack_bolas }),
   makeDuelStep({ id: 'P4_11_combat_summary', act: 'Act 7 / Luis Turn 4', title: 'Inspect Combat Summary', phase: 'combat_attackers', sourceCard: 'Combat assignment', requiredAction: 'Open Combat Summary.', exactUiAction: 'Open Combat Summary.', legalPreconditions: 'Insectile attacking Bolas; no blockers.', completionCondition: 'Combat Summary opened.', showMeAnchor: 'combat-summary', storyText: TUTORIAL_STORY_TEXT.P4_11_combat_summary, bolasLine: TUTORIAL_BOLAS_LINES.P4_11_combat_summary }),
   makeDuelStep({ id: 'P4_12_regular_damage', act: 'Act 7 / Luis Turn 4', title: 'Regular Combat Damage', phase: 'combat_damage', sourceCard: 'Combat rules', requiredAction: 'Set Regular Combat Damage.', exactUiAction: 'Set damage step to Regular Combat Damage.', legalPreconditions: 'No first/double strike combatants in this combat.', completionCondition: 'Regular combat damage active.', showMeAnchor: 'combat-summary', storyText: TUTORIAL_STORY_TEXT.P4_12_regular_damage, bolasLine: TUTORIAL_BOLAS_LINES.P4_12_regular_damage }),
   makeDuelStep({ id: 'P4_13_apply_insectile_damage', act: 'Act 7 / Luis Turn 4', title: 'Apply Combat Damage', phase: 'combat_damage', sourceCard: 'Insectile Aberration', requiredAction: 'Apply Insectile combat damage to Nicol Bolas.', exactUiAction: 'Use the guided damage application / adjust Bolas life to 13.', legalPreconditions: 'Insectile is 4 power because of +1/+1 counter; unblocked.', completionCondition: 'Bolas life is 13.', showMeAnchor: 'opponent-player-target', expectedLifeTotals: { bolasBefore: 17, bolasAfter: 13 }, expectedDamage: 'Insectile Aberration deals 4 combat damage to Nicol Bolas.', storyText: TUTORIAL_STORY_TEXT.P4_13_apply_insectile_damage, bolasLine: TUTORIAL_BOLAS_LINES.P4_13_apply_insectile_damage }),
-  makeDuelStep({ id: 'P4_14_end_combat', act: 'Act 7 / Luis Turn 4', title: 'End Combat', phase: 'combat_end', requiredAction: 'Move to End Combat.', exactUiAction: 'Phase → End Combat.', legalPreconditions: 'Combat damage applied and logged.', completionCondition: 'Phase End Combat.', showMeAnchor: 'phase-controls', storyText: TUTORIAL_STORY_TEXT.P4_14_end_combat, bolasLine: TUTORIAL_BOLAS_LINES.P4_14_end_combat }),
+  makeDuelStep({ id: 'P4_14_end_combat', act: 'Act 7 / Luis Turn 4', title: 'Let Combat End', phase: 'combat_end', requiredAction: 'Advance to End Combat.', exactUiAction: 'Use Pass or AutoPass to continue until End Combat.', legalPreconditions: 'Combat damage applied, stack empty, and damage step priority is available.', completionCondition: 'Current game phase is End Combat after a Pass or AutoPass advance.', showMeAnchor: 'autopass-button', storyText: TUTORIAL_STORY_TEXT.P4_14_end_combat, bolasLine: TUTORIAL_BOLAS_LINES.P4_14_end_combat }),
   makeDuelStep({ id: 'P4_15_pass', act: 'Act 7 / Luis Turn 4', title: 'Pass Turn', requiredAction: 'Pass.', exactUiAction: 'Tap Pass.', legalPreconditions: 'Stack empty.', completionCondition: 'Pass tapped.', showMeAnchor: 'pass-button', storyText: TUTORIAL_STORY_TEXT.P4_15_pass, bolasLine: TUTORIAL_BOLAS_LINES.P4_15_pass }),
   makeDuelStep({ id: 'B4_01_bolas_untaps', act: 'Act 8 / Bolas Turn 4', title: 'Bolas Untaps', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', phase: 'untap', sourceCard: 'Chapter snapshot', requiredAction: 'Inspect legal snapshot log.', exactUiAction: 'Open the Game Log.', legalPreconditions: 'Snapshot logs Luis played Forest, cast Llanowar Elves, and both players passed to Bolas combat.', completionCondition: 'Log opened.', showMeAnchor: 'game-log-button', storyText: TUTORIAL_STORY_TEXT.B4_01_bolas_untaps, bolasLine: TUTORIAL_BOLAS_LINES.B4_01_bolas_untaps }),
   makeDuelStep({ id: 'B4_02_bolas_combat', act: 'Act 8 / Bolas Turn 4', title: 'Bolas Moves to Combat', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', phase: 'combat_begin', requiredAction: 'Open Combat Summary.', exactUiAction: 'Open Combat Summary.', legalPreconditions: 'Bolas moves through beginning of combat to attackers.', completionCondition: 'Combat Summary opened.', showMeAnchor: 'combat-summary', storyText: TUTORIAL_STORY_TEXT.B4_02_bolas_combat, bolasLine: TUTORIAL_BOLAS_LINES.B4_02_bolas_combat }),
@@ -888,6 +888,20 @@ const PHASES = [
   { id: 'end', label: 'End Step' },
   { id: 'cleanup', label: 'Cleanup' }
 ];
+
+const TUTORIAL_NATURAL_PHASE_ADVANCE_STEPS = {
+  P2_02_reach_draw: { fromPhase: 'upkeep', targetPhase: 'draw', completionDetail: 'PASS_PRIORITY:draw' },
+  P2_03_main1: { fromPhase: 'draw', targetPhase: 'main1', completionDetail: 'PASS_PRIORITY:main1' },
+  P3_02_upkeep: { fromPhase: 'untap', targetPhase: 'upkeep', completionDetail: 'PASS_PRIORITY:upkeep' },
+  P3_05_draw_ponder: { fromPhase: 'upkeep', targetPhase: 'draw', completionDetail: null },
+  P3_06_main1: { fromPhase: 'draw', targetPhase: 'main1', completionDetail: 'PASS_PRIORITY:main1' },
+  P4_02_draw_mountain: { fromPhase: 'upkeep', targetPhase: 'draw', completionDetail: null },
+  P4_03_main1: { fromPhase: 'draw', targetPhase: 'main1', completionDetail: 'PASS_PRIORITY:main1' },
+  P4_08_begin_combat: { fromPhase: 'main1', targetPhase: 'combat_begin', completionDetail: 'PASS_PRIORITY:combat_begin' },
+  P4_09_attackers_step: { fromPhase: 'combat_begin', targetPhase: 'combat_attackers', completionDetail: 'PASS_PRIORITY:combat_attackers' },
+  P4_14_end_combat: { fromPhase: 'combat_damage', targetPhase: 'combat_end', completionDetail: 'PASS_PRIORITY:combat_end' }
+};
+const TUTORIAL_NATURAL_PHASE_ADVANCE_STEP_IDS = Object.keys(TUTORIAL_NATURAL_PHASE_ADVANCE_STEPS);
 
 const COMBAT_DAMAGE_STEPS = {
   FIRST_STRIKE: 'firstStrike',
@@ -6140,8 +6154,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       COPY_STACK_ITEM: ['copy_stack_item', 'final_in_response', 'F8_resolve_reverberate'],
       RESOLVE_STACK_TOP: ['resolve_stack_item', 'counter_stack_item', 'cast_delver', 'final_in_response', 'P1_10_resolve_bolt', 'P2_09_resolve_delver', 'B2_04_resolve_knight', 'B3_06_resolve_slip', 'P4_05_cast_ponder', 'F8_resolve_reverberate', 'F9_resolve_bolt_copy_lethal', 'F10_resolve_negate_original'],
       COUNTER_STACK_TOP: ['counter_stack_item', 'final_in_response', 'B3_09_fizzle_doom_blade', 'F10_resolve_negate_original'],
-      PASS_PRIORITY: ['pass_priority', 'final_trial', 'async_oath', 'P1_11_pass', 'P2_02_reach_draw', 'P2_10_pass', 'B2_05_bolas_pass', 'P3_08_pass', 'B3_11_bolas_pass', 'P4_15_pass', 'B4_09_bolas_pass'],
-      MANUAL_SET_STEP: payload?.phaseId === 'combat_attackers' ? ['set_attackers_phase', 'P4_09_attackers_step'] : (payload?.phaseId === 'untap' ? ['P3_01_untap', 'P4_01_untap_phase_in'] : (payload?.phaseId === 'upkeep' ? ['P3_02_upkeep'] : (payload?.phaseId === 'draw' ? ['P2_02_reach_draw'] : (payload?.phaseId === 'main1' ? ['P2_03_main1', 'P3_06_main1', 'P4_03_main1'] : (payload?.phaseId === 'combat_begin' ? ['P4_08_begin_combat'] : (payload?.phaseId === 'combat_end' ? ['P4_14_end_combat'] : [])))))),
+      PASS_PRIORITY: ['pass_priority', 'final_trial', 'async_oath', 'P1_11_pass', ...TUTORIAL_NATURAL_PHASE_ADVANCE_STEP_IDS, 'P2_10_pass', 'B2_05_bolas_pass', 'P3_08_pass', 'B3_11_bolas_pass', 'P4_15_pass', 'B4_09_bolas_pass'],
+      MANUAL_SET_STEP: payload?.phaseId === 'combat_attackers' ? ['set_attackers_phase'] : (payload?.phaseId === 'untap' ? ['P4_01_untap_phase_in'] : []),
       SET_COMBAT_DAMAGE_STEP: payload?.combatDamageStep === COMBAT_DAMAGE_STEPS.FIRST_STRIKE ? ['first_strike_step', 'B4_05_first_strike_damage'] : (payload?.combatDamageStep === COMBAT_DAMAGE_STEPS.REGULAR ? ['regular_damage_step', 'P4_12_regular_damage', 'B4_08_regular_damage'] : []),
       SET_ATTACK_TARGET: ['declare_attacker_player', 'attack_planeswalker_battle_note', 'P4_10_attack_bolas'],
       TOGGLE_BLOCK_TARGET: ['declare_blocker_note', 'B4_04_block_with_llanowar'],
@@ -6189,21 +6203,10 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       ...((payload?.targetPlayerIds || []).map((targetPlayerId) => (game?.players || []).find((player) => player.id === targetPlayerId)?.name || ''))
     ].filter(Boolean);
     const stackItemForPayload = () => (game?.stack || []).find((item) => item?.id === payload?.stackItemId || item?.sourceId === payload?.stackItemId);
-    const passPriorityWouldAdvanceToPhase = (phaseId) => {
-      if (actionType !== 'PASS_PRIORITY' || (game?.stack || []).length > 0) return false;
-      const players = game?.players || [];
-      const currentPhaseIdx = PHASES.findIndex((phase) => phase.id === game?.phase);
-      if (currentPhaseIdx < 0) return false;
-      const nextPhase = PHASES[(currentPhaseIdx + 1) % PHASES.length]?.id;
-      if (!nextPhase) return false;
-      if (players.length < 2) return nextPhase === phaseId;
-      const allPassed = (Number(game?.consecutivePasses) + 1) >= players.length;
-      return allPassed && nextPhase === phaseId;
-    };
     const tutorialActionMatchesStep = () => {
-      if (stepId === 'P2_02_reach_draw') {
-        if (actionType === 'MANUAL_SET_STEP') return payload?.phaseId === 'draw';
-        return passPriorityWouldAdvanceToPhase('draw');
+      const naturalPhaseAdvance = TUTORIAL_NATURAL_PHASE_ADVANCE_STEPS[stepId];
+      if (naturalPhaseAdvance) {
+        return actionType === 'PASS_PRIORITY' && (game?.stack || []).length === 0 && game?.phase === naturalPhaseAdvance.fromPhase && (!game?.priorityPlayerId || game.priorityPlayerId === userId);
       }
       if (stepId === 'P2_02_draw_slip') {
         const topLuisLibraryCard = (game?.cards || []).find((card) => card.ownerId === userId && card.zone === ZONES.LIBRARY);
@@ -6654,12 +6657,16 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     let forcedCombat = null;
     let forcedStack = null;
 
-    if (['P1_01_play_mountain', 'P1_04_tap_mountain', 'P1_05_add_r', 'P1_06_open_bolt', 'P1_07_bolt_cast_target', 'P1_08_target_bolas', 'P1_09_inspect_stack', 'P1_10_resolve_bolt', 'P1_11_pass', 'P2_03_main1', 'P2_04_play_island', 'P2_05_tap_island', 'P2_06_add_u', 'P2_07_open_delver', 'P2_08_cast_delver', 'P2_09_resolve_delver', 'P2_10_pass', 'P3_06_main1', 'P3_07_play_mountain', 'P3_08_pass', 'P4_03_main1', 'P4_04_play_third_mountain', 'P4_05_cast_ponder', 'P4_06_reorder_ponder', 'P4_07_draw_ponder', 'F1_tap_mountain_bolt', 'F2_add_r', 'F3_cast_bolt_bolas', 'F5_tap_two_mountains', 'F6_add_rr', 'F7_reverberate_bolt', 'F8_resolve_reverberate', 'F9_resolve_bolt_copy_lethal', 'F10_resolve_negate_original'].includes(stepId)) {
+    if (['P1_01_play_mountain', 'P1_04_tap_mountain', 'P1_05_add_r', 'P1_06_open_bolt', 'P1_07_bolt_cast_target', 'P1_08_target_bolas', 'P1_09_inspect_stack', 'P1_10_resolve_bolt', 'P1_11_pass', 'P2_04_play_island', 'P2_05_tap_island', 'P2_06_add_u', 'P2_07_open_delver', 'P2_08_cast_delver', 'P2_09_resolve_delver', 'P2_10_pass', 'P3_07_play_mountain', 'P3_08_pass', 'P4_04_play_third_mountain', 'P4_05_cast_ponder', 'P4_06_reorder_ponder', 'P4_07_draw_ponder', 'F1_tap_mountain_bolt', 'F2_add_r', 'F3_cast_bolt_bolas', 'F5_tap_two_mountains', 'F6_add_rr', 'F7_reverberate_bolt', 'F8_resolve_reverberate', 'F9_resolve_bolt_copy_lethal', 'F10_resolve_negate_original'].includes(stepId)) {
       forcedPhase = 'main1';
       forcedTurnPlayerId = userId;
     } else if (stepId === 'P2_02_reach_draw') {
       forcedPhase = 'upkeep';
       forcedTurnPlayerId = userId;
+    } else if (stepId === 'P2_03_main1') {
+      forcedPhase = 'draw';
+      forcedTurnPlayerId = userId;
+      forcedStack = [];
     } else if (['P3_01_untap', 'P4_01_untap_phase_in', 'B4_01_bolas_untaps'].includes(stepId)) {
       forcedPhase = 'untap';
       forcedTurnPlayerId = stepId === 'B4_01_bolas_untaps' ? (opponentId || game.turnPlayerId) : userId;
@@ -6670,10 +6677,20 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       forcedPhase = 'draw';
       forcedTurnPlayerId = userId;
     } else if (['P3_05_draw_ponder', 'P4_02_draw_mountain'].includes(stepId)) {
-      forcedTurnPlayerId = userId;
-    } else if (['P3_02_upkeep', 'P3_03_delver_reveal_ponder', 'P3_04_transform_delver'].includes(stepId)) {
       forcedPhase = 'upkeep';
       forcedTurnPlayerId = userId;
+      forcedStack = [];
+    } else if (stepId === 'P3_02_upkeep') {
+      forcedPhase = 'untap';
+      forcedTurnPlayerId = userId;
+      forcedStack = [];
+    } else if (['P3_03_delver_reveal_ponder', 'P3_04_transform_delver'].includes(stepId)) {
+      forcedPhase = 'upkeep';
+      forcedTurnPlayerId = userId;
+    } else if (['P3_06_main1', 'P4_03_main1'].includes(stepId)) {
+      forcedPhase = 'draw';
+      forcedTurnPlayerId = userId;
+      forcedStack = [];
     } else if (stepId === 'B1_02_bolas_pass') {
       forcedPhase = 'untap';
       forcedTurnPlayerId = userId;
@@ -6681,11 +6698,19 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     } else if (['B1_01_bolas_island', 'B2_02_bolas_swamp', 'B2_03_bolas_cast_knight', 'B2_04_resolve_knight', 'B2_05_bolas_pass', 'B3_01_bolas_swamp', 'B3_02_bolas_doom_blade', 'B3_03_tap_island_slip', 'B3_04_add_u_slip', 'B3_05_cast_slip', 'B3_06_resolve_slip', 'B3_07_add_counter', 'B3_08_phase_insectile', 'B3_09_fizzle_doom_blade', 'B3_10_add_phase_reminder', 'B3_11_bolas_pass', 'F4_bolas_negate_real_mana'].includes(stepId)) {
       forcedPhase = 'main1';
       forcedTurnPlayerId = opponentId || game.turnPlayerId;
-    } else if (['P4_08_begin_combat', 'B4_02_bolas_combat'].includes(stepId)) {
-      forcedPhase = 'combat_begin';
-      forcedTurnPlayerId = stepId === 'B4_02_bolas_combat' ? (opponentId || game.turnPlayerId) : userId;
+    } else if (stepId === 'P4_08_begin_combat') {
+      forcedPhase = 'main1';
+      forcedTurnPlayerId = userId;
       forcedStack = [];
-    } else if (['P4_09_attackers_step', 'P4_10_attack_bolas', 'P4_11_combat_summary', 'B4_03_knight_attacks'].includes(stepId)) {
+    } else if (stepId === 'B4_02_bolas_combat') {
+      forcedPhase = 'combat_begin';
+      forcedTurnPlayerId = opponentId || game.turnPlayerId;
+      forcedStack = [];
+    } else if (stepId === 'P4_09_attackers_step') {
+      forcedPhase = 'combat_begin';
+      forcedTurnPlayerId = userId;
+      forcedStack = [];
+    } else if (['P4_10_attack_bolas', 'P4_11_combat_summary', 'B4_03_knight_attacks'].includes(stepId)) {
       forcedPhase = 'combat_attackers';
       forcedTurnPlayerId = stepId === 'B4_03_knight_attacks' ? (opponentId || game.turnPlayerId) : userId;
       forcedStack = [];
@@ -6701,7 +6726,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       forcedTurnPlayerId = stepId.startsWith('B4') ? (opponentId || game.turnPlayerId) : userId;
       forcedStack = [];
     } else if (['P4_14_end_combat'].includes(stepId)) {
-      forcedPhase = 'combat_end';
+      forcedPhase = 'combat_damage';
       forcedTurnPlayerId = userId;
       forcedStack = [];
     }
@@ -8018,7 +8043,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     }
     const deferTutorialCompletionUntilAfterWrite = () => {
       const liveStepId = (optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.stepId || 'intro';
-      return actionType === 'PASS_PRIORITY' && liveStepId === 'P2_02_reach_draw';
+      return actionType === 'PASS_PRIORITY' && Boolean(TUTORIAL_NATURAL_PHASE_ADVANCE_STEPS[liveStepId]);
     };
     if (actionType !== 'MANUAL_SET_STEP' && !deferTutorialCompletionUntilAfterWrite()) maybeCompleteTutorialAction(actionType, payload);
     // UPDATED: Path
@@ -8124,9 +8149,9 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
     if (actionType === 'PASS' || actionType === 'PASS_PRIORITY') {
       const turnStartEvents = [];
-      let completedReachDrawAfterWrite = false;
+      let completedNaturalPhaseAdvanceAfterWrite = null;
       await perfRunTransaction('runTransaction', async (transaction) => {
-        completedReachDrawAfterWrite = false;
+        completedNaturalPhaseAdvanceAfterWrite = null;
         const snap = await transaction.get(gameRef);
         if (!snap.exists()) return;
         const currentGame = snap.data();
@@ -8154,31 +8179,34 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         const latestLogEntries = currentGame.log || [];
         const latestLog = latestLogEntries[latestLogEntries.length - 1] || null;
         const previousLog = latestLogEntries[latestLogEntries.length - 2] || null;
-        const alreadyLoggedBolasPassForReachDraw = (
-          currentGame.phase === 'upkeep' &&
+        const naturalPhaseAdvance = currentGame.isTutorial === true ? TUTORIAL_NATURAL_PHASE_ADVANCE_STEPS[currentGame.tutorial?.stepId] : null;
+        const alreadyLoggedScriptedBolasPassForPhaseAdvance = (
+          Boolean(naturalPhaseAdvance) &&
+          currentGame.phase === naturalPhaseAdvance.fromPhase &&
           latestLog?.type === 'PASS_PRIORITY' &&
-          latestLog?.phase === 'upkeep' &&
+          latestLog?.phase === naturalPhaseAdvance.fromPhase &&
           latestLog?.playerId === bolasPlayer?.id &&
           /Nicol Bolas passed priority\./i.test(latestLog?.message || '') &&
           previousLog?.type === 'PASS_PRIORITY' &&
-          previousLog?.phase === 'upkeep' &&
+          previousLog?.phase === naturalPhaseAdvance.fromPhase &&
           previousLog?.playerId === userId
         );
-        const shouldScriptBolasReachDrawPass = (
-          currentGame.isTutorial === true &&
-          currentGame.tutorial?.stepId === 'P2_02_reach_draw' &&
+        const shouldScriptBolasPhaseAdvancePass = (
+          Boolean(naturalPhaseAdvance) &&
           actionType === 'PASS_PRIORITY' &&
-          currentGame.phase === 'upkeep' &&
+          currentGame.phase === naturalPhaseAdvance.fromPhase &&
+          currentGame.phase !== naturalPhaseAdvance.targetPhase &&
           (currentGame.stack || []).length === 0 &&
           currentGame.priorityPlayerId === userId &&
           Boolean(bolasPlayer?.id) &&
-          !alreadyLoggedBolasPassForReachDraw &&
-          passedGame.phase === 'upkeep' &&
+          !alreadyLoggedScriptedBolasPassForPhaseAdvance &&
+          passedGame.phase === naturalPhaseAdvance.fromPhase &&
+          passedGame.phase !== naturalPhaseAdvance.targetPhase &&
           (passedGame.stack || []).length === 0 &&
           passedGame.priorityPlayerId === bolasPlayer?.id
         );
 
-        if (shouldScriptBolasReachDrawPass) {
+        if (shouldScriptBolasPhaseAdvancePass) {
           const bolasPassLogEntry = buildGameLogEntry({
             currentGame: passedGame,
             playerId: bolasPlayer.id,
@@ -8191,7 +8219,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         }
 
         const { game: proxyGame } = runProxyAutoPassAdvances(passedGame, userId, actorName, (event) => turnStartEvents.push(event));
-        completedReachDrawAfterWrite = currentGame.isTutorial === true && currentGame.tutorial?.stepId === 'P2_02_reach_draw' && proxyGame.phase === 'draw';
+        completedNaturalPhaseAdvanceAfterWrite = naturalPhaseAdvance?.completionDetail && proxyGame.phase === naturalPhaseAdvance.targetPhase ? { stepId: currentGame.tutorial?.stepId, detail: naturalPhaseAdvance.completionDetail } : null;
 
         transaction.update(gameRef, normalizeGameUpdatesForFirestore({
           phase: proxyGame.phase,
@@ -8218,8 +8246,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       if (turnStartEvents.length > 0) {
         await Promise.all(turnStartEvents.map((event) => appendEvent(gameId, event)));
       }
-      if (completedReachDrawAfterWrite) {
-        await maybeCompleteTutorialStep('P2_02_reach_draw', { source: 'game-action', detail: 'PASS_PRIORITY:draw' });
+      if (completedNaturalPhaseAdvanceAfterWrite) {
+        await maybeCompleteTutorialStep(completedNaturalPhaseAdvanceAfterWrite.stepId, { source: 'game-action', detail: completedNaturalPhaseAdvanceAfterWrite.detail });
       }
       return;
     }
@@ -11830,7 +11858,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             </div>
           </div>
 
-          <section data-tutorial-anchor="own-battlefield" onClick={() => { maybeCompleteTutorialStep('battlefields'); maybeCompleteTutorialStep('G03_own_battlefield'); }} className={`rounded-xl border border-slate-700 bg-slate-900/30 p-3${getTutorialAnchorClass(currentTutorialAnchor, 'own-battlefield', tutorialPulseAnchor)}`}>
+          <section data-tutorial-anchor="own-battlefield" onClick={() => { maybeCompleteTutorialStep('battlefields'); maybeCompleteTutorialStep('G03_own_battlefield'); maybeCompleteTutorialStep('P3_01_untap'); }} className={`rounded-xl border border-slate-700 bg-slate-900/30 p-3${getTutorialAnchorClass(currentTutorialAnchor, 'own-battlefield', tutorialPulseAnchor)}`}>
             <div className="flex items-center justify-between mb-3 gap-2">
               <div className="flex items-center gap-2">
                 <User size={16} className="text-green-400"/>

@@ -274,6 +274,10 @@ const TUTORIAL_OPENING_HAND_LUIS = ['Mountain', 'Mountain', 'Island', 'Forest', 
 const TUTORIAL_LIBRARY_LUIS = ['Slip Out the Back', 'Mountain', 'Reverberate', 'Dragon Fodder', 'Rancor', 'Giant Growth', 'Gitaxian Probe', 'Portent', 'Thought Scour', 'Plains', 'Throne of the High City', 'The Celestus', 'Birthday Escape', 'Attune with Aether', 'Curse of the Pierced Heart', 'Act of Treason', 'Clone', 'Nadaar, Selfless Paladin', 'Lightning Bolt', 'Reverberate'];
 const TUTORIAL_OPENING_HAND_BOLAS = ['Island', 'Swamp', 'Swamp', 'Negate', 'Doom Blade', 'Knight of Malice', 'Vraska’s Fall'];
 const TUTORIAL_LIBRARY_BOLAS = ['Mountain', 'Cancel', 'Bonecrusher Giant', 'Swamp', 'Island'];
+const TUTORIAL_CARD_IMAGES_ERROR = 'Tutorial card images could not load. Try again.';
+const TUTORIAL_SCRYFALL_COLLECTION_URL = 'https://api.scryfall.com/cards/collection';
+const tutorialCardCatalogCache = new Map();
+let tutorialCardCatalogPromise = null;
 const TUTORIAL_TOOL_SOURCES = [
   ['tool_dragon_fodder', 'Act 9 / Tools — Dragon Fodder', 'Dragon Fodder tokens', 'Dragon Fodder', 'Luis taps Mountain plus another land, casts Dragon Fodder, resolves it, then opens Token Tools to create two 1/1 red Goblins.', '{1}{R}: Mountain + one land', 'Two Goblin tokens exist.', 'token-tools'],
   ['tool_goblin_template', 'Act 9 / Tools — Deck Token Template', 'Use Goblin token template', 'Dragon Fodder', 'Use the deck-derived Goblin token template created by Dragon Fodder.', 'Resolved Dragon Fodder', 'Goblin template used.', 'token-tools'],
@@ -1002,41 +1006,124 @@ const TUTORIAL_STARTER_CARD_SEED = [
   { name: 'Tendershoot Dryad', mana_cost: '{4}{G}', type_line: 'Creature — Dryad', oracle_text: 'Ascend. At the beginning of each upkeep, create a 1/1 green Saproling creature token.', colors: ['G'], color_identity: ['G'], power: '2', toughness: '2' }
 ];
 
+const normalizeTutorialCardNameForLookup = (cardName = '') => String(cardName || 'Tutorial Card')
+  .replace(/\s*\/\/.*$/, '')
+  .replace(/\s+/g, ' ')
+  .trim();
+
+const normalizeTutorialCatalogKey = (cardName = '') => normalizeTutorialCardNameForLookup(cardName).toLowerCase();
+
 const getTutorialSeedByName = (cardName) => {
   const safeName = String(cardName || 'Tutorial Card');
-  return TUTORIAL_STARTER_CARD_SEED.find((card) => card.name === safeName || card.card_faces?.some((face) => face?.name === safeName)) || { name: safeName, type_line: 'Card', oracle_text: '', layout: 'normal' };
+  return TUTORIAL_STARTER_CARD_SEED.find((card) => card.name === safeName || card.card_faces?.some((face) => face?.name === safeName)) || { name: safeName, type_line: 'Card', oracle_text: '', layout: 'normal', isTutorialFallback: true };
 };
 
-const buildTutorialCardsForZoneList = (cardNames, ownerId, zone, controllerId = ownerId, idPrefix = 'tutorial') => cardNames.map((cardName, index) => {
-  const seed = getTutorialSeedByName(cardName);
-  return sanitizeScryfallCardForGame(seed, {
-    id: `${idPrefix}-${seed.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${index}`,
+const getTutorialDuelDeckEntries = (playerId, bolasId) => [
+  ...TUTORIAL_OPENING_HAND_LUIS.map((name, index) => ({ name, ownerId: playerId, controllerId: playerId, zone: ZONES.HAND, idPrefix: 'tutorial-luis-hand', orderIndex: index })),
+  ...TUTORIAL_LIBRARY_LUIS.map((name, index) => ({ name, ownerId: playerId, controllerId: playerId, zone: ZONES.LIBRARY, idPrefix: 'tutorial-luis-library', orderIndex: index })),
+  ...TUTORIAL_OPENING_HAND_BOLAS.map((name, index) => ({ name, ownerId: bolasId, controllerId: bolasId, zone: ZONES.HAND, idPrefix: 'tutorial-bolas-hand', orderIndex: index })),
+  ...TUTORIAL_LIBRARY_BOLAS.map((name, index) => ({ name, ownerId: bolasId, controllerId: bolasId, zone: ZONES.LIBRARY, idPrefix: 'tutorial-bolas-library', orderIndex: index }))
+];
+
+const TUTORIAL_NON_SCRYFALL_CARD_NAMES = new Set(['Open-Book Hex', 'Mirror-Cell Experiment', 'Zombie Token', 'Dragon Token']);
+
+const getTutorialDuelCardNames = () => [...new Set([
+  ...TUTORIAL_OPENING_HAND_LUIS,
+  ...TUTORIAL_LIBRARY_LUIS,
+  ...TUTORIAL_OPENING_HAND_BOLAS,
+  ...TUTORIAL_LIBRARY_BOLAS,
+  ...TUTORIAL_STARTER_CARD_SEED.map((card) => card.name)
+].map(normalizeTutorialCardNameForLookup).filter((name) => name && !TUTORIAL_NON_SCRYFALL_CARD_NAMES.has(name)))];
+
+const mapScryfallCollectionByTutorialName = (requestedNames = [], scryfallCards = []) => {
+  const byKey = new Map();
+  scryfallCards.forEach((card) => {
+    const compact = sanitizeScryfallCardForGame(card, { scryfallId: card.id });
+    const aliases = [card.name, compact.name, ...(Array.isArray(compact.card_faces) ? compact.card_faces.map((face) => face?.name) : [])]
+      .map(normalizeTutorialCatalogKey)
+      .filter(Boolean);
+    aliases.forEach((alias) => {
+      if (!byKey.has(alias)) byKey.set(alias, compact);
+    });
+  });
+  return new Map(requestedNames.map((name) => [normalizeTutorialCatalogKey(name), byKey.get(normalizeTutorialCatalogKey(name))]).filter(([, card]) => Boolean(card)));
+};
+
+const fetchTutorialCardCatalog = async () => {
+  const requiredNames = getTutorialDuelCardNames();
+  const missingNames = requiredNames.filter((name) => !tutorialCardCatalogCache.has(normalizeTutorialCatalogKey(name)));
+  if (missingNames.length === 0) return tutorialCardCatalogCache;
+  if (tutorialCardCatalogPromise) {
+    await tutorialCardCatalogPromise;
+    const stillMissing = requiredNames.filter((name) => !tutorialCardCatalogCache.has(normalizeTutorialCatalogKey(name)));
+    if (stillMissing.length === 0) return tutorialCardCatalogCache;
+  }
+
+  tutorialCardCatalogPromise = (async () => {
+    const response = await fetch(TUTORIAL_SCRYFALL_COLLECTION_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ identifiers: missingNames.map((name) => ({ name })) })
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload?.details || TUTORIAL_CARD_IMAGES_ERROR);
+    }
+    const notFoundNames = Array.isArray(payload?.not_found) ? payload.not_found.map((entry) => entry?.name).filter(Boolean) : [];
+    if (notFoundNames.length > 0) {
+      throw new Error(`${TUTORIAL_CARD_IMAGES_ERROR} Missing: ${notFoundNames.join(', ')}`);
+    }
+    const hydratedByKey = mapScryfallCollectionByTutorialName(missingNames, Array.isArray(payload?.data) ? payload.data : []);
+    const stillMissing = missingNames.filter((name) => !hydratedByKey.has(normalizeTutorialCatalogKey(name)));
+    if (stillMissing.length > 0) {
+      throw new Error(`${TUTORIAL_CARD_IMAGES_ERROR} Missing: ${stillMissing.join(', ')}`);
+    }
+    hydratedByKey.forEach((card, key) => tutorialCardCatalogCache.set(key, card));
+  })();
+
+  try {
+    await tutorialCardCatalogPromise;
+  } finally {
+    tutorialCardCatalogPromise = null;
+  }
+  return tutorialCardCatalogCache;
+};
+
+const buildTutorialCardsFromDecklist = (deckEntries = [], catalog = tutorialCardCatalogCache) => deckEntries.map((entry) => {
+  const lookupName = normalizeTutorialCardNameForLookup(entry.name);
+  const hydratedCard = catalog.get(normalizeTutorialCatalogKey(lookupName));
+  if (!hydratedCard) throw new Error(`${TUTORIAL_CARD_IMAGES_ERROR} Missing: ${lookupName}`);
+  return sanitizeScryfallCardForGame(hydratedCard, {
+    id: `${entry.idPrefix}-${lookupName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${entry.orderIndex}`,
+    scryfallId: hydratedCard.scryfallId || hydratedCard.id,
     instanceId: generateCardId(),
-    ownerId,
-    controllerId,
-    zone,
+    ownerId: entry.ownerId,
+    controllerId: entry.controllerId,
+    zone: entry.zone,
     tapped: false,
     counters: {},
     tempDamage: 0,
     faceDown: false,
-    x: 5 + (index * 5),
+    x: 5 + (entry.orderIndex * 5),
     y: 5
   });
 });
 
-const buildTutorialStarterCards = (playerId) => [
-  ...buildTutorialCardsForZoneList(TUTORIAL_OPENING_HAND_LUIS, playerId, ZONES.HAND, playerId, 'tutorial-luis-hand'),
-  ...buildTutorialCardsForZoneList(TUTORIAL_LIBRARY_LUIS, playerId, ZONES.LIBRARY, playerId, 'tutorial-luis-library')
-];
+const hydrateTutorialDuelCards = async (playerId, bolasId) => {
+  try {
+    const catalog = await fetchTutorialCardCatalog();
+    return buildTutorialCardsFromDecklist(getTutorialDuelDeckEntries(playerId, bolasId), catalog);
+  } catch (error) {
+    console.error('Tutorial card hydration failed', error);
+    throw new Error(TUTORIAL_CARD_IMAGES_ERROR);
+  }
+};
 
-const buildTutorialDuelCards = (playerId, bolasId) => [
-  ...buildTutorialStarterCards(playerId),
-  ...buildTutorialCardsForZoneList(TUTORIAL_OPENING_HAND_BOLAS, bolasId, ZONES.HAND, bolasId, 'tutorial-bolas-hand'),
-  ...buildTutorialCardsForZoneList(TUTORIAL_LIBRARY_BOLAS, bolasId, ZONES.LIBRARY, bolasId, 'tutorial-bolas-library')
-];
 
 const hydrateTutorialCardPreviewData = (card = {}) => {
-  const seed = TUTORIAL_STARTER_CARD_SEED.find((candidate) => candidate.name === card.name || candidate.card_faces?.some((face) => face?.name === card.name || card.card_faces?.some((cardFace) => cardFace?.name === face?.name)));
+  const lookupName = normalizeTutorialCardNameForLookup(card.name || getCardDisplayName(card, card?.name || ''));
+  const cachedCard = tutorialCardCatalogCache.get(normalizeTutorialCatalogKey(lookupName));
+  const seed = cachedCard || TUTORIAL_STARTER_CARD_SEED.find((candidate) => candidate.name === card.name || candidate.card_faces?.some((face) => face?.name === card.name || card.card_faces?.some((cardFace) => cardFace?.name === face?.name)));
   if (!seed) return card;
   const hydrated = sanitizeScryfallCardForGame({ ...seed, ...card, card_faces: seed.card_faces || card.card_faces }, card);
   return {
@@ -1050,14 +1137,24 @@ const hydrateTutorialCardPreviewData = (card = {}) => {
   };
 };
 
-const shouldSeedTutorialCardsForPlayer = (cards = [], playerId) => !cards.some((card) => card?.ownerId === playerId && [
-  ZONES.LIBRARY,
-  ZONES.HAND,
-  ZONES.BATTLEFIELD,
-  ZONES.GRAVEYARD,
-  ZONES.EXILE,
-  ZONES.COMMAND
-].includes(card?.zone));
+const tutorialCardHasRealImageData = (card = {}) => {
+  const hasImage = Boolean(card.image_uri || card.image_uris?.normal || card.image_uris?.large || card.image_uris?.small);
+  if (!Array.isArray(card.card_faces) || card.card_faces.length === 0) return hasImage;
+  return card.card_faces.every((face) => face?.image_uri || face?.image_uris?.normal || face?.image_uris?.large || face?.image_uris?.small);
+};
+
+const shouldSeedTutorialCardsForPlayer = (cards = [], playerId) => {
+  const playerCards = cards.filter((card) => card?.ownerId === playerId && [
+    ZONES.LIBRARY,
+    ZONES.HAND,
+    ZONES.BATTLEFIELD,
+    ZONES.GRAVEYARD,
+    ZONES.EXILE,
+    ZONES.COMMAND
+  ].includes(card?.zone));
+  if (playerCards.length === 0) return true;
+  return playerCards.some((card) => !tutorialCardHasRealImageData(card));
+};
 
 
 
@@ -6029,6 +6126,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         finished: false,
         inactive: false
       };
+      const hydratedTutorialCards = await hydrateTutorialDuelCards(userId, existingBolasId);
       optimisticTutorialRef.current = nextTutorial;
       setOptimisticTutorialState(nextTutorial);
       setTutorialMinimized(false);
@@ -6045,7 +6143,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       setUndoConfirmOpen(false);
       await updateDoc(doc(db, 'games_v3', gameId), {
         tutorial: nextTutorial,
-        cards: buildTutorialDuelCards(userId, existingBolasId),
+        cards: hydratedTutorialCards,
         players: safePlayers,
         phase: 'main1',
         activePlayerIndex: 0,
@@ -6067,8 +6165,9 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       return true;
     } catch (error) {
       console.error('Reset tutorial battle failed', error);
-      setTutorialOverlayError('Reset failed. You can still exit tutorial and continue playing.');
-      setNotification('Reset tutorial battle failed.');
+      const message = error?.message?.includes(TUTORIAL_CARD_IMAGES_ERROR) ? TUTORIAL_CARD_IMAGES_ERROR : 'Reset failed. You can still exit tutorial and continue playing.';
+      setTutorialOverlayError(message);
+      setNotification(message);
       setTimeout(() => setNotification(null), 3000);
       return false;
     } finally {
@@ -6369,7 +6468,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const buildTutorialCardInstance = useCallback((cardName, ownerId, zone = ZONES.HAND, controllerId = ownerId) => {
     const safeName = String(cardName || 'Tutorial Card');
     const safeOwnerId = ownerId || userId || 'tutorial-player';
-    const seed = TUTORIAL_STARTER_CARD_SEED.find((card) => card.name === safeName || card.card_faces?.some((face) => face?.name === safeName)) || { name: safeName, type_line: 'Card', oracle_text: '', layout: 'normal' };
+    const cachedCard = tutorialCardCatalogCache.get(normalizeTutorialCatalogKey(safeName));
+    const seed = cachedCard || getTutorialSeedByName(safeName);
     return sanitizeScryfallCardForGame({ layout: 'normal', ...seed }, {
       id: `tutorial-${safeName.toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'card'}`,
       instanceId: generateCardId(),
@@ -14820,7 +14920,7 @@ export default function App() {
             finished: false,
             inactive: false
           },
-          ...(shouldSeedExistingTutorial ? { cards: buildTutorialDuelCards(user.uid, candidateData.players?.find((p) => p?.isScriptedOpponent)?.id || `tutorial-bolas-${candidateId}`) } : {}),
+          ...(shouldSeedExistingTutorial ? { cards: await hydrateTutorialDuelCards(user.uid, candidateData.players?.find((p) => p?.isScriptedOpponent)?.id || `tutorial-bolas-${candidateId}`) } : {}),
           updatedAt: serverTimestamp()
         }, { path: `games_v3/${candidateId}`, purpose: 'tutorial reset' });
         checkpoint('after tutorial Firestore write', { gameId: candidateId, reusingExisting: true });
@@ -14892,7 +14992,7 @@ export default function App() {
       turnNumber: 1,
       consecutivePasses: 0,
       stack: [],
-      cards: buildTutorialDuelCards(user.uid, bolasId),
+      cards: await hydrateTutorialDuelCards(user.uid, bolasId),
       targets: [],
       reveals: [],
       autopass: {},

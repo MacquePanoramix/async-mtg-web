@@ -1039,10 +1039,56 @@ const getScryfallNamedImageUrl = (cardName = '', version = 'normal') => {
   return `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(lookupName)}&format=image&version=${version}`;
 };
 
+
+const buildScryfallImageUrisFromId = (id, side = 'front') => {
+  if (typeof id !== 'string' || !id) return null;
+  const prefix = `${side}/${id[0]}/${id[1]}/${id}.jpg`;
+  return {
+    small: `https://cards.scryfall.io/small/${prefix}`,
+    normal: `https://cards.scryfall.io/normal/${prefix}`,
+    large: `https://cards.scryfall.io/large/${prefix}`
+  };
+};
+
+const STATIC_TUTORIAL_CARD_IMAGE_URIS_BY_NAME = {
+  Mountain: buildScryfallImageUrisFromId('2fe601b0-0398-47f0-9e4f-9f841ad79b9b'),
+  Island: buildScryfallImageUrisFromId('000f1f50-08e5-4d83-8159-98f06a0e2279'),
+  Forest: buildScryfallImageUrisFromId('0000419b-0bba-4488-8f7a-6194544ce91e'),
+  'Lightning Bolt': buildScryfallImageUrisFromId('77c6fa74-5543-42ac-9ead-0e890b188e99'),
+  Ponder: buildScryfallImageUrisFromId('ba6b6fc5-5077-4812-b8e9-906783dbaf67'),
+  'Slip Out the Back': buildScryfallImageUrisFromId('8725f4c4-fad7-460e-b86c-ff81674f0980')
+};
+
+const getStaticTutorialImageUris = (cardName = '') => {
+  const lookupName = normalizeTutorialCardNameForLookup(cardName);
+  return STATIC_TUTORIAL_CARD_IMAGE_URIS_BY_NAME[lookupName] || null;
+};
+
 const addStaticTutorialImageUris = (card = {}) => {
   const lookupName = normalizeTutorialCardNameForLookup(card.name);
-  if (!lookupName || card.image_uri || card.image_uris || Array.isArray(card.card_faces) || TUTORIAL_NON_SCRYFALL_CARD_NAMES.has(lookupName)) return card;
-  const imageUris = {
+  if (!lookupName || TUTORIAL_NON_SCRYFALL_CARD_NAMES.has(lookupName)) return card;
+
+  if (Array.isArray(card.card_faces)) {
+    const cardFaces = card.card_faces.map((face) => {
+      if (!face || typeof face !== 'object') return face;
+      const faceImageUris = face.image_uris || getStaticTutorialImageUris(face.name);
+      return {
+        ...face,
+        ...(faceImageUris ? { image_uris: faceImageUris, image_uri: face.image_uri || faceImageUris.normal } : {})
+      };
+    });
+    const activeIndex = Number.isInteger(card.activeFaceIndex) ? card.activeFaceIndex : 0;
+    const activeFace = cardFaces[Math.min(Math.max(activeIndex, 0), Math.max(cardFaces.length - 1, 0))];
+    const activeImageUris = activeFace?.image_uris || card.image_uris;
+    return {
+      ...card,
+      card_faces: cardFaces,
+      ...(activeImageUris ? { image_uris: activeImageUris, image_uri: card.image_uri || activeFace?.image_uri || activeImageUris.normal } : {})
+    };
+  }
+
+  if (card.image_uri || card.image_uris) return card;
+  const imageUris = getStaticTutorialImageUris(lookupName) || {
     small: getScryfallNamedImageUrl(lookupName, 'small'),
     normal: getScryfallNamedImageUrl(lookupName, 'normal'),
     large: getScryfallNamedImageUrl(lookupName, 'large')
@@ -1126,7 +1172,14 @@ const hydrateTutorialCardPreviewData = (card = {}) => {
   const cachedCard = tutorialCardCatalogCache.get(normalizeTutorialCatalogKey(lookupName));
   const seed = cachedCard || TUTORIAL_STARTER_CARD_SEED.find((candidate) => candidate.name === card.name || candidate.card_faces?.some((face) => face?.name === card.name || card.card_faces?.some((cardFace) => cardFace?.name === face?.name)));
   if (!seed) return card;
-  const hydrated = sanitizeScryfallCardForGame({ ...seed, ...card, card_faces: seed.card_faces || card.card_faces }, card);
+  const staticSeed = addStaticTutorialImageUris(seed);
+  const hydrated = sanitizeScryfallCardForGame({
+    ...staticSeed,
+    ...card,
+    image_uris: staticSeed.image_uris || card.image_uris,
+    image_uri: staticSeed.image_uri || card.image_uri,
+    card_faces: staticSeed.card_faces || seed.card_faces || card.card_faces
+  }, card);
   return {
     ...card,
     ...hydrated,
@@ -1424,7 +1477,7 @@ const isPublicZone = (zone) => PUBLIC_ZONES.has(zone);
 const getUsableCardFaces = (card) => {
   if (!Array.isArray(card?.card_faces)) return [];
   const faces = card.card_faces.filter((face) => face && typeof face === 'object' && (
-    face.name || face.type_line || face.oracle_text || face.image_uris?.normal || face.image_uris?.large || face.mana_cost
+    face.name || face.type_line || face.oracle_text || face.image_uri || face.image_uris?.normal || face.image_uris?.large || face.mana_cost
   ));
   return faces.length >= 2 ? faces : [];
 };
@@ -1472,9 +1525,25 @@ const getBestImageUriFromImageUris = (imageUris) => {
   return imageUris.normal || imageUris.large || imageUris.png || imageUris.small || null;
 };
 const getCardImageUri = (card) => {
-  const faceImageUri = getBestImageUriFromImageUris(getActiveCardFace(card)?.image_uris);
+  const activeFace = getActiveCardFace(card);
+  const faceImageUri = getBestImageUriFromImageUris(activeFace?.image_uris) || activeFace?.image_uri || activeFace?.imageUrl || activeFace?.image_url;
   if (faceImageUri) return faceImageUri;
-  return getBestImageUriFromImageUris(card?.image_uris) || card?.image_uri || null;
+  return getBestImageUriFromImageUris(card?.image_uris) || card?.image_uri || card?.imageUrl || card?.image_url || null;
+};
+
+
+const TUTORIAL_MISSING_IMAGE_DEBUGGED_KEYS = new Set();
+const logMissingTutorialCardImageInDev = (card = {}, expectedImageField = 'card.image_uris.normal or card.image_uri') => {
+  if (!import.meta.env?.DEV) return;
+  const cardName = getCardDisplayName(card, card?.name || 'Unknown');
+  const debugKey = `${card?.instanceId || cardName}:${card?.activeFaceIndex ?? 0}`;
+  if (TUTORIAL_MISSING_IMAGE_DEBUGGED_KEYS.has(debugKey)) return;
+  TUTORIAL_MISSING_IMAGE_DEBUGGED_KEYS.add(debugKey);
+  console.debug('[Tutorial image missing]', {
+    cardName,
+    keysPresent: Object.keys(card || {}).sort(),
+    expectedImageField
+  });
 };
 
 const isDebugActionsEnabled = () => {
@@ -4975,7 +5044,7 @@ const TokenCardPreview = ({ token, size = 'small' }) => {
   );
 };
 
-const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isDraggable, targets = [], stack = [], isSelected = false, combatBadgeLabel = null, combatBadges = null, displayName = null, markedDamage = null, targetInfo = null, attachmentLabel = null, attachedCount = 0 }) => {
+const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isDraggable, targets = [], stack = [], isSelected = false, combatBadgeLabel = null, combatBadges = null, displayName = null, markedDamage = null, targetInfo = null, attachmentLabel = null, attachedCount = 0, isTutorialGame = false }) => {
   const isTapped = card.tapped;
   const isFaceDown = card.faceDown;
   const counters = card.counters || {};
@@ -4984,6 +5053,9 @@ const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isD
   const isPhasedOut = Boolean(card.phasedOut);
   const displayCardName = getCardDisplayName(card);
   const displayImageUri = getCardImageUri(card);
+  if (isTutorialGame && !isFaceDown && !displayImageUri) {
+    logMissingTutorialCardImageInDev(card);
+  }
   const displayManaCost = getCardManaCost(card);
   const displayPower = getCardPower(card);
   const displayToughness = getCardToughness(card);
@@ -6471,7 +6543,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     const safeOwnerId = ownerId || userId || 'tutorial-player';
     const cachedCard = tutorialCardCatalogCache.get(normalizeTutorialCatalogKey(safeName));
     const seed = cachedCard || getTutorialSeedByName(safeName);
-    return sanitizeScryfallCardForGame({ layout: 'normal', ...seed }, {
+    return sanitizeScryfallCardForGame({ layout: 'normal', ...addStaticTutorialImageUris(seed) }, {
       id: `tutorial-${safeName.toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'card'}`,
       instanceId: generateCardId(),
       ownerId: safeOwnerId,
@@ -6712,7 +6784,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         changed = true;
       } else {
         const hydratedCard = hydrateTutorialCardPreviewData(card);
-        if (JSON.stringify(hydratedCard.card_faces || null) !== JSON.stringify(card.card_faces || null) || hydratedCard.image_uri !== card.image_uri) {
+        if (JSON.stringify(hydratedCard.card_faces || null) !== JSON.stringify(card.card_faces || null) || JSON.stringify(hydratedCard.image_uris || null) !== JSON.stringify(card.image_uris || null) || hydratedCard.image_uri !== card.image_uri) {
           nextCards = nextCards.map((candidate) => candidate.instanceId === card.instanceId ? hydratedCard : candidate);
           card = hydratedCard;
           changed = true;
@@ -11885,6 +11957,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                       targetInfo={getTargetInfoFor(card)}
                       attachmentLabel={getAttachmentBadgeLabel(card)}
                       attachedCount={getAttachedCount(card)}
+                      isTutorialGame={isTutorialGame}
                     />
                   </div>
                 );
@@ -12047,6 +12120,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                       targetInfo={getTargetInfoFor(card)}
                       attachmentLabel={getAttachmentBadgeLabel(card)}
                       attachedCount={getAttachedCount(card)}
+                      isTutorialGame={isTutorialGame}
                     />
                   </div>
                 );
@@ -12410,6 +12484,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               onMove={() => openHandCardDetail(card)}
               onZoom={setZoomedCard}
               targetInfo={getTargetInfoFor(card)}
+              isTutorialGame={isTutorialGame}
             />
           ))}
           <button onClick={canAct ? () => setDiceMenuOpen(true) : undefined} className={`ml-4 px-3 py-8 border-l border-slate-700 text-slate-500 hover:text-purple-300 flex flex-col items-center justify-center text-[10px] font-bold ${canAct ? '' : 'opacity-40 cursor-not-allowed'}`}>

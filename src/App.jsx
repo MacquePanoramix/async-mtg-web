@@ -6649,6 +6649,13 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         actionSource: 'setup'
       });
     };
+    const opponentId = opponent?.id || (game?.players || []).find((player) => player?.isScriptedOpponent || /Nicol Bolas/i.test(player?.name || ''))?.id || null;
+    const opponentOwnerId = opponentId || userId;
+    if (stepId === 'B1_01_bolas_island' && !opponentId) {
+      logTutorialPhaseDebug({ didWrite: false, reason: 'waiting for scripted Nicol Bolas opponent before land setup' });
+      return;
+    }
+
     const needs = {
       play_land: [{ name: 'Mountain', zone: ZONES.HAND, ownerId: userId, controllerId: userId }],
       tap_mountain_red: [{ name: 'Mountain', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId, tapped: false }],
@@ -6781,7 +6788,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       P2_07_open_delver: [{ name: 'Delver of Secrets', zone: ZONES.HAND, ownerId: userId, controllerId: userId }],
       P2_08_cast_delver: [{ name: 'Delver of Secrets', zone: ZONES.HAND, ownerId: userId, controllerId: userId }],
       P2_09_resolve_delver: [{ name: 'Delver of Secrets', zone: 'stack_zone', ownerId: userId, controllerId: userId, stack: true }],
-      B1_01_bolas_island: [{ name: 'Island', zone: ZONES.BATTLEFIELD, ownerId: opponent?.id || userId, controllerId: opponent?.id || userId }],
+      B1_01_bolas_island: [{ name: 'Island', zone: ZONES.BATTLEFIELD, ownerId: opponentOwnerId, controllerId: opponentOwnerId }],
       B1_02_bolas_pass: [{ name: 'Island', zone: ZONES.BATTLEFIELD, ownerId: opponent?.id || userId, controllerId: opponent?.id || userId }],
       B2_02_bolas_swamp: [{ name: 'Swamp', zone: ZONES.BATTLEFIELD, ownerId: opponent?.id || userId, controllerId: opponent?.id || userId }],
       B2_03_bolas_cast_knight: [
@@ -6901,7 +6908,6 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         changed = true;
       }
     }
-    const opponentId = opponent?.id || null;
     let forcedPhase = null;
     let forcedTurnPlayerId = null;
     let forcedCombat = null;
@@ -7083,7 +7089,13 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       forcedStack: forcedStack ? (forcedStack || []).map((item) => ({ name: item?.name || null, sourceId: item?.sourceId || null, controllerId: item?.controllerId || null })) : null,
       forcedCombat: forcedCombat || null
     });
-    if (tutorialSetupAppliedRef.current?.stepId === stepId && tutorialSetupAppliedRef.current?.signature === desiredSetupSignature) {
+    const bolasIslandActionSatisfied = () => {
+      if (stepId !== 'B1_01_bolas_island' || !opponentId) return true;
+      const hasBolasIsland = (game.cards || []).some((card) => (card.name === 'Island' || card.card_faces?.some((face) => face?.name === 'Island')) && card.ownerId === opponentId && card.controllerId === opponentId && card.zone === ZONES.BATTLEFIELD);
+      const hasBolasIslandLog = (game.log || []).some((entry) => String(entry?.message || entry?.desc || '').includes('Nicol Bolas played Island.'));
+      return hasBolasIsland && hasBolasIslandLog;
+    };
+    if (tutorialSetupAppliedRef.current?.stepId === stepId && tutorialSetupAppliedRef.current?.signature === desiredSetupSignature && bolasIslandActionSatisfied()) {
       logTutorialPhaseDebug({ requestedPhase: forcedPhase, didWrite: false, reason: 'setup already applied for signature', setupAppliedSignature: desiredSetupSignature });
       return;
     }
@@ -7134,10 +7146,23 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     if (forcedCombat && JSON.stringify(forcedCombat) !== JSON.stringify(game.combat || getEmptyCombatState())) updates.combat = forcedCombat;
 
     const updateKeys = Object.keys(updates);
+    const optimisticScriptedActionId = stepId === 'B1_01_bolas_island' && updateKeys.length > 0 ? `tutorial-script-${stepId}-${Date.now()}` : null;
     if (updateKeys.length > 0) {
       setTutorialSyncPending(true);
+      if (optimisticScriptedActionId) {
+        setOptimisticGame({
+          ...game,
+          ...updates,
+          combat: normalizeCombatState(updates.combat || game.combat),
+          __optimisticActionId: optimisticScriptedActionId,
+          __tutorialScriptedActionId: optimisticScriptedActionId
+        });
+      }
       try {
         await updateDoc(doc(db, 'games_v3', gameId), { ...updates, updatedAt: serverTimestamp() });
+        if (optimisticScriptedActionId) {
+          setOptimisticGame((current) => current?.__tutorialScriptedActionId === optimisticScriptedActionId ? null : current);
+        }
       } finally {
         setTutorialSyncPending(false);
       }
@@ -7150,6 +7175,14 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     setTutorialOverlayError(null);
     } catch (error) {
       console.error('Tutorial step setup failed', error);
+      if (stepId === 'B1_01_bolas_island') {
+        setOptimisticGame((current) => current?.__tutorialScriptedActionId ? null : current);
+        const message = 'Tutorial action failed: Nicol Bolas could not play Island.';
+        setTutorialOverlayError(message);
+        setNotification(message);
+        setTimeout(() => setNotification(null), 5000);
+        return;
+      }
       const message = isResourceExhaustedError(error)
         ? 'Tutorial sync hit Firebase quota. Wait a moment, then retry this step.'
         : 'Tutorial step unavailable. Skip or restart tutorial.';

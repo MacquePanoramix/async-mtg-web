@@ -892,8 +892,8 @@ const PHASES = [
 ];
 
 const TUTORIAL_NATURAL_PHASE_ADVANCE_STEPS = {
-  P2_02_reach_draw: { fromPhase: 'upkeep', targetPhase: 'draw', completionDetail: 'PASS_PRIORITY:draw' },
-  P2_03_main1: { fromPhase: 'draw', targetPhase: 'main1', completionDetail: 'PASS_PRIORITY:main1' },
+  P2_02_reach_draw: { fromPhase: 'upkeep', targetPhase: 'draw', completionDetail: 'PASS_PRIORITY:draw', scriptedBolasPass: true },
+  P2_03_main1: { fromPhase: 'draw', targetPhase: 'main1', completionDetail: 'PASS_PRIORITY:main1', scriptedBolasPass: true },
   P3_02_upkeep: { fromPhase: 'untap', targetPhase: 'upkeep', completionDetail: 'PASS_PRIORITY:upkeep' },
   P3_05_draw_ponder: { fromPhase: 'upkeep', targetPhase: 'draw', completionDetail: null },
   P3_06_main1: { fromPhase: 'draw', targetPhase: 'main1', completionDetail: 'PASS_PRIORITY:main1' },
@@ -4119,6 +4119,64 @@ const advancePassPriorityState = (currentGame, logEntry, onTurnStart, layoutOpti
   updatedGame.priorityPlayerId = nextPlayerId;
   updatedGame.log.push(withUpdatedLogContext(logEntry, 'PASS_PRIORITY', 'priority', `${actorName} passed priority.`));
   return updatedGame;
+};
+
+const maybeApplyTutorialBolasPassAfterUserPass = ({
+  actionType,
+  currentGame,
+  passedGame,
+  naturalPhaseAdvance,
+  actingPlayerId,
+  bolasPlayer,
+  onTurnStart,
+  layoutOptions
+}) => {
+  if (!naturalPhaseAdvance || naturalPhaseAdvance.scriptedBolasPass === false) return passedGame;
+  if (!['PASS', 'PASS_PRIORITY'].includes(actionType)) return passedGame;
+  if (currentGame?.isTutorial !== true) return passedGame;
+  if (!bolasPlayer?.id || !actingPlayerId) return passedGame;
+
+  const latestLogEntries = currentGame.log || [];
+  const latestLog = latestLogEntries[latestLogEntries.length - 1] || null;
+  const previousLog = latestLogEntries[latestLogEntries.length - 2] || null;
+  const alreadyLoggedScriptedBolasPassForPhaseAdvance = (
+    currentGame.phase === naturalPhaseAdvance.fromPhase &&
+    latestLog?.type === 'PASS_PRIORITY' &&
+    latestLog?.phase === naturalPhaseAdvance.fromPhase &&
+    latestLog?.playerId === bolasPlayer.id &&
+    /Nicol Bolas passed priority\./i.test(latestLog?.message || '') &&
+    previousLog?.type === 'PASS_PRIORITY' &&
+    previousLog?.phase === naturalPhaseAdvance.fromPhase &&
+    previousLog?.playerId === actingPlayerId
+  );
+
+  const shouldScriptBolasPhaseAdvancePass = (
+    currentGame.phase === naturalPhaseAdvance.fromPhase &&
+    currentGame.phase !== naturalPhaseAdvance.targetPhase &&
+    (currentGame.stack || []).length === 0 &&
+    currentGame.priorityPlayerId === actingPlayerId &&
+    !alreadyLoggedScriptedBolasPassForPhaseAdvance &&
+    passedGame.phase === naturalPhaseAdvance.fromPhase &&
+    passedGame.phase !== naturalPhaseAdvance.targetPhase &&
+    (passedGame.stack || []).length === 0 &&
+    passedGame.priorityPlayerId === bolasPlayer.id
+  );
+
+  if (!shouldScriptBolasPhaseAdvancePass) return passedGame;
+
+  const bolasPassLogEntry = buildGameLogEntry({
+    currentGame: passedGame,
+    playerId: bolasPlayer.id,
+    playerName: bolasPlayer.name || 'Nicol Bolas',
+    type: 'PASS_PRIORITY',
+    category: 'priority',
+    message: 'Nicol Bolas passed priority.'
+  });
+  const passedGameWithBolasPassLog = {
+    ...passedGame,
+    log: [...(passedGame.log || []), bolasPassLogEntry]
+  };
+  return advancePassPriorityState(passedGameWithBolasPassLog, bolasPassLogEntry, onTurnStart, layoutOptions);
 };
 
 
@@ -8368,47 +8426,17 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         let passedGame = advancePassPriorityState(currentGame, passLogEntry, (event) => turnStartEvents.push(event), layoutOptions);
 
         const bolasPlayer = currentPlayers.find((player) => player?.id !== userId && /Nicol Bolas/i.test(player?.name || ''));
-        const latestLogEntries = currentGame.log || [];
-        const latestLog = latestLogEntries[latestLogEntries.length - 1] || null;
-        const previousLog = latestLogEntries[latestLogEntries.length - 2] || null;
         const naturalPhaseAdvance = currentGame.isTutorial === true ? TUTORIAL_NATURAL_PHASE_ADVANCE_STEPS[currentGame.tutorial?.stepId] : null;
-        const alreadyLoggedScriptedBolasPassForPhaseAdvance = (
-          Boolean(naturalPhaseAdvance) &&
-          currentGame.phase === naturalPhaseAdvance.fromPhase &&
-          latestLog?.type === 'PASS_PRIORITY' &&
-          latestLog?.phase === naturalPhaseAdvance.fromPhase &&
-          latestLog?.playerId === bolasPlayer?.id &&
-          /Nicol Bolas passed priority\./i.test(latestLog?.message || '') &&
-          previousLog?.type === 'PASS_PRIORITY' &&
-          previousLog?.phase === naturalPhaseAdvance.fromPhase &&
-          previousLog?.playerId === userId
-        );
-        const shouldScriptBolasPhaseAdvancePass = (
-          Boolean(naturalPhaseAdvance) &&
-          actionType === 'PASS_PRIORITY' &&
-          currentGame.phase === naturalPhaseAdvance.fromPhase &&
-          currentGame.phase !== naturalPhaseAdvance.targetPhase &&
-          (currentGame.stack || []).length === 0 &&
-          currentGame.priorityPlayerId === userId &&
-          Boolean(bolasPlayer?.id) &&
-          !alreadyLoggedScriptedBolasPassForPhaseAdvance &&
-          passedGame.phase === naturalPhaseAdvance.fromPhase &&
-          passedGame.phase !== naturalPhaseAdvance.targetPhase &&
-          (passedGame.stack || []).length === 0 &&
-          passedGame.priorityPlayerId === bolasPlayer?.id
-        );
-
-        if (shouldScriptBolasPhaseAdvancePass) {
-          const bolasPassLogEntry = buildGameLogEntry({
-            currentGame: passedGame,
-            playerId: bolasPlayer.id,
-            playerName: bolasPlayer.name || 'Nicol Bolas',
-            type: 'PASS_PRIORITY',
-            category: 'priority',
-            message: 'Nicol Bolas passed priority.'
-          });
-          passedGame = advancePassPriorityState(passedGame, bolasPassLogEntry, (event) => turnStartEvents.push(event), layoutOptions);
-        }
+        passedGame = maybeApplyTutorialBolasPassAfterUserPass({
+          actionType,
+          currentGame,
+          passedGame,
+          naturalPhaseAdvance,
+          actingPlayerId: userId,
+          bolasPlayer,
+          onTurnStart: (event) => turnStartEvents.push(event),
+          layoutOptions
+        });
 
         const { game: proxyGame } = runProxyAutoPassAdvances(passedGame, userId, actorName, (event) => turnStartEvents.push(event));
         completedNaturalPhaseAdvanceAfterWrite = naturalPhaseAdvance?.completionDetail && proxyGame.phase === naturalPhaseAdvance.targetPhase ? { stepId: currentGame.tutorial?.stepId, detail: naturalPhaseAdvance.completionDetail } : null;

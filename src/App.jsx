@@ -923,6 +923,19 @@ const ZONES = {
   COMMAND: 'command'
 };
 
+const getScryfallNamedImageUrl = (cardName = '', version = 'normal', face = null) => {
+  const lookupName = String(cardName || 'Tutorial Card').replace(/\s*\/\/.*$/, '').trim();
+  if (!lookupName) return null;
+  const faceParam = face ? `&face=${encodeURIComponent(face)}` : '';
+  return `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(lookupName)}&format=image&version=${version}${faceParam}`;
+};
+
+const buildScryfallNamedImageUris = (cardName = '', face = null) => ({
+  small: getScryfallNamedImageUrl(cardName, 'small', face),
+  normal: getScryfallNamedImageUrl(cardName, 'normal', face),
+  large: getScryfallNamedImageUrl(cardName, 'large', face)
+});
+
 const TUTORIAL_DELVER_CARD = {
   name: 'Delver of Secrets // Insectile Aberration',
   mana_cost: '{U}',
@@ -942,7 +955,9 @@ const TUTORIAL_DELVER_CARD = {
       colors: ['U'],
       power: '1',
       toughness: '1',
-      image_uris: { normal: 'https://cards.scryfall.io/normal/front/7/9/79c24d7c-5c4b-4989-b25f-b168e5dfd861.jpg' }
+      image_uris: buildScryfallNamedImageUris('Delver of Secrets', 'front'),
+      image_uri: getScryfallNamedImageUrl('Delver of Secrets', 'normal', 'front'),
+      imageUrl: getScryfallNamedImageUrl('Delver of Secrets', 'normal', 'front')
     },
     {
       name: 'Insectile Aberration',
@@ -952,9 +967,14 @@ const TUTORIAL_DELVER_CARD = {
       color_indicator: ['U'],
       power: '3',
       toughness: '2',
-      image_uris: { normal: 'https://cards.scryfall.io/normal/back/7/9/79c24d7c-5c4b-4989-b25f-b168e5dfd861.jpg' }
+      image_uris: buildScryfallNamedImageUris('Delver of Secrets', 'back'),
+      image_uri: getScryfallNamedImageUrl('Delver of Secrets', 'normal', 'back'),
+      imageUrl: getScryfallNamedImageUrl('Delver of Secrets', 'normal', 'back')
     }
   ],
+  image_uris: buildScryfallNamedImageUris('Delver of Secrets', 'front'),
+  image_uri: getScryfallNamedImageUrl('Delver of Secrets', 'normal', 'front'),
+  imageUrl: getScryfallNamedImageUrl('Delver of Secrets', 'normal', 'front'),
   activeFaceIndex: 0
 };
 
@@ -1032,13 +1052,6 @@ const getTutorialDuelCardNames = () => [...new Set([
   ...TUTORIAL_LIBRARY_BOLAS,
   ...TUTORIAL_STARTER_CARD_SEED.map((card) => card.name)
 ].map(normalizeTutorialCardNameForLookup).filter(Boolean))];
-
-const getScryfallNamedImageUrl = (cardName = '', version = 'normal') => {
-  const lookupName = normalizeTutorialCardNameForLookup(cardName);
-  if (!lookupName || TUTORIAL_NON_SCRYFALL_CARD_NAMES.has(lookupName)) return null;
-  return `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(lookupName)}&format=image&version=${version}`;
-};
-
 
 const buildScryfallImageUrisFromId = (id, side = 'front') => {
   if (typeof id !== 'string' || !id) return null;
@@ -2202,7 +2215,9 @@ const COMPACT_CARD_FACE_FIELDS = [
   'toughness',
   'loyalty',
   'defense',
-  'image_uri'
+  'image_uri',
+  'imageUrl',
+  'image_url'
 ];
 const COMPACT_CARD_FIELDS = [
   'id',
@@ -2220,6 +2235,8 @@ const COMPACT_CARD_FIELDS = [
   'loyalty',
   'defense',
   'image_uri',
+  'imageUrl',
+  'image_url',
   'set',
   'set_name',
   'collector_number',
@@ -2284,7 +2301,8 @@ const sanitizeScryfallCardFaceForGame = (face = {}) => {
   const compactFace = copyDefinedFields(face, COMPACT_CARD_FACE_FIELDS);
   const imageUris = sanitizeImageUris(face.image_uris);
   if (imageUris) compactFace.image_uris = imageUris;
-  if (!compactFace.image_uri) compactFace.image_uri = getBestImageUriFromImageUris(imageUris);
+  if (!compactFace.image_uri) compactFace.image_uri = getBestImageUriFromImageUris(imageUris) || compactFace.imageUrl || compactFace.image_url;
+  if (!compactFace.imageUrl && compactFace.image_uri) compactFace.imageUrl = compactFace.image_uri;
   Object.keys(compactFace).forEach((key) => compactFace[key] === undefined && delete compactFace[key]);
   return compactFace;
 };
@@ -2311,6 +2329,7 @@ const sanitizeScryfallCardForGame = (data = {}, extraFields = {}) => {
     compactCard.activeFaceIndex = Number.isInteger(extraFields.activeFaceIndex) ? extraFields.activeFaceIndex : (Number.isInteger(data.activeFaceIndex) ? data.activeFaceIndex : 0);
   }
   if (!compactCard.image_uri) compactCard.image_uri = getCardImageUri({ ...compactCard, activeFaceIndex: compactCard.activeFaceIndex || 0 }) || getCardImageUri(data);
+  if (!compactCard.imageUrl && compactCard.image_uri) compactCard.imageUrl = compactCard.image_uri;
   Object.keys(compactCard).forEach((key) => compactCard[key] === undefined && delete compactCard[key]);
   return compactCard;
 };

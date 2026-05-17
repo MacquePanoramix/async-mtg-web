@@ -6650,7 +6650,6 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       });
     };
     const opponentId = opponent?.id || (game?.players || []).find((player) => player?.isScriptedOpponent || /Nicol Bolas/i.test(player?.name || ''))?.id || null;
-    const opponentOwnerId = opponentId || userId;
     if (stepId === 'B1_01_bolas_island' && !opponentId) {
       logTutorialPhaseDebug({ didWrite: false, reason: 'waiting for scripted Nicol Bolas opponent before land setup' });
       return;
@@ -6788,7 +6787,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       P2_07_open_delver: [{ name: 'Delver of Secrets', zone: ZONES.HAND, ownerId: userId, controllerId: userId }],
       P2_08_cast_delver: [{ name: 'Delver of Secrets', zone: ZONES.HAND, ownerId: userId, controllerId: userId }],
       P2_09_resolve_delver: [{ name: 'Delver of Secrets', zone: 'stack_zone', ownerId: userId, controllerId: userId, stack: true }],
-      B1_01_bolas_island: [{ name: 'Island', zone: ZONES.BATTLEFIELD, ownerId: opponentOwnerId, controllerId: opponentOwnerId }],
+      B1_01_bolas_island: [],
       B1_02_bolas_pass: [{ name: 'Island', zone: ZONES.BATTLEFIELD, ownerId: opponent?.id || userId, controllerId: opponent?.id || userId }],
       B2_02_bolas_swamp: [{ name: 'Swamp', zone: ZONES.BATTLEFIELD, ownerId: opponent?.id || userId, controllerId: opponent?.id || userId }],
       B2_03_bolas_cast_knight: [
@@ -7097,6 +7096,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     };
     if (tutorialSetupAppliedRef.current?.stepId === stepId && tutorialSetupAppliedRef.current?.signature === desiredSetupSignature && bolasIslandActionSatisfied()) {
       logTutorialPhaseDebug({ requestedPhase: forcedPhase, didWrite: false, reason: 'setup already applied for signature', setupAppliedSignature: desiredSetupSignature });
+      if (stepId === 'B1_01_bolas_island') setTutorialOverlayError(null);
       return;
     }
 
@@ -7118,11 +7118,77 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       const bolasPlayer = currentPlayers.find((player) => /Nicol Bolas/i.test(player?.name || ''));
       if (!bolasPlayer || Number(bolasPlayer.life) === lifeTotal) return;
       updates.players = currentPlayers.map((player) => player.id === bolasPlayer.id ? { ...player, life: lifeTotal } : player);
-      updates.log = pruneLogForFirestore([...(game.log || []), buildGameLogEntry({ currentGame: game, playerId: userId, playerName: 'Tutorial', type: 'TUTORIAL_SNAPSHOT', category: 'tutorial', message: reason })]);
+      updates.log = pruneLogForFirestore([...(updates.log || game.log || []), buildGameLogEntry({ currentGame: game, playerId: userId, playerName: 'Tutorial', type: 'TUTORIAL_SNAPSHOT', category: 'tutorial', message: reason })]);
+    };
+    const ensureBolasHasPlayedIsland = () => {
+      const bolasPlayer = (game.players || []).find((player) => player?.id === opponentId) || (game.players || []).find((player) => player?.isScriptedOpponent || /Nicol Bolas/i.test(player?.name || ''));
+      if (!bolasPlayer?.id) {
+        console.debug('[Tutorial Bolas Island] missing Nicol Bolas player');
+        return false;
+      }
+
+      const bolasId = bolasPlayer.id;
+      const isIslandCard = (card = {}) => getCardDisplayName(card, card?.name || '') === 'Island' || card?.name === 'Island' || card?.card_faces?.some((face) => face?.name === 'Island');
+      const getLogMessage = (entry = {}) => String(entry?.message || entry?.text || entry?.desc || '');
+      const currentLog = updates.log || game.log || [];
+      const hasPlayLog = currentLog.some((entry) => getLogMessage(entry) === 'Nicol Bolas played Island.' || getLogMessage(entry).includes('Nicol Bolas played Island.'));
+      const battlefieldIslands = nextCards.filter((card) => isIslandCard(card) && card.zone === ZONES.BATTLEFIELD && card.controllerId === bolasId);
+      const isBolasIslandCandidate = (card = {}) => {
+        if (!isIslandCard(card)) return false;
+        if (card.ownerId === bolasId || card.controllerId === bolasId) return true;
+        const ids = `${card.id || ''} ${card.instanceId || ''}`;
+        return /tutorial-bolas/i.test(ids);
+      };
+
+      console.debug('[Tutorial Bolas Island] Bolas id:', bolasId);
+      console.debug('[Tutorial Bolas Island] Islands found:', nextCards.filter(isIslandCard).map((card) => card.instanceId || card.id || card.name));
+      console.debug('[Tutorial Bolas Island] zones found:', nextCards.filter(isIslandCard).map((card) => card.zone || null));
+      console.debug('[Tutorial Bolas Island] owners/controllers found:', nextCards.filter(isIslandCard).map((card) => ({ ownerId: card.ownerId || null, controllerId: card.controllerId || null })));
+
+      let createdFallbackIsland = false;
+      if (battlefieldIslands.length > 0) {
+        const [keptIsland, ...duplicateBattlefieldIslands] = battlefieldIslands;
+        const needsBattlefieldRepair = keptIsland.ownerId !== bolasId || keptIsland.controllerId !== bolasId || keptIsland.tapped || keptIsland.phasedOut || !tutorialCardHasRealImageData(keptIsland);
+        if (needsBattlefieldRepair || duplicateBattlefieldIslands.length > 0) {
+          const duplicateIds = new Set(duplicateBattlefieldIslands.map((card) => card.instanceId));
+          nextCards = nextCards.map((card) => {
+            if (card.instanceId === keptIsland.instanceId) {
+              return { ...hydrateTutorialCardPreviewData(card), zone: ZONES.BATTLEFIELD, ownerId: bolasId, controllerId: bolasId, tapped: false, phasedOut: false };
+            }
+            if (duplicateIds.has(card.instanceId)) {
+              return { ...hydrateTutorialCardPreviewData(card), zone: ZONES.LIBRARY, ownerId: bolasId, controllerId: bolasId, tapped: false, phasedOut: false };
+            }
+            return card;
+          });
+          changed = true;
+        }
+      } else {
+        const existingIsland = nextCards.find((card) => isBolasIslandCandidate(card) && [ZONES.HAND, ZONES.LIBRARY].includes(card.zone)) || nextCards.find(isBolasIslandCandidate);
+        if (existingIsland?.instanceId) {
+          nextCards = nextCards.map((card) => card.instanceId === existingIsland.instanceId
+            ? { ...hydrateTutorialCardPreviewData(card), zone: ZONES.BATTLEFIELD, ownerId: bolasId, controllerId: bolasId, tapped: false, phasedOut: false }
+            : card);
+        } else {
+          nextCards.push({
+            ...buildTutorialCardInstance('Island', bolasId, ZONES.BATTLEFIELD, bolasId),
+            ownerId: bolasId,
+            controllerId: bolasId,
+            zone: ZONES.BATTLEFIELD,
+            tapped: false,
+            revealed: false
+          });
+          createdFallbackIsland = true;
+        }
+        changed = true;
+      }
+
+      console.debug('[Tutorial Bolas Island] created fallback Island:', createdFallbackIsland ? 'yes' : 'no');
+      if (!hasPlayLog) appendTutorialLogOnce('Nicol Bolas played Island.', 'PLAY_LAND', 'card');
+      return true;
     };
     if (stepId === 'B1_01_bolas_island') {
       updateBolasLife(17, 'Lightning Bolt resolved earlier: Nicol Bolas is at 17 life.');
-      appendTutorialLogOnce('Nicol Bolas played Island.', 'PLAY_LAND', 'card');
+      if (!ensureBolasHasPlayedIsland()) return;
     }
     if (stepId === 'B1_02_bolas_pass') {
       appendTutorialLogOnce('Nicol Bolas passed the turn.', 'PASS_TURN', 'priority');

@@ -1234,21 +1234,6 @@ const tutorialCardHasRealImageData = (card = {}) => {
   return card.card_faces.every((face) => face?.image_uri || face?.image_uris?.normal || face?.image_uris?.large || face?.image_uris?.small);
 };
 
-const shouldSeedTutorialCardsForPlayer = (cards = [], playerId) => {
-  const playerCards = cards.filter((card) => card?.ownerId === playerId && [
-    ZONES.LIBRARY,
-    ZONES.HAND,
-    ZONES.BATTLEFIELD,
-    ZONES.GRAVEYARD,
-    ZONES.EXILE,
-    ZONES.COMMAND
-  ].includes(card?.zone));
-  if (playerCards.length === 0) return true;
-  return playerCards.some((card) => !tutorialCardHasRealImageData(card));
-};
-
-
-
 const getPhaseLabel = (phaseId) => PHASES.find((phase) => phase.id === phaseId)?.label || phaseId || 'Unknown step';
 
 const CLEANUP_OLD_GAME_DAYS = 7;
@@ -3679,6 +3664,74 @@ const getCombatDamageStepLabel = (step) => COMBAT_DAMAGE_STEP_LABELS[normalizeCo
 const isPlainObject = (value) => Boolean(value && typeof value === 'object' && !Array.isArray(value));
 const getCombatDamageStep = (combatState = {}) => normalizeCombatDamageStep(isPlainObject(combatState) ? combatState.combatDamageStep : null);
 const getEmptyCombatState = () => ({ attackers: {}, blockers: {}, combatDamageStep: null });
+
+const createTutorialRunId = () => `tutorial-run-${Date.now()}-${generateCardId()}`;
+
+const buildFreshTutorialState = (playerId, runId = createTutorialRunId()) => ({
+  scriptVersion: TUTORIAL_SCRIPT_VERSION,
+  runId,
+  stepId: 'intro',
+  completedStepIds: [],
+  playerId,
+  opponentName: 'Nicol Bolas',
+  opponentIsScripted: true,
+  finished: false,
+  inactive: false
+});
+
+const buildFreshTutorialPlayers = ({ playerId, playerName = 'Planeswalker', bolasId, existingPlayers = [] }) => {
+  const startingLife = getStartingLifeForMode(GAME_MODES.REGULAR);
+  const existingHuman = (existingPlayers || []).find((player) => player?.id === playerId && !player?.isScriptedOpponent) || {};
+  const existingBolas = (existingPlayers || []).find((player) => player?.id === bolasId)
+    || (existingPlayers || []).find((player) => player?.isScriptedOpponent || /Nicol Bolas/i.test(player?.name || ''))
+    || {};
+  const basePlayer = (player, fallbackName, turnOrder, extras = {}) => ({
+    ...player,
+    ...extras,
+    id: player.id || extras.id,
+    name: player.name || fallbackName,
+    life: startingLife,
+    turnOrder,
+    counters: { poison: 0, energy: 0, experience: 0 },
+    manaPool: clearManaPool(),
+    statuses: { monarch: false, initiative: false, citysBlessing: false, ringBearerLevel: 0, custom: [] },
+    emblems: [],
+    deckExtras: getEmptyDeckExtras(),
+    handRevealed: false,
+    lastSeenChatAt: player.lastSeenChatAt || Date.now()
+  });
+  return [
+    basePlayer(existingHuman, playerName || 'Planeswalker', 0, { id: playerId, isScriptedOpponent: false }),
+    basePlayer(existingBolas, 'Nicol Bolas', 1, { id: bolasId, name: 'Nicol Bolas', isScriptedOpponent: true })
+  ];
+};
+
+const buildFreshTutorialResetFields = ({ playerId, playerName, bolasId, existingPlayers = [], cards = [] }) => ({
+  tutorial: buildFreshTutorialState(playerId),
+  cards,
+  players: buildFreshTutorialPlayers({ playerId, playerName, bolasId, existingPlayers }),
+  phase: 'main1',
+  dayNight: null,
+  activePlayerIndex: 0,
+  priorityIndex: 0,
+  priorityPlayerId: playerId,
+  turnPlayerId: playerId,
+  turnNumber: 1,
+  consecutivePasses: 0,
+  stack: [],
+  targets: [],
+  reveals: [],
+  autopass: {},
+  undoStack: [],
+  combat: getEmptyCombatState(),
+  log: [],
+  tutorialOverlayError: null,
+  tutorialActionFailure: null,
+  tutorialScriptedActions: {},
+  tutorialSetupMarkers: {},
+  tutorialCompletionMarkers: {},
+  tutorialNotification: null
+});
 const normalizeCombatAssignmentMap = (assignments) => (isPlainObject(assignments) ? assignments : {});
 const normalizeCombatState = (combatState = getEmptyCombatState()) => {
   const safeCombatState = isPlainObject(combatState) ? combatState : {};
@@ -6080,6 +6133,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     const baseTutorial = optimisticTutorialRef.current || displayedTutorialState || game.tutorial || {};
     const nextTutorial = {
       scriptVersion: baseTutorial.scriptVersion || TUTORIAL_SCRIPT_VERSION,
+      runId: updates.runId || baseTutorial.runId || createTutorialRunId(),
       stepId: updates.stepId ?? baseTutorial.stepId ?? 'intro',
       completedStepIds: capTutorialCompletedStepIds(updates.completedStepIds ?? baseTutorial.completedStepIds ?? []),
       playerId: baseTutorial.playerId || userId,
@@ -6273,34 +6327,16 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     if (!gameId || !game?.isTutorial || !userId || tutorialResetBusy) return false;
     setTutorialResetBusy(true);
     try {
-      const existingBolasId = (game.players || []).find((player) => player?.isScriptedOpponent)?.id || `tutorial-bolas-${gameId}`;
-      const startingLife = getStartingLifeForMode(GAME_MODES.REGULAR);
-      const resetPlayers = (game.players || []).map((player, index) => ({
-        ...player,
-        life: startingLife,
-        turnOrder: index,
-        counters: { poison: 0, energy: 0, experience: 0 },
-        manaPool: clearManaPool(),
-        statuses: { monarch: false, initiative: false, citysBlessing: false, ringBearerLevel: 0, custom: [] },
-        emblems: [],
-        deckExtras: getEmptyDeckExtras(),
-        handRevealed: false
-      }));
-      const safePlayers = resetPlayers.length >= 2 ? resetPlayers : [
-        { id: userId, name: displayName || 'Planeswalker', life: startingLife, turnOrder: 0, counters: { poison: 0, energy: 0, experience: 0 }, manaPool: clearManaPool(), statuses: { monarch: false, initiative: false, citysBlessing: false, ringBearerLevel: 0, custom: [] }, emblems: [], deckExtras: getEmptyDeckExtras(), handRevealed: false },
-        { id: existingBolasId, name: 'Nicol Bolas', life: startingLife, turnOrder: 1, isScriptedOpponent: true, counters: { poison: 0, energy: 0, experience: 0 }, manaPool: clearManaPool(), statuses: { monarch: false, initiative: false, citysBlessing: false, ringBearerLevel: 0, custom: [] }, emblems: [], deckExtras: getEmptyDeckExtras(), handRevealed: false }
-      ];
-      const nextTutorial = {
-        scriptVersion: TUTORIAL_SCRIPT_VERSION,
-        stepId: 'intro',
-        completedStepIds: [],
-        playerId: userId,
-        opponentName: 'Nicol Bolas',
-        opponentIsScripted: true,
-        finished: false,
-        inactive: false
-      };
+      const existingBolasId = (game.players || []).find((player) => player?.isScriptedOpponent || /Nicol Bolas/i.test(player?.name || ''))?.id || `tutorial-bolas-${gameId}`;
       const hydratedTutorialCards = await hydrateTutorialDuelCards(userId, existingBolasId);
+      const resetFields = buildFreshTutorialResetFields({
+        playerId: userId,
+        playerName: displayName || 'Planeswalker',
+        bolasId: existingBolasId,
+        existingPlayers: game.players || [],
+        cards: hydratedTutorialCards
+      });
+      const nextTutorial = resetFields.tutorial;
       optimisticTutorialRef.current = nextTutorial;
       setOptimisticTutorialState(nextTutorial);
       setTutorialMinimized(false);
@@ -6315,23 +6351,12 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       setPlayerStatsOpen(false);
       setStackDetailOpen(false);
       setUndoConfirmOpen(false);
+      tutorialSetupAppliedRef.current = { stepId: null, signature: null };
+      setOptimisticGame(null);
+      setTutorialDebugTiming({ lastAction: null, localAdvanceMs: null, firestoreWriteMs: null, lastCompletionEvent: null, ignoredCompletion: null });
+      setTutorialActivationDebug(null);
       await updateDoc(doc(db, 'games_v3', gameId), {
-        tutorial: nextTutorial,
-        cards: hydratedTutorialCards,
-        players: safePlayers,
-        phase: 'main1',
-        activePlayerIndex: 0,
-        priorityIndex: 0,
-        priorityPlayerId: userId,
-        turnPlayerId: userId,
-        turnNumber: 1,
-        consecutivePasses: 0,
-        stack: [],
-        targets: [],
-        reveals: [],
-        autopass: {},
-        undoStack: [],
-        combat: getEmptyCombatState(),
+        ...resetFields,
         updatedAt: serverTimestamp()
       });
       setNotification('Tutorial battle reset to a fresh opening state.');
@@ -6353,7 +6378,13 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     return updateTutorialState({ inactive: true, finished: true }, { actionLabel: 'explore tutorial' });
   };
 
-  const gameLogHasMessage = (message) => (game?.log || []).some((entry) => String(entry?.message || entry?.desc || '').includes(message));
+  const gameLogHasMessage = (message) => {
+    const currentTutorialRunId = game?.tutorial?.runId || null;
+    return (game?.log || []).some((entry) => {
+      if (currentTutorialRunId && entry?.tutorialRunId !== currentTutorialRunId) return false;
+      return String(entry?.message || entry?.desc || '').includes(message);
+    });
+  };
   const tutorialBolasBattlefieldHasIsland = () => {
     const bolasId = opponent?.id || (game?.players || []).find((player) => /Nicol Bolas/i.test(player?.name || ''))?.id || null;
     return Boolean(bolasId && (game?.cards || []).some((card) => (card.name === 'Island' || card.card_faces?.some((face) => face?.name === 'Island')) && card.controllerId === bolasId && card.ownerId === bolasId && card.zone === ZONES.BATTLEFIELD));
@@ -7122,7 +7153,11 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     const bolasIslandActionSatisfied = () => {
       if (stepId !== 'B1_01_bolas_island' || !opponentId) return true;
       const hasBolasIsland = (game.cards || []).some((card) => (card.name === 'Island' || card.card_faces?.some((face) => face?.name === 'Island')) && card.ownerId === opponentId && card.controllerId === opponentId && card.zone === ZONES.BATTLEFIELD);
-      const hasBolasIslandLog = (game.log || []).some((entry) => String(entry?.message || entry?.desc || '').includes('Nicol Bolas played Island.'));
+      const currentTutorialRunId = game.tutorial?.runId || null;
+      const hasBolasIslandLog = (game.log || []).some((entry) => {
+        if (currentTutorialRunId && entry?.tutorialRunId !== currentTutorialRunId) return false;
+        return String(entry?.message || entry?.desc || '').includes('Nicol Bolas played Island.');
+      });
       return hasBolasIsland && hasBolasIslandLog;
     };
     if (tutorialSetupAppliedRef.current?.stepId === stepId && tutorialSetupAppliedRef.current?.signature === desiredSetupSignature && bolasIslandActionSatisfied()) {
@@ -7132,8 +7167,12 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     }
 
     const updates = {};
+    const currentTutorialRunId = game.tutorial?.runId || null;
     const appendTutorialLogOnce = (message, type = 'TUTORIAL_SCRIPT', category = 'tutorial') => {
-      const hasMessage = (game.log || []).some((entry) => String(entry?.message || entry?.desc || '').includes(message));
+      const hasMessage = (game.log || []).some((entry) => {
+        if (currentTutorialRunId && entry?.tutorialRunId !== currentTutorialRunId) return false;
+        return String(entry?.message || entry?.desc || '').includes(message);
+      });
       if (hasMessage) return;
       updates.log = pruneLogForFirestore([...(updates.log || game.log || []), buildGameLogEntry({
         currentGame: { ...game, phase: forcedPhase || game.phase, turnPlayerId: forcedTurnPlayerId || game.turnPlayerId },
@@ -7141,7 +7180,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         playerName: 'Nicol Bolas',
         type,
         category,
-        message
+        message,
+        ...(currentTutorialRunId ? { tutorialRunId: currentTutorialRunId } : {})
       })]);
     };
     const updateBolasLife = (lifeTotal, reason) => {
@@ -15205,20 +15245,17 @@ export default function App() {
       const candidateSnap = await firestoreOps.getDoc(doc(db, 'games_v3', candidateId), { path: `games_v3/${candidateId}`, purpose: 'tutorial reuse' });
       if (candidateSnap.exists() && candidateSnap.data()?.isTutorial) {
         const candidateData = candidateSnap.data() || {};
-        const shouldSeedExistingTutorial = shouldSeedTutorialCardsForPlayer(candidateData.cards || [], user.uid);
+        const bolasId = candidateData.players?.find((p) => p?.isScriptedOpponent || /Nicol Bolas/i.test(p?.name || ''))?.id || `tutorial-bolas-${candidateId}`;
+        const hydratedTutorialCards = await hydrateTutorialDuelCards(user.uid, bolasId);
         checkpoint('before tutorial Firestore write', { gameId: candidateId, reusingExisting: true });
         await firestoreOps.updateDoc(doc(db, 'games_v3', candidateId), {
-          tutorial: {
-            scriptVersion: candidateData.tutorial?.scriptVersion || TUTORIAL_SCRIPT_VERSION,
-            stepId: candidateData.tutorial?.finished ? 'intro' : (candidateData.tutorial?.stepId || 'intro'),
-            completedStepIds: candidateData.tutorial?.finished ? [] : capTutorialCompletedStepIds(candidateData.tutorial?.completedStepIds || []),
-            playerId: candidateData.tutorial?.playerId || user.uid,
-            opponentName: 'Nicol Bolas',
-            opponentIsScripted: true,
-            finished: false,
-            inactive: false
-          },
-          ...(shouldSeedExistingTutorial ? { cards: await hydrateTutorialDuelCards(user.uid, candidateData.players?.find((p) => p?.isScriptedOpponent)?.id || `tutorial-bolas-${candidateId}`) } : {}),
+          ...buildFreshTutorialResetFields({
+            playerId: user.uid,
+            playerName: safeName,
+            bolasId,
+            existingPlayers: candidateData.players || [],
+            cards: hydratedTutorialCards
+          }),
           updatedAt: serverTimestamp()
         }, { path: `games_v3/${candidateId}`, purpose: 'tutorial reset' });
         checkpoint('after tutorial Firestore write', { gameId: candidateId, reusingExisting: true });
@@ -15231,7 +15268,7 @@ export default function App() {
     const shortCode = generateGameId();
     const bolasId = `tutorial-bolas-${shortCode}`;
     checkpoint('generated tutorial room code / game id', { gameId: shortCode });
-    const startingLife = getStartingLifeForMode(GAME_MODES.REGULAR);
+    const initialTutorial = buildFreshTutorialState(user.uid);
     const initialData = {
       id: shortCode,
       createdAt: serverTimestamp(),
@@ -15242,45 +15279,8 @@ export default function App() {
       allowSpectators: false,
       spectatorIds: [],
       isTutorial: true,
-      tutorial: {
-        scriptVersion: TUTORIAL_SCRIPT_VERSION,
-        stepId: 'intro',
-        completedStepIds: [],
-        playerId: user.uid,
-        opponentName: 'Nicol Bolas',
-        opponentIsScripted: true,
-        finished: false,
-        inactive: false
-      },
-      players: [
-        {
-          id: user.uid,
-          name: safeName,
-          life: startingLife,
-          turnOrder: 0,
-          counters: { poison: 0, energy: 0, experience: 0 },
-          manaPool: clearManaPool(),
-          statuses: { monarch: false, initiative: false, citysBlessing: false, ringBearerLevel: 0, custom: [] },
-          emblems: [],
-          deckExtras: getEmptyDeckExtras(),
-          handRevealed: false,
-          lastSeenChatAt: Date.now()
-        },
-        {
-          id: bolasId,
-          name: 'Nicol Bolas',
-          life: startingLife,
-          turnOrder: 1,
-          isScriptedOpponent: true,
-          counters: { poison: 0, energy: 0, experience: 0 },
-          manaPool: clearManaPool(),
-          statuses: { monarch: false, initiative: false, citysBlessing: false, ringBearerLevel: 0, custom: [] },
-          emblems: [],
-          deckExtras: getEmptyDeckExtras(),
-          handRevealed: false,
-          lastSeenChatAt: Date.now()
-        }
-      ],
+      tutorial: initialTutorial,
+      players: buildFreshTutorialPlayers({ playerId: user.uid, playerName: safeName, bolasId }),
       phase: 'main1',
       dayNight: null,
       activePlayerIndex: 0,
@@ -15302,7 +15302,8 @@ export default function App() {
         playerName: safeName || 'Unknown',
         type: 'TUTORIAL_CREATE',
         category: 'setup',
-        message: `${safeName || 'Unknown'} began the tutorial battle against Nicol Bolas.`
+        message: `${safeName || 'Unknown'} began the tutorial battle against Nicol Bolas.`,
+        tutorialRunId: initialTutorial.runId
       })]
     };
 

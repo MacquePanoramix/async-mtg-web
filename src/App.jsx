@@ -1193,15 +1193,39 @@ const hydrateTutorialCardPreviewData = (card = {}) => {
     image_uri: staticSeed.image_uri || card.image_uri,
     card_faces: staticSeed.card_faces || seed.card_faces || card.card_faces
   }, card);
-  return {
+  const activeFaceIndex = Number.isInteger(card.activeFaceIndex) ? card.activeFaceIndex : hydrated.activeFaceIndex;
+  const hydratedPreview = {
     ...card,
     ...hydrated,
     instanceId: card.instanceId,
     ownerId: card.ownerId,
     controllerId: card.controllerId,
-    zone: card.zone,
-    activeFaceIndex: Number.isInteger(card.activeFaceIndex) ? card.activeFaceIndex : hydrated.activeFaceIndex
+    zone: card.zone
   };
+  if (Number.isInteger(activeFaceIndex)) hydratedPreview.activeFaceIndex = activeFaceIndex;
+  return hydratedPreview;
+};
+
+
+const findUndefinedPaths = (value, basePath = 'updates') => {
+  const paths = [];
+  const seen = new WeakSet();
+  const visit = (current, path) => {
+    if (current === undefined) {
+      paths.push(path);
+      return;
+    }
+    if (!current || typeof current !== 'object') return;
+    if (seen.has(current)) return;
+    seen.add(current);
+    if (Array.isArray(current)) {
+      current.forEach((item, index) => visit(item, `${path}[${index}]`));
+      return;
+    }
+    Object.entries(current).forEach(([key, item]) => visit(item, path ? `${path}.${key}` : key));
+  };
+  visit(value, basePath);
+  return paths;
 };
 
 const tutorialCardHasRealImageData = (card = {}) => {
@@ -6856,6 +6880,13 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     let nextCards = Array.isArray(game.cards) ? [...game.cards] : [];
     let nextStack = Array.isArray(game.stack) ? [...game.stack] : [];
     let changed = false;
+    const bolasIslandDebugContext = {
+      updates: null,
+      updateKeys: [],
+      bolasId: opponentId,
+      cardsUpdateCount: null,
+      logUpdateCount: null
+    };
 
     try {
     needs.forEach((need) => {
@@ -7128,6 +7159,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       }
 
       const bolasId = bolasPlayer.id;
+      bolasIslandDebugContext.bolasId = bolasId;
       const isIslandCard = (card = {}) => getCardDisplayName(card, card?.name || '') === 'Island' || card?.name === 'Island' || card?.card_faces?.some((face) => face?.name === 'Island');
       const getLogMessage = (entry = {}) => String(entry?.message || entry?.text || entry?.desc || '');
       const currentLog = updates.log || game.log || [];
@@ -7212,6 +7244,17 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     if (forcedCombat && JSON.stringify(forcedCombat) !== JSON.stringify(game.combat || getEmptyCombatState())) updates.combat = forcedCombat;
 
     const updateKeys = Object.keys(updates);
+    bolasIslandDebugContext.updates = updates;
+    bolasIslandDebugContext.updateKeys = updateKeys;
+    bolasIslandDebugContext.cardsUpdateCount = updates.cards?.length;
+    bolasIslandDebugContext.logUpdateCount = updates.log?.length;
+    if (stepId === 'B1_01_bolas_island') {
+      const undefinedPaths = findUndefinedPaths(updates);
+      if (undefinedPaths.length > 0) {
+        console.error('[Tutorial Bolas Island] Firestore unsafe undefined paths:', undefinedPaths);
+        throw new Error(`Bolas Island update contains undefined fields: ${undefinedPaths.join(', ')}`);
+      }
+    }
     const optimisticScriptedActionId = stepId === 'B1_01_bolas_island' && updateKeys.length > 0 ? `tutorial-script-${stepId}-${Date.now()}` : null;
     if (updateKeys.length > 0) {
       setTutorialSyncPending(true);
@@ -7242,8 +7285,41 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     } catch (error) {
       console.error('Tutorial step setup failed', error);
       if (stepId === 'B1_01_bolas_island') {
+        const updatesForDebug = bolasIslandDebugContext.updates || {};
+        console.error('[Tutorial Bolas Island] exact failure', {
+          stepId,
+          errorCode: error?.code,
+          errorMessage: error?.message,
+          errorStack: error?.stack,
+          opponentId,
+          bolasId: bolasIslandDebugContext.bolasId,
+          players: game.players?.map((player) => ({
+            id: player.id,
+            name: player.name,
+            isScriptedOpponent: player.isScriptedOpponent,
+            life: player.life
+          })),
+          islands: (game.cards || [])
+            .filter((card) => card.name === 'Island' || card.card_faces?.some((face) => face?.name === 'Island'))
+            .map((card) => ({
+              id: card.id,
+              instanceId: card.instanceId,
+              name: card.name,
+              zone: card.zone,
+              ownerId: card.ownerId,
+              controllerId: card.controllerId,
+              tapped: card.tapped,
+              hasImageUri: Boolean(card.image_uri || card.imageUrl || card.image_uris),
+              keys: Object.keys(card || {})
+            })),
+          updateKeys: Object.keys(updatesForDebug || {}),
+          hasCardsUpdate: Boolean(updatesForDebug?.cards),
+          cardsUpdateCount: updatesForDebug?.cards?.length,
+          logUpdateCount: updatesForDebug?.log?.length
+        });
         setOptimisticGame((current) => current?.__tutorialScriptedActionId ? null : current);
-        const message = 'Tutorial action failed: Nicol Bolas could not play Island.';
+        const shortReason = error?.code || String(error?.message || error || 'unknown error').slice(0, 120);
+        const message = `Tutorial action failed: Bolas Island — ${shortReason}`;
         setTutorialOverlayError(message);
         setNotification(message);
         setTimeout(() => setNotification(null), 5000);

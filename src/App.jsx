@@ -5938,6 +5938,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const tutorialStepActivationRef = useRef(null);
   const tutorialAdvanceDelayTimerRef = useRef(null);
   const g07ScriptedHandIgnoredRef = useRef(false);
+  const tutorialDrawSlipLastActionTypeRef = useRef(null);
   const tutorialSetupAppliedRef = useRef({ stepId: null, signature: null });
 
   // Chat State
@@ -6513,8 +6514,18 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         return actionType === 'PASS_PRIORITY' && (game?.stack || []).length === 0 && game?.phase === naturalPhaseAdvance.fromPhase && (!game?.priorityPlayerId || game.priorityPlayerId === userId);
       }
       if (stepId === 'P2_02_draw_slip') {
-        const topLuisLibraryCard = (game?.cards || []).find((card) => card.ownerId === userId && card.zone === ZONES.LIBRARY);
-        return actionType === 'DRAW_CARD' && game?.phase === 'draw' && getCardDisplayName(topLuisLibraryCard) === 'Slip Out the Back';
+        tutorialDrawSlipLastActionTypeRef.current = actionType;
+        const handCards = (game?.cards || []).filter((card) => card.ownerId === userId && card.zone === ZONES.HAND);
+        const handCardNames = handCards.map((card) => getCardDisplayName(card, ''));
+        const hasSlipOutInHand = handCards.some((card) => getCardDisplayName(card, '') === 'Slip Out the Back');
+        console.log('[Tutorial Draw Slip Out completion]', {
+          activeStepId: stepId,
+          lastActionType: actionType,
+          handCardNames,
+          hasSlipOutInHand,
+          phase: game?.phase || null
+        });
+        return actionType === 'DRAW_CARD' && hasSlipOutInHand;
       }
       if (['tap_mountain_red', 'P1_04_tap_mountain', 'F1_tap_mountain_bolt', 'F5_tap_two_mountains'].includes(stepId)) {
         const card = getTutorialActionCard(payload?.cardId);
@@ -6657,6 +6668,30 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       console.debug('G07 waiting for actual Undo action; scripted hand match alone is ignored.');
     }
   }, [isTutorialGame, userId, game?.cards, displayedTutorialState?.stepId, game?.tutorial?.stepId]);
+
+  useEffect(() => {
+    if (!isTutorialGame || !userId) return;
+    const liveStepId = (optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.stepId || 'intro';
+    if (liveStepId !== 'P2_02_draw_slip') return;
+
+    const handCards = (game?.cards || []).filter((card) => card.ownerId === userId && card.zone === ZONES.HAND);
+    const handCardNames = handCards.map((card) => getCardDisplayName(card, ''));
+    const hasSlipOutInHand = handCards.some((card) => getCardDisplayName(card, '') === 'Slip Out the Back');
+    const lastActionType = tutorialDrawSlipLastActionTypeRef.current;
+
+    console.log('[Tutorial Draw Slip Out completion]', {
+      activeStepId: liveStepId,
+      lastActionType,
+      handCardNames,
+      hasSlipOutInHand,
+      phase: game?.phase || null
+    });
+
+    if (!hasSlipOutInHand) return;
+    if (lastActionType === 'DRAW_CARD' || lastActionType === null) {
+      maybeCompleteTutorialStep('P2_02_draw_slip', { source: 'state-transition', detail: hasSlipOutInHand && lastActionType === null ? 'resume-slip-already-in-hand' : 'draw-slip-in-hand' });
+    }
+  }, [isTutorialGame, userId, game?.cards, game?.phase, displayedTutorialState?.stepId, game?.tutorial?.stepId]);
 
   useEffect(() => {
     if (!isTutorialGame) return;

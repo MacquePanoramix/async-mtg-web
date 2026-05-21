@@ -332,7 +332,7 @@ const TUTORIAL_BOLAS_LINES = {
   P2_07_open_delver: 'Tiny scholars are dangerous. They read one book and grow wings.',
   P2_08_cast_delver: 'Cast your student. I hope it survives the syllabus.',
   P2_09_resolve_delver: 'There it stands, convinced knowledge is armor.',
-  P2_10_pass: 'Pass, then. Let my turn sharpen itself.',
+  P2_10_pass: 'Good. Surrender the remaining crumbs of your turn. I prefer my victims punctual.',
   B2_01_bolas_draw_mountain: 'I draw a Mountain. Even tyrants enjoy reliable scenery.',
   B2_02_bolas_swamp: 'A Swamp arrives. Black mana is ambition with better lighting.',
   B2_03_bolas_cast_knight: 'My Knight enters the lesson plan. Please applaud with fear.',
@@ -471,7 +471,7 @@ const TUTORIAL_DUEL_STEPS = [
   makeDuelStep({ id: 'P2_07_open_delver', act: 'Act 3 / Luis Turn 2', title: 'Open Delver', sourceCard: 'Delver of Secrets', requiredAction: 'Open Delver of Secrets from hand.', exactUiAction: 'Tap Delver in hand.', manaPayment: '{U} available.', legalPreconditions: 'Delver in hand.', completionCondition: 'Delver detail opened from hand.', showMeAnchor: 'hand-area', storyText: TUTORIAL_STORY_TEXT.P2_07_open_delver, bolasLine: TUTORIAL_BOLAS_LINES.P2_07_open_delver }),
   makeDuelStep({ id: 'P2_08_cast_delver', act: 'Act 3 / Luis Turn 2', title: 'Cast Delver', sourceCard: 'Delver of Secrets', requiredAction: 'Cast Delver of Secrets.', exactUiAction: 'Tap Cast Spell, not Cast + Target.', manaPayment: '{U} from Island.', legalPreconditions: 'Delver costs {U} and has no target.', completionCondition: 'Delver is on stack.', showMeAnchor: 'card-detail', storyText: TUTORIAL_STORY_TEXT.P2_08_cast_delver, bolasLine: TUTORIAL_BOLAS_LINES.P2_08_cast_delver }),
   makeDuelStep({ id: 'P2_09_resolve_delver', act: 'Act 3 / Luis Turn 2', title: 'Resolve Delver', sourceCard: 'Delver of Secrets', requiredAction: 'Resolve Delver from stack.', exactUiAction: 'Open Stack → Resolve top item.', manaPayment: 'Clear/spend {U}.', legalPreconditions: 'Delver is a creature spell on stack.', completionCondition: 'Delver on battlefield and stack empty.', showMeAnchor: 'stack-panel', storyText: TUTORIAL_STORY_TEXT.P2_09_resolve_delver, bolasLine: TUTORIAL_BOLAS_LINES.P2_09_resolve_delver }),
-  makeDuelStep({ id: 'P2_10_pass', act: 'Act 3 / Luis Turn 2', title: 'Pass Turn', requiredAction: 'Pass/end turn.', exactUiAction: 'Tap Pass.', legalPreconditions: 'Stack empty after Delver resolves.', completionCondition: 'Pass action.', showMeAnchor: 'pass-button', storyText: TUTORIAL_STORY_TEXT.P2_10_pass, bolasLine: TUTORIAL_BOLAS_LINES.P2_10_pass }),
+  makeDuelStep({ id: 'P2_10_pass', act: 'Act 3 / Luis Turn 2', title: 'Pass Turn', requiredAction: 'Use AutoPass until end of turn.', exactUiAction: 'Open AutoPass and choose Until End of Turn. The tutorial will pass through the remaining steps and hand the turn to Nicol Bolas.', legalPreconditions: 'Stack empty after Delver resolves and Luis has priority.', completionCondition: 'AutoPass until end of turn selected and the turn advances to Nicol Bolas.', showMeAnchor: 'autopass-button', storyText: TUTORIAL_STORY_TEXT.P2_10_pass, bolasLine: TUTORIAL_BOLAS_LINES.P2_10_pass }),
   makeDuelStep({ id: 'B2_01_bolas_draw_mountain', act: 'Act 4 / Bolas Turn 2', title: 'Bolas Draws', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', phase: 'draw', sourceCard: 'Draw step', requiredAction: 'Inspect Bolas turn note.', exactUiAction: 'Open the Game Log.', legalPreconditions: 'Bolas untaps Island and draws Mountain.', completionCondition: 'Game Log opened.', showMeAnchor: 'game-log-button', storyText: TUTORIAL_STORY_TEXT.B2_01_bolas_draw_mountain, bolasLine: TUTORIAL_BOLAS_LINES.B2_01_bolas_draw_mountain }),
   makeDuelStep({ id: 'B2_02_bolas_swamp', act: 'Act 4 / Bolas Turn 2', title: 'Bolas Plays Swamp', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', sourceCard: 'Swamp', requiredAction: 'Inspect Bolas battlefield.', exactUiAction: 'Open/inspect Bolas battlefield.', legalPreconditions: 'Swamp in Bolas opening hand; visible Bolas battlefield is Island + Swamp.', completionCondition: 'Bolas battlefield inspected.', showMeAnchor: 'opponent-battlefield', storyText: TUTORIAL_STORY_TEXT.B2_02_bolas_swamp, bolasLine: TUTORIAL_BOLAS_LINES.B2_02_bolas_swamp }),
   makeDuelStep({ id: 'B2_03_bolas_cast_knight', act: 'Act 4 / Bolas Turn 2', title: 'Bolas Casts Knight', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', sourceCard: 'Knight of Malice', requiredAction: 'Inspect Knight of Malice on stack.', exactUiAction: 'Open Stack and inspect Knight.', manaPayment: 'Bolas taps Swamp for {B} and Island for {1}.', legalPreconditions: 'Knight in Bolas hand; Island and Swamp untapped.', completionCondition: 'Stack opened / Knight inspected.', showMeAnchor: 'stack-button', storyText: TUTORIAL_STORY_TEXT.B2_03_bolas_cast_knight, bolasLine: TUTORIAL_BOLAS_LINES.B2_03_bolas_cast_knight }),
@@ -6459,7 +6459,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       COPY_STACK_ITEM: ['copy_stack_item', 'final_in_response', 'F8_resolve_reverberate'],
       RESOLVE_STACK_TOP: ['resolve_stack_item', 'counter_stack_item', 'cast_delver', 'final_in_response', 'P1_10_resolve_bolt', 'P2_09_resolve_delver', 'B2_04_resolve_knight', 'B3_06_resolve_slip', 'P4_05_cast_ponder', 'F8_resolve_reverberate', 'F9_resolve_bolt_copy_lethal', 'F10_resolve_negate_original'],
       COUNTER_STACK_TOP: ['counter_stack_item', 'final_in_response', 'B3_09_fizzle_doom_blade', 'F10_resolve_negate_original'],
-      PASS_PRIORITY: ['pass_priority', 'final_trial', 'async_oath', 'P1_11_pass', ...TUTORIAL_NATURAL_PHASE_ADVANCE_STEP_IDS, 'P2_10_pass', 'B2_05_bolas_pass', 'P3_08_pass', 'B3_11_bolas_pass', 'P4_15_pass', 'B4_09_bolas_pass'],
+      PASS_PRIORITY: ['pass_priority', 'final_trial', 'async_oath', 'P1_11_pass', ...TUTORIAL_NATURAL_PHASE_ADVANCE_STEP_IDS, 'B2_05_bolas_pass', 'P3_08_pass', 'B3_11_bolas_pass', 'P4_15_pass', 'B4_09_bolas_pass'],
       MANUAL_SET_STEP: payload?.phaseId === 'combat_attackers' ? ['set_attackers_phase'] : (payload?.phaseId === 'untap' ? ['P4_01_untap_phase_in'] : []),
       SET_COMBAT_DAMAGE_STEP: payload?.combatDamageStep === COMBAT_DAMAGE_STEPS.FIRST_STRIKE ? ['first_strike_step', 'B4_05_first_strike_damage'] : (payload?.combatDamageStep === COMBAT_DAMAGE_STEPS.REGULAR ? ['regular_damage_step', 'P4_12_regular_damage', 'B4_08_regular_damage'] : []),
       SET_ATTACK_TARGET: ['declare_attacker_player', 'attack_planeswalker_battle_note', 'P4_10_attack_bolas'],
@@ -8677,6 +8677,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
         const bolasPlayer = currentPlayers.find((player) => player?.id !== userId && /Nicol Bolas/i.test(player?.name || ''));
         const naturalPhaseAdvance = currentGame.isTutorial === true ? TUTORIAL_NATURAL_PHASE_ADVANCE_STEPS[currentGame.tutorial?.stepId] : null;
+        const shouldTrackP210AutoPassCompletion = currentGame.isTutorial === true && currentGame.tutorial?.stepId === 'P2_10_pass' && getPlayerAutoPassConfig(currentGame, userId).mode === AUTO_PASS_MODE.END_OF_TURN;
         passedGame = maybeApplyTutorialBolasPassAfterUserPass({
           actionType,
           currentGame,
@@ -8690,6 +8691,13 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
         const { game: proxyGame } = runProxyAutoPassAdvances(passedGame, userId, actorName, (event) => turnStartEvents.push(event));
         completedNaturalPhaseAdvanceAfterWrite = naturalPhaseAdvance?.completionDetail && proxyGame.phase === naturalPhaseAdvance.targetPhase ? { stepId: currentGame.tutorial?.stepId, detail: naturalPhaseAdvance.completionDetail } : null;
+        if (!completedNaturalPhaseAdvanceAfterWrite && shouldTrackP210AutoPassCompletion) {
+          const proxyTurnPlayer = currentPlayers.find((player) => player?.id === proxyGame.turnPlayerId);
+          const turnPassedToBolas = Boolean(proxyTurnPlayer && /Nicol Bolas/i.test(proxyTurnPlayer?.name || ''));
+          if (turnPassedToBolas) {
+            completedNaturalPhaseAdvanceAfterWrite = { stepId: 'P2_10_pass', detail: 'PASS_PRIORITY:autopassTurnHandedToBolas' };
+          }
+        }
 
         transaction.update(gameRef, normalizeGameUpdatesForFirestore({
           phase: proxyGame.phase,

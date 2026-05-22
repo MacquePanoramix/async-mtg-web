@@ -4256,6 +4256,49 @@ const maybeApplyTutorialBolasPassAfterUserPass = ({
   return advancePassPriorityState(passedGameWithBolasPassLog, bolasPassLogEntry, onTurnStart, layoutOptions);
 };
 
+const maybeApplyTutorialBolasPassForAutoPassUntilEnd = ({
+  currentGame,
+  actingPlayerId,
+  layoutOptions,
+  onTurnStart
+}) => {
+  if (currentGame?.isTutorial !== true) return currentGame;
+  if (currentGame?.tutorial?.stepId !== 'P2_10_pass') return currentGame;
+  if (!actingPlayerId) return currentGame;
+
+  const actingPlayerAutoPass = getPlayerAutoPassConfig(currentGame, actingPlayerId);
+  if (actingPlayerAutoPass.mode !== AUTO_PASS_MODE.END_OF_TURN) return currentGame;
+  if ((currentGame.stack || []).length > 0) return currentGame;
+
+  const players = currentGame.players || [];
+  const bolasPlayer = players.find((player) => player?.id !== actingPlayerId && /Nicol Bolas/i.test(player?.name || ''));
+  if (!bolasPlayer?.id || currentGame.priorityPlayerId !== bolasPlayer.id) return currentGame;
+
+  const windowKey = `tutorial:p2_10_pass:${currentGame.turnNumber}:${currentGame.activePlayerIndex}:${currentGame.phase}:${currentGame.priorityPlayerId}:${currentGame.consecutivePasses || 0}`;
+  const alreadyLoggedForWindow = (currentGame.log || []).some((entry) => (
+    entry?.type === 'PASS_PRIORITY'
+    && entry?.playerId === bolasPlayer.id
+    && entry?.meta?.tutorialAutoPassWindowKey === windowKey
+  ));
+  if (alreadyLoggedForWindow) return currentGame;
+
+  const bolasPassLogEntry = buildGameLogEntry({
+    currentGame,
+    playerId: bolasPlayer.id,
+    playerName: bolasPlayer.name || 'Nicol Bolas',
+    type: 'PASS_PRIORITY',
+    category: 'priority',
+    message: 'Nicol Bolas passed priority.',
+    meta: { tutorialAutoPassWindowKey: windowKey }
+  });
+
+  const nextGame = {
+    ...currentGame,
+    log: [...(currentGame.log || []), bolasPassLogEntry]
+  };
+  return advancePassPriorityState(nextGame, bolasPassLogEntry, onTurnStart, layoutOptions);
+};
+
 
 const runProxyAutoPassAdvances = (startingGame, actorId, actorName, onTurnStart) => {
   let workingGame = {
@@ -4268,6 +4311,19 @@ const runProxyAutoPassAdvances = (startingGame, actorId, actorName, onTurnStart)
 
   let advances = 0;
   while (advances < MAX_PROXY_AUTOPASS_ADVANCES) {
+    const layoutOptions = { getBattlefieldWidthForController: () => undefined };
+    const tutorialBolasAutoPassGame = maybeApplyTutorialBolasPassForAutoPassUntilEnd({
+      currentGame: workingGame,
+      actingPlayerId: actorId,
+      layoutOptions,
+      onTurnStart
+    });
+    if (tutorialBolasAutoPassGame !== workingGame) {
+      workingGame = tutorialBolasAutoPassGame;
+      advances += 1;
+      continue;
+    }
+
     const autoPassPlayerId = workingGame.priorityPlayerId;
     if (!autoPassPlayerId) break;
 

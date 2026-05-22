@@ -5995,6 +5995,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const tutorialAdvanceDelayTimerRef = useRef(null);
   const g07ScriptedHandIgnoredRef = useRef(false);
   const tutorialDrawSlipLastActionTypeRef = useRef(null);
+  const tutorialP210UsedAutoPassUntilEndRef = useRef(false);
   const tutorialSetupAppliedRef = useRef({ stepId: null, signature: null });
 
   // Chat State
@@ -6099,6 +6100,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   useEffect(() => {
     if (!isTutorialGame || !currentTutorialStep?.id) {
       tutorialStepActivationRef.current = null;
+      tutorialP210UsedAutoPassUntilEndRef.current = false;
       setTutorialActivationDebug(null);
       return undefined;
     }
@@ -6118,6 +6120,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       requiredAction: currentTutorialStep.rules?.requiredAction || currentTutorialStep.objective || ''
     };
     tutorialStepActivationRef.current = activation;
+    tutorialP210UsedAutoPassUntilEndRef.current = false;
     setTutorialActivationDebug({
       activationId: activation.id,
       stepEnteredAt: new Date(activation.wallEnteredAt).toISOString(),
@@ -6760,6 +6763,34 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     if (playerStatsOpen && ['player_panel', 'dungeons_note', 'commander_note', 'tool_throne_monarch', 'tool_nadaar_dungeon', 'tool_celestus_day', 'tool_birthday_escape_ring', 'tool_vraskas_fall_poison', 'tool_attune_energy', 'tool_ezuri_experience', 'tool_chandra_emblem', 'tool_citys_blessing'].includes(liveStepId)) maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'playerStatsOpen' });
     if (revealsOpen && ['reveal_hand_note', 'tool_open_book_hex', 'tool_gitaxian_probe'].includes(liveStepId)) maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'revealsOpen' });
   }, [isTutorialGame, stackDetailOpen, chatOpen, recapOpen, libraryMenuOpen, libraryBatchOpen, Boolean(tokenModal), playerStatsOpen, revealsOpen, game?.log, game?.cards]);
+
+  useEffect(() => {
+    if (!isTutorialGame || !userId) return;
+    const activeStepId = (optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.stepId || 'intro';
+    if (activeStepId !== 'P2_10_pass') return;
+
+    const currentTurnPlayer = (game?.players || []).find((player) => player?.id === game?.turnPlayerId) || null;
+    const currentPlayerName = currentTurnPlayer?.name || null;
+    const turnPlayerId = game?.turnPlayerId || null;
+    const autoPassMode = getPlayerAutoPassConfig(game, userId).mode;
+    const usedAutoPassUntilEndThisStep = tutorialP210UsedAutoPassUntilEndRef.current === true;
+    const turnPassedToBolas = Boolean(currentTurnPlayer && /Nicol Bolas/i.test(currentPlayerName || ''));
+    const shouldComplete = usedAutoPassUntilEndThisStep && turnPassedToBolas;
+
+    console.log('[Tutorial step 28 completion]', {
+      activeStepId,
+      turnPlayerId,
+      currentPlayerName,
+      phase: game?.phase || null,
+      autoPassMode,
+      usedAutoPassUntilEndThisStep,
+      shouldComplete
+    });
+
+    if (!shouldComplete) return;
+    maybeCompleteTutorialStep('P2_10_pass', { source: 'state-transition', detail: 'autopassTurnHandedToBolas' });
+  }, [isTutorialGame, userId, game?.turnPlayerId, game?.phase, game?.players, game?.autopass, displayedTutorialState?.stepId, game?.tutorial?.stepId]);
+
 
   const buildTutorialCardInstance = useCallback((cardName, ownerId, zone = ZONES.HAND, controllerId = ownerId) => {
     const safeName = String(cardName || 'Tutorial Card');
@@ -8230,6 +8261,10 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   };
 
   const enableAutoPass = async (mode, phaseId = null, stopOnOpponentAction = autoPassConfig.stopOnOpponentAction) => {
+    const liveStepId = (optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.stepId || 'intro';
+    if (isTutorialGame && liveStepId === 'P2_10_pass' && mode === AUTO_PASS_MODE.END_OF_TURN) {
+      tutorialP210UsedAutoPassUntilEndRef.current = true;
+    }
     const nextConfig = normalizeAutoPassConfig({
       mode,
       phaseId,

@@ -15304,53 +15304,6 @@ export default function App() {
     checkpoint('game mode selected', { gameMode: safeGameMode });
     const startingLife = getStartingLifeForMode(safeGameMode);
     setPlayerName(safeName);
-    try {
-      const initialData = {
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-        hostId: user.uid,
-        gameMode: safeGameMode,
-        ...(safeTitle ? { title: safeTitle } : {}),
-        allowSpectators: true,
-        spectatorIds: [],
-        players: [{
-          id: user.uid,
-          name: safeName,
-          life: startingLife,
-          turnOrder: 0,
-          counters: { poison: 0, energy: 0, experience: 0 },
-          manaPool: clearManaPool(),
-          statuses: { monarch: false, initiative: false, citysBlessing: false, ringBearerLevel: 0, custom: [] },
-          emblems: [],
-          deckExtras: getEmptyDeckExtras(),
-          handRevealed: false,
-          lastSeenChatAt: Date.now()
-        }],
-        phase: 'main1',
-        dayNight: null,
-        activePlayerIndex: 0,
-        priorityIndex: 0,
-        priorityPlayerId: user.uid,
-        turnPlayerId: user.uid,
-        turnNumber: 1,
-        consecutivePasses: 0,
-        stack: [],
-        cards: [],
-        targets: [],
-        reveals: [],
-        autopass: {},
-        undoStack: [],
-        combat: getEmptyCombatState(),
-        log: [buildGameLogEntry({
-          currentGame: { turnNumber: 1, turnPlayerId: user.uid, phase: 'main1' },
-          playerId: user.uid,
-          playerName: safeName || 'Unknown',
-          type: 'GAME_CREATE',
-          category: 'setup',
-          message: `${safeName || 'Unknown'} created the ${safeGameMode === GAME_MODES.COMMANDER ? 'Commander' : 'Regular'} game.`
-        })]
-      };
-
     const shortCode = generateGameId();
     checkpoint('generated room code / game id', { gameId: shortCode });
     const initialData = {

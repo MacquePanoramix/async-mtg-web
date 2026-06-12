@@ -1546,6 +1546,11 @@ const getDefaultCustomToken = () => ({
   tapped: false
 });
 
+// The deck-derived token template Dragon Fodder grants during the Tutorial Battle.
+// Written into Luis's deckExtras by the Act 9 setup AND rendered as a client-side
+// fallback in Token Tools during the token steps, so the button always exists.
+const TUTORIAL_GOBLIN_TOKEN_TEMPLATE = { id: 'tutorial-goblin-template', name: 'Goblin', typeLine: 'Token Creature — Goblin', power: '1', toughness: '1', colors: ['R'], colorIdentity: ['R'], sourceCards: ['Dragon Fodder'] };
+
 const normalizeTokenColorKey = (color) => String(color || 'Colorless').trim().toLowerCase() || 'colorless';
 const normalizeTokenColorIdentity = (colorIdentity, color = 'Colorless') => {
   if (Array.isArray(colorIdentity)) {
@@ -7761,8 +7766,11 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         }
       }
       appendTutorialLogOnce('Turn 5: Luis untaps, draws Dragon Fodder, and plays the Mountain he kept in hand.', 'TUTORIAL_SCRIPT', 'tutorial');
-      // Dragon Fodder provides the deck-derived Goblin template the next step uses,
-      // exactly like importing a deck with Dragon Fodder would. Injected once.
+    }
+    if (['tool_dragon_fodder', 'tool_goblin_template'].includes(stepId)) {
+      // Dragon Fodder provides the deck-derived Goblin template, exactly like
+      // importing a deck with Dragon Fodder would. Checked at BOTH token steps so
+      // a run resumed mid-section still gets it. Injected once (idempotent).
       const luisPlayerForTokens = (game.players || []).find((player) => player?.id === userId);
       const luisTokenTemplates = getPlayerDeckExtras(luisPlayerForTokens).tokens;
       if (luisPlayerForTokens && !luisTokenTemplates.some((template) => /goblin/i.test(template?.name || ''))) {
@@ -7771,7 +7779,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           ...player,
           deckExtras: {
             ...getPlayerDeckExtras(player),
-            tokens: [...getPlayerDeckExtras(player).tokens, { id: 'tutorial-goblin-template', name: 'Goblin', typeLine: 'Token Creature — Goblin', power: '1', toughness: '1', colors: ['R'], colorIdentity: ['R'], sourceCards: ['Dragon Fodder'] }]
+            tokens: [...getPlayerDeckExtras(player).tokens, TUTORIAL_GOBLIN_TOKEN_TEMPLATE]
           }
         } : player);
       }
@@ -11406,6 +11414,17 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     setTokenModal(null);
   };
 
+  // Token Tools reads deck-derived templates from myPlayer.deckExtras.tokens. During
+  // the tutorial token steps, guarantee the Dragon Fodder Goblin template is visible
+  // even if the persisted injection has not landed yet (e.g. resumed runs).
+  const liveTutorialStepIdForTokenTools = isTutorialGame ? ((optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.stepId || null) : null;
+  const persistedDeckTokenTemplates = getPlayerDeckExtras(myPlayer).tokens;
+  const showTutorialGoblinTemplateFallback = ['tool_dragon_fodder', 'tool_goblin_template'].includes(liveTutorialStepIdForTokenTools)
+    && !persistedDeckTokenTemplates.some((template) => /goblin/i.test(template?.name || ''));
+  const visibleDeckTokenTemplates = showTutorialGoblinTemplateFallback
+    ? [...persistedDeckTokenTemplates, TUTORIAL_GOBLIN_TOKEN_TEMPLATE]
+    : persistedDeckTokenTemplates;
+
   const submitDeckTokenTemplate = async (template) => {
     const tokenTemplate = sanitizeDeckExtraTemplate(template, 'tokens');
     if (!tokenTemplate) return;
@@ -14108,11 +14127,11 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                 </div>
               </div>
 
-              {getPlayerDeckExtras(myPlayer).tokens.length > 0 && (
+              {visibleDeckTokenTemplates.length > 0 && (
                 <div className="rounded-xl border border-emerald-500/30 bg-emerald-950/10 p-3">
                   <div className="mb-2 text-[11px] font-black uppercase tracking-widest text-emerald-200">From your deck</div>
                   <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                    {getPlayerDeckExtras(myPlayer).tokens.map((template) => {
+                    {visibleDeckTokenTemplates.map((template) => {
                       const accent = getTokenColorAccent(getTokenColorLabel(template.colorIdentity), template.colorIdentity);
                       const pt = isCreatureTypeLine(template.typeLine) && template.power && template.toughness ? `${template.power}/${template.toughness} ` : '';
                       return (

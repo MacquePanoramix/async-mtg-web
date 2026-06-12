@@ -15304,6 +15304,52 @@ export default function App() {
     checkpoint('game mode selected', { gameMode: safeGameMode });
     const startingLife = getStartingLifeForMode(safeGameMode);
     setPlayerName(safeName);
+    try {
+      const initialData = {
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        hostId: user.uid,
+        gameMode: safeGameMode,
+        ...(safeTitle ? { title: safeTitle } : {}),
+        allowSpectators: true,
+        spectatorIds: [],
+        players: [{
+          id: user.uid,
+          name: safeName,
+          life: startingLife,
+          turnOrder: 0,
+          counters: { poison: 0, energy: 0, experience: 0 },
+          manaPool: clearManaPool(),
+          statuses: { monarch: false, initiative: false, citysBlessing: false, ringBearerLevel: 0, custom: [] },
+          emblems: [],
+          deckExtras: getEmptyDeckExtras(),
+          handRevealed: false,
+          lastSeenChatAt: Date.now()
+        }],
+        phase: 'main1',
+        dayNight: null,
+        activePlayerIndex: 0,
+        priorityIndex: 0,
+        priorityPlayerId: user.uid,
+        turnPlayerId: user.uid,
+        turnNumber: 1,
+        consecutivePasses: 0,
+        stack: [],
+        cards: [],
+        targets: [],
+        reveals: [],
+        autopass: {},
+        undoStack: [],
+        combat: getEmptyCombatState(),
+        log: [buildGameLogEntry({
+          currentGame: { turnNumber: 1, turnPlayerId: user.uid, phase: 'main1' },
+          playerId: user.uid,
+          playerName: safeName || 'Unknown',
+          type: 'GAME_CREATE',
+          category: 'setup',
+          message: `${safeName || 'Unknown'} created the ${safeGameMode === GAME_MODES.COMMANDER ? 'Commander' : 'Regular'} game.`
+        })]
+      };
 
     const shortCode = generateGameId();
     checkpoint('generated room code / game id', { gameId: shortCode });
@@ -15487,6 +15533,39 @@ export default function App() {
         if (players.some((p) => p.id === user.uid)) return;
         if (players.length >= 2) throw new Error('Game is full.');
 
+        if (existingPlayerIndex >= 0) {
+          const newPlayers = [...players];
+          newPlayers[existingPlayerIndex] = { ...newPlayers[existingPlayerIndex], name: safeName, lastSeenChatAt: Date.now() };
+          transaction.update(gameRef, normalizeGameUpdatesForFirestore({
+            players: newPlayers,
+            undoStack: gameData.undoStack || [],
+            updatedAt: serverTimestamp(),
+            log: pruneLogForFirestore([...(gameData.log || []), buildGameLogEntry({ currentGame: gameData, playerId: user.uid, playerName: safeName || 'Unknown', type: 'PLAYER_REJOIN', category: 'setup', message: `${safeName || 'Unknown'} rejoined the game.` })])
+          }, 'PLAYER_REJOIN'));
+        } else if (players.length < 2) {
+          const newPlayer = {
+            id: user.uid,
+            name: safeName,
+            life: getStartingLifeForMode(getGameMode(gameData)),
+            turnOrder: players.length,
+            counters: { poison: 0, energy: 0, experience: 0 },
+            manaPool: clearManaPool(),
+            statuses: { monarch: false, initiative: false, citysBlessing: false, ringBearerLevel: 0, custom: [] },
+            emblems: [],
+            deckExtras: getEmptyDeckExtras(),
+            handRevealed: false,
+            lastSeenChatAt: Date.now()
+          };
+          transaction.update(gameRef, normalizeGameUpdatesForFirestore({
+            players: [...players, newPlayer],
+            undoStack: gameData.undoStack || [],
+            updatedAt: serverTimestamp(),
+            log: pruneLogForFirestore([...(gameData.log || []), buildGameLogEntry({ currentGame: gameData, playerId: user.uid, playerName: safeName || 'Unknown', type: 'PLAYER_JOIN', category: 'setup', message: `${safeName || 'Unknown'} joined the game.` })])
+          }, 'PLAYER_JOIN'));
+        } else {
+          throw new Error('Game is full.');
+        }
+      });
         const newPlayer = {
           id: user.uid,
           name: safeName,

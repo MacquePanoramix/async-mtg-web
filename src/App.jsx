@@ -64,7 +64,7 @@ const GAME_MODES = {
   COMMANDER: 'commander'
 };
 
-const TUTORIAL_SCRIPT_VERSION = 13;
+const TUTORIAL_SCRIPT_VERSION = 14;
 const TUTORIAL_RULES_BY_STEP_ID = {
   intro: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Inspect room code', sourceCardOrEffect: 'Async room setup', boardPrecondition: 'Tutorial duel exists', stackPrecondition: 'Stack may be empty', completionCondition: 'Room code tapped', tutorialTargetAnchor: 'room-code' },
   room_code: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Copy room code', sourceCardOrEffect: 'Async room setup', boardPrecondition: 'Tutorial duel exists', stackPrecondition: 'Stack may be empty', completionCondition: 'Room code tapped', tutorialTargetAnchor: 'room-code' },
@@ -271,41 +271,25 @@ const makeDuelStep = ({
 });
 
 const TUTORIAL_OPENING_HAND_LUIS = ['Mountain', 'Mountain', 'Island', 'Forest', 'Lightning Bolt', 'Delver of Secrets // Insectile Aberration', 'Ponder'];
-// Library order is load-bearing: T2 draws Slip Out (idx 0), T4 draws Mountain (idx 1),
-// Ponder then reorders the next three (Reverberate / Llanowar Elves / Dragon Fodder) —
-// the script guides Llanowar to the top for the P4_07 draw, Dragon Fodder second for
-// the Turn 5 draw that opens Act 9. Rancor and later cards feed the tool showcase draws.
-const TUTORIAL_LIBRARY_LUIS = ['Slip Out the Back', 'Mountain', 'Reverberate', 'Llanowar Elves', 'Dragon Fodder', 'Rancor', 'Giant Growth', 'Gitaxian Probe', 'Portent', 'Thought Scour', 'Plains', 'Throne of the High City', 'The Celestus', 'Birthday Escape', 'Attune with Aether', 'Curse of the Pierced Heart', 'Act of Treason', 'Clone', 'Nadaar, Selfless Paladin', 'Lightning Bolt', 'Reverberate'];
+// Library order is load-bearing — every scripted draw comes from here in order:
+// T2 Slip Out (idx 0), T4 Mountain (idx 1), Ponder reorders the next three
+// (Reverberate / Llanowar Elves / Dragon Fodder; the script guides Llanowar to the
+// top for the P4_07 draw, Dragon Fodder second for the Turn 5 draw). After those:
+// T6 draws Reverberate, T7 draws Rancor, T8 draws Gitaxian Probe whose resolution
+// draws Lightning Bolt — arming the finale with genuinely drawn cards. The tail is
+// sandbox filler for free play after the duel.
+const TUTORIAL_LIBRARY_LUIS = ['Slip Out the Back', 'Mountain', 'Reverberate', 'Llanowar Elves', 'Dragon Fodder', 'Rancor', 'Gitaxian Probe', 'Lightning Bolt', 'Giant Growth', 'Portent', 'Thought Scour', 'Plains', 'Throne of the High City', 'The Celestus', 'Birthday Escape', 'Attune with Aether', 'Curse of the Pierced Heart', 'Act of Treason', 'Clone', 'Nadaar, Selfless Paladin', 'Reverberate'];
 const TUTORIAL_OPENING_HAND_BOLAS = ['Island', 'Swamp', 'Swamp', 'Negate', 'Doom Blade', 'Knight of Malice', 'Vraska’s Fall'];
 const TUTORIAL_LIBRARY_BOLAS = ['Mountain', 'Cancel', 'Bonecrusher Giant', 'Swamp', 'Island'];
 const TUTORIAL_CARD_IMAGES_ERROR = 'Tutorial card images could not load. Try again.';
 const tutorialCardCatalogCache = new Map();
+// Only the two Dragon Fodder token steps remain as packed rows: both are fully real
+// (the spell is genuinely drawn on Turn 5). Every other former "tool showcase" step
+// was rebuilt as real scripted turns (Acts 10-15), an honest Table Tools Interlude
+// (Act 16), or cut with a sandbox pointer in the finale text.
 const TUTORIAL_TOOL_SOURCES = [
-  ['tool_dragon_fodder', 'Act 9 / Tools — Dragon Fodder', 'Cast Dragon Fodder for Goblins', 'Dragon Fodder', 'Turn 5: you drew Dragon Fodder (it was next in your library). Tap two lands for {1}{R}, cast and resolve Dragon Fodder, then open Token Tools and create the first 1/1 red Goblin.', '{1}{R}: Mountain + one land', 'A Goblin token is created on the battlefield.', 'token-tools'],
-  ['tool_goblin_template', 'Act 9 / Tools — Deck Token Template', 'Create the second Goblin', 'Dragon Fodder', 'Dragon Fodder makes exactly two Goblins. In Token Tools, use the “From your deck” Goblin template (provided by Dragon Fodder) to create the second one.', 'Resolved Dragon Fodder', 'A second Goblin token is created.', 'token-tools'],
-  ['tool_mirror_cell', 'Act 9 / Tools — Custom Token', 'Mirror-Cell Experiment custom token', 'Mirror-Cell Experiment', 'Showcase spell: Mirror-Cell Experiment resolves and asks for an unusual token. Use the Custom Token form to create a 0/1 colorless Reflection — type the name and stats yourself.', '{2}: two lands', 'A custom Reflection token is created.', 'token-tools'],
-  ['tool_rancor_attach', 'Act 9 / Tools — Rancor', 'Attach Rancor to Insectile', 'Rancor', 'Turn 6: you drew Rancor. Tap Forest for {G}, cast Rancor with Cast + Target targeting Insectile Aberration, resolve it, then use Attach to Permanent.', '{G}: Forest', 'Rancor is attached to Insectile Aberration.', 'card-detail'],
-  ['tool_curse_attach', 'Act 9 / Tools — Curse', 'Attach Curse to Nicol Bolas', 'Curse of the Pierced Heart', 'Tap Mountain plus another land, cast Curse with Cast + Target targeting Nicol Bolas, resolve, then Attach to Player.', '{1}{R}: Mountain + one land', 'Curse is attached to Nicol Bolas.', 'card-detail'],
-  ['tool_gitaxian_probe', 'Act 9 / Tools — Gitaxian Probe', 'Private hand peek', 'Gitaxian Probe', 'Luis pays 2 life for Phyrexian mana, casts Gitaxian Probe, resolves it, opens Private Hand Peek for Bolas hand, then draws.', '2 life instead of {U}', 'Private peek opened and Luis life decreased by 2.', 'private-hand-peek-button'],
-  ['tool_open_book_hex', 'Act 9 / Tools — Open-Book Hex', 'Public hand reveal', 'Open-Book Hex', 'Tap Island for {U}, cast Open-Book Hex targeting Nicol Bolas, resolve, then publicly reveal Bolas hand.', '{U}: Island', 'Bolas hand publicly revealed.', 'reveal-tools'],
-  ['tool_ponder_reorder', 'Act 9 / Tools — Ponder', 'Own library reorder', 'Ponder', 'Tap Island for {U}, cast and resolve Ponder, reorder top three cards, then draw one.', '{U}: Island', 'Top cards reordered and a card drawn.', 'library-menu-button'],
-  ['tool_opt_scry', 'Act 9 / Tools — Opt', 'Scry 1', 'Opt', 'Showcase spell: Opt resolves. Open Library Tools → Batch actions → Scry 1 to look at your top card and keep or bottom it.', '{U}: Island', 'A real Scry action is performed on your library.', 'library-menu-button'],
-  ['tool_consider_surveil', 'Act 9 / Tools — Consider', 'Surveil 1', 'Consider', 'Showcase spell: Consider resolves. Open Library Tools → Batch actions → Surveil 1 to look at your top card and keep it or put it in your graveyard.', '{U}: Island', 'A real Surveil action is performed on your library.', 'library-menu-button'],
-  ['tool_portent_bolas_library', 'Act 9 / Tools — Portent', 'Reorder Bolas library', 'Portent', 'You drew Portent earlier in your library stack. Cast it targeting Nicol Bolas, resolve, then open Bolas’s library tools and reorder his top three cards.', '{U}: Island', 'Bolas’s top cards are actually reordered.', 'library-menu-button'],
-  ['tool_praetors_grasp', 'Act 9 / Tools — Praetor’s Grasp', 'Search Bolas library', 'Praetor’s Grasp', 'Manual table tool: when an effect like Praetor’s Grasp tells you to search an opponent’s library, open their library tools and use Search. Move/exile the chosen card by hand.', '{2}{B}: Swamp + two lands', 'Opponent library tools opened for the scripted search.', 'library-menu-button'],
-  ['tool_thought_scour', 'Act 9 / Tools — Thought Scour', 'Mill Bolas for two', 'Thought Scour', 'Manual table tool: when an effect mills an opponent, open their library tools and move the top cards to their graveyard by hand. Thought Scour is the scripted reason here.', '{U}: Island', 'Opponent library tools opened for the scripted mill.', 'library-menu-button'],
-  ['tool_light_up_stage', 'Act 9 / Tools — Light Up the Stage', 'Exile top two', 'Light Up the Stage', 'Showcase spell: Light Up the Stage resolves. Open Library Tools → Batch actions → Exile 2 to exile the top two cards of your library face up.', 'Visible red/generic lands', 'Your top two cards are actually exiled.', 'library-menu-button'],
-  ['tool_act_of_treason', 'Act 9 / Tools — Act of Treason', 'Gain control of Knight', 'Act of Treason', 'Tap Mountain plus two lands, cast Act of Treason targeting Knight of Malice, resolve, give control to Luis, add until-end reminder.', '{2}{R}: Mountain + two lands', 'Knight controller is Luis and reminder exists.', 'card-detail'],
-  ['tool_clone', 'Act 9 / Tools — Clone', 'Clone a creature', 'Clone', 'Tap Island plus three lands, cast Clone, resolve, then mark Clone as a copy of Knight or Insectile.', '{3}{U}: Island + three lands', 'Clone marked as copy.', 'card-detail'],
-  ['tool_throne_monarch', 'Act 9 / Tools — Throne', 'Become the monarch', 'Throne of the High City', 'Tap four lands, tap and sacrifice Throne of the High City, resolve the ability, then toggle Monarch for Luis.', '{4}, tap, sacrifice Throne', 'Luis has Monarch.', 'status-panel'],
-  ['tool_nadaar_dungeon', 'Act 9 / Tools — Nadaar', 'Venture into dungeon', 'Nadaar, Selfless Paladin', 'Tap Plains plus two lands, cast Nadaar, resolve, its ETB ventures, then mark the first dungeon room.', '{2}{W}: Plains + two lands', 'Dungeon/venture state marked.', 'player-counters-panel'],
-  ['tool_celestus_day', 'Act 9 / Tools — Celestus', 'Make it day', 'The Celestus', 'Tap three lands, cast The Celestus, resolve, then set Day in Player Counters & Statuses.', '{3}: three lands', 'Day status active.', 'status-panel'],
-  ['tool_birthday_escape_ring', 'Act 9 / Tools — Birthday Escape', 'The Ring tempts you', 'Birthday Escape', 'Tap Island for {U}, cast Birthday Escape, resolve, draw a card, then increase Ring temptation to 1.', '{U}: Island', 'Ring temptation = 1.', 'status-panel'],
-  ['tool_vraskas_fall_poison', 'Act 9 / Tools — Vraska’s Fall', 'Bolas gives Luis poison', 'Vraska’s Fall', 'Bolas taps Swamp plus two lands, casts Vraska’s Fall, resolves it, Luis sacrifices if needed, then adds one poison counter.', '{2}{B}: Bolas Swamp + two lands', 'Luis poison = 1.', 'player-counters-panel'],
-  ['tool_attune_energy', 'Act 9 / Tools — Attune', 'Gain energy', 'Attune with Aether', 'Tap Forest for {G}, cast Attune with Aether, resolve, search/reveal a basic if desired, then add two Energy.', '{G}: Forest', 'Luis energy increased by 2.', 'player-counters-panel'],
-  ['tool_ezuri_experience', 'Act 9 / Tools — Ezuri', 'Gain experience', 'Ezuri, Claw of Progress', 'Snapshot: Ezuri is on battlefield. Cast or create a small creature; Ezuri triggers; add one Experience.', 'Snapshot legal mana already logged', 'Luis experience = 1.', 'player-counters-panel'],
-  ['tool_chandra_emblem', 'Act 9 / Tools — Chandra', 'Add Chandra emblem', 'Chandra, Torch of Defiance', 'Snapshot: Chandra survived to ultimate. Activate ultimate, resolve, then add Chandra emblem.', 'Planeswalker loyalty snapshot', 'Luis has Chandra emblem.', 'player-counters-panel'],
-  ['tool_citys_blessing', 'Act 9 / Tools — Ascend', 'Gain city’s blessing', 'Tendershoot Dryad / ascend', 'Snapshot: Luis controls ten permanents and an ascend card; ascend condition is met; toggle City’s Blessing.', 'Ten permanents snapshot', 'Luis has City’s Blessing.', 'status-panel']
+  ['tool_dragon_fodder', 'Act 9 / Luis Turn 5 — Dragon Fodder', 'Cast Dragon Fodder for Goblins', 'Dragon Fodder', 'Turn 5: you drew Dragon Fodder (it was next in your library). Tap two lands for {1}{R}, cast and resolve Dragon Fodder, then open Token Tools and create the first 1/1 red Goblin.', '{1}{R}: Mountain + one land', 'A Goblin token is created on the battlefield.', 'token-tools'],
+  ['tool_goblin_template', 'Act 9 / Luis Turn 5 — Deck Token Template', 'Create the second Goblin', 'Dragon Fodder', 'Dragon Fodder makes exactly two Goblins. In Token Tools, use the “From your deck” Goblin template (provided by Dragon Fodder) to create the second one.', 'Resolved Dragon Fodder', 'A second Goblin token is created.', 'token-tools']
 ];
 
 const TUTORIAL_BOLAS_LINES = {
@@ -387,29 +371,33 @@ const TUTORIAL_BOLAS_LINES = {
   B4_09_bolas_pass: 'I pass. Surviving me is not the same as keeping pace.',
   tool_dragon_fodder: 'Some armies are born from cardboard. Yours appear loudly edible.',
   tool_goblin_template: 'Use the template. Even goblin mobs enjoy institutional support.',
-  tool_mirror_cell: 'A custom reflection? Vanity usually waits until after victory.',
-  tool_rancor_attach: 'Attach Rancor. Rage is more effective when properly fastened.',
-  tool_curse_attach: 'A Curse for me? Charming. I collect lesser inconveniences.',
-  tool_gitaxian_probe: 'Peek at my hand. Knowledge will not make it less frightening.',
-  tool_open_book_hex: 'Public revelation. Humiliation, but with an audience.',
-  tool_ponder_reorder: 'Your library top pretends not to be rearrangeable. Correct it.',
-  tool_opt_scry: 'Scry one. Stare at fate until it blinks.',
-  tool_consider_surveil: 'Surveil. Some futures improve when buried quickly.',
-  tool_portent_bolas_library: 'Touch my library gently. It has eaten better magicians.',
-  tool_praetors_grasp: 'Search my library. Theft is ambition wearing gloves.',
-  tool_thought_scour: 'Mill me for two. Even my scraps have dramatic lighting.',
-  tool_light_up_stage: 'Exile the top cards. Theater improves when the roof catches fire.',
-  tool_act_of_treason: 'Steal my Knight. Treason is a lesson best returned sharpened.',
-  tool_clone: 'Clone something. Imitation is flattery with rules text.',
-  tool_throne_monarch: 'A crown? Charming. Try not to bleed on it.',
-  tool_nadaar_dungeon: 'A dungeon is a checklist with better architecture.',
-  tool_celestus_day: 'Turn the day. Even the sky has a settings menu.',
-  tool_birthday_escape_ring: 'Tempted by a ring? Small jewelry, large consequences.',
-  tool_vraskas_fall_poison: 'Poison counter. Some wounds prefer the player.',
-  tool_attune_energy: 'Gather energy. Invisible resources are still resources.',
-  tool_ezuri_experience: 'Experience counters. Congratulations: your scars have resumes.',
-  tool_chandra_emblem: 'An emblem. Fire with a stationery department.',
-  tool_citys_blessing: 'The city blesses you. Municipal approval at last.',
+  B5_01_bolas_turn_five: 'My turn. I draw, I place a Mountain, and the lesson resumes its proper direction.',
+  B5_02_vraskas_fall_cast: 'Vraska’s Fall. Three lands bend, and one of your creatures begins composing a farewell.',
+  B5_03_resolve_vraskas: 'Let it resolve. Inevitability dislikes being kept waiting.',
+  B5_04_sacrifice_goblin: 'Choose which Goblin stops existing. I adore delegating grief.',
+  B5_05_poison_counter: 'And a poison counter, with my compliments. Mark it on yourself — accuracy builds character.',
+  B5_06_knight_attacks_two: 'My Knight rides through your open gate. Two damage. Punctual, polite, repeatable.',
+  L6_01_draw_reverberate: 'Draw your card. An echo with no thunder yet. How patient of it.',
+  L6_02_attack_insectile: 'Send the insect. My Knight is tapped and my Giant is still yawning awake.',
+  L6_03_insectile_hits_nine: 'Four damage. I felt that, and I resent feeling things.',
+  B6_01_bolas_bonecrusher: 'I draw, and the ground complains: Bonecrusher Giant, paid in full with my Mountain.',
+  B6_02_resolve_bonecrusher: 'Resolve my Giant. It is impolite to keep eight tons waiting on the stack.',
+  B6_03_knight_attacks_again: 'The Giant is too freshly summoned to swing, but my Knight is not. Two more.',
+  L7_01_draw_rancor: 'Rancor. Old anger in card form. It never stays buried — fitting for you.',
+  L7_02_cast_rancor: 'Cast it at your insect. Rage is more effective when properly fastened.',
+  L7_03_attach_rancor: 'Tuck the Aura beneath the creature. Even fury files paperwork here.',
+  L7_04_attack_for_six: 'Six power of borrowed anger flies at me. I begin to take this personally.',
+  L7_05_bolas_at_three: 'Six damage. Three life remains. I have governed planes with less margin — barely.',
+  B7_01_bonecrusher_attacks: 'Desperation? No. Strategy with elevated heart rate. Giant — flatten something.',
+  B7_02_block_with_goblin: 'A Goblin steps in front of eight tons. Block, then. Bravery enjoys brief careers.',
+  B7_03_goblin_dies: 'Move your volunteer to the graveyard. The token returns to the cardboard it came from.',
+  L8_01_draw_probe: 'Draw again. Gitaxian Probe — knowledge that bills you in blood.',
+  L8_02_cast_probe: 'Pay two life and cast it. Phyrexia never met a cost it could not make personal.',
+  L8_03_private_peek: 'Yes, look at my hand. See exactly what is left between you and the ending.',
+  L8_04_probe_draw_bolt: 'And Probe draws you a card. Lightning, again. Fate repeats its best jokes.',
+  TI_01_custom_token: 'A pause in the duel. The table also builds tokens to order — name one yourself.',
+  TI_02_scry_one: 'Scry, as if a spell asked you to. Stare at fate until it blinks.',
+  TI_03_monarch_toggle: 'And the crown toggle, for when an effect makes you the monarch. Try not to bleed on it.',
   F1_tap_mountain_bolt: 'Tap the Mountain. Final defiance needs a spark.',
   F2_add_r: 'Record the red. Revolutions fail when accounting gets lazy.',
   F3_cast_bolt_bolas: 'Aim carefully, little planeswalker. This is arithmetic wearing myth.',
@@ -438,8 +426,13 @@ const TUTORIAL_STORY_TEXT = {
   B3_05_cast_slip: 'Your creature dodges not backward, but sideways out of reality.',
   P4_08_begin_combat: 'The battlefield tightens into lanes, choices, and consequences.',
   B4_04_block_with_llanowar: 'A fragile blocker stands between you and Bolas’s blade.',
-  tool_throne_monarch: 'A crown appears on the table, wholly too shiny for safety.',
-  tool_nadaar_dungeon: 'A dungeon card becomes the map for a miniature expedition.',
+  B5_02_vraskas_fall_cast: 'Three of Bolas’s lands bow, and a black sigil unfolds over your board.',
+  B5_06_knight_attacks_two: 'The Knight charges while your creatures stand at parade rest.',
+  L7_02_cast_rancor: 'Green fury wraps around the insect like a second set of wings.',
+  L7_05_bolas_at_three: 'The elder dragon steadies himself against the table. Three life left.',
+  B7_02_block_with_goblin: 'One small Goblin plants its feet in front of a falling mountain of Giant.',
+  L8_02_cast_probe: 'You pay in blood, and Phyrexia mails you the receipt.',
+  TI_01_custom_token: 'The duel holds its breath: a brief tour of the table’s own machinery.',
   F3_cast_bolt_bolas: 'The last Lightning Bolt rises toward Nicol Bolas with lethal promise.',
   F4_bolas_negate_real_mana: 'Bolas answers with real mana and a counterspell on the stack.',
   F7_reverberate_bolt: 'You answer his answer by making thunder speak twice.',
@@ -491,20 +484,38 @@ const TUTORIAL_STORY_TEXT = {
  *   attacks and TAPS (scripted); Luis blocks as defender with the legally cast
  *   Llanowar; first-strike damage kills Llanowar (move to graveyard); regular
  *   damage (none back — Llanowar died first); scripted turn-end.
- * Act 9 (tool_*, 77–101) — Tool showcase, Turn 5+: T5 draw is Dragon Fodder (real
- *   library order); scripted snapshot plays the held 3rd Mountain. Dragon Fodder
- *   ({1}{R}) makes its two Goblins via Token Tools — the setup injects a Goblin
- *   deck-template (sourced "Dragon Fodder") into Luis's deckExtras so the
- *   "From your deck" section really shows it. Rancor (next library draw) attaches
- *   to Insectile. Opt/Consider/Light Up the Stage = real scry/surveil/exile batch
- *   actions on Luis's library; Portent/Ponder = real reorders; Praetor's
- *   Grasp/Thought Scour = honest manual-table-tool framing (opponent-library batch
- *   actions don't exist). Counters/statuses/emblem/dungeon steps complete on their
- *   real actions, not panel-open. Remaining snapshot cards (Open-Book Hex,
- *   Mirror-Cell, Ezuri, Chandra, Tendershoot) say "showcase/snapshot" honestly.
- * Act 10 (F1–F11, 102–112) — Finale at Bolas 3 life: tap Mountain, {R}, Bolt Bolas;
- *   Bolas Negates with REAL mana (Island+Swamp tapped); tap two Mountains, {R}{R},
- *   Reverberate copies the Bolt; copy resolves first → Bolas 0 → "Nicol Bolas is
+ * Act 9 (tool_*, 77–78) — Luis T5: draw is Dragon Fodder (real library order);
+ *   scripted scene plays the held 3rd Mountain. Dragon Fodder ({1}{R}) makes its
+ *   two Goblins via Token Tools — setup injects a Goblin deck-template (sourced
+ *   "Dragon Fodder") into Luis's deckExtras so "From your deck" really shows it.
+ * Act 10 (B5, 79–84) — Bolas T5: scripted untap+draw, plays the Mountain drawn on
+ *   his T2 (one land per turn); taps Swamp+Swamp+Island for Vraska's Fall (opening
+ *   hand) targeting Luis; player resolves it, sacrifices a Goblin (token → graveyard)
+ *   and records his own poison counter; Knight attacks (TAPS), Luis takes 2 (20→18,
+ *   scripted, logged); turn-end hands Luis Turn 6.
+ * Act 11 (L6, 85–87) — Luis T6: draws Reverberate (held for the finale!); attacks
+ *   with Insectile alone (Goblin guards home); Insectile TAPS, unblocked 4 → Bolas
+ *   13→9 (scripted, watcher-completed).
+ * Act 12 (B6, 88–90) — Bolas T6: scripted untap+draw; taps Mountain+Island+Swamp
+ *   for Bonecrusher Giant ({2}{R}); player resolves it; Bonecrusher has summoning
+ *   sickness so only Knight attacks (TAPS) → Luis 18→16; turn-end hands Luis T7.
+ * Act 13 (L7, 91–95) — Luis T7: draws Rancor (real top); taps Forest {G}, casts
+ *   Rancor targeting Insectile (Cast + Target), resolves, attaches with the helper;
+ *   attacks for 6 (4 + Rancor +2); Bolas declines to block → 9→3 (scripted).
+ * Act 14 (B7, 96–98) — Bolas T7: untaps; Bonecrusher attacks (TAPS); Luis chump-
+ *   blocks with the remaining Goblin as defending player; Goblin dies → graveyard
+ *   (the 4/3 Giant survives the 1 damage back).
+ * Act 15 (L8, 99–102) — Luis T8: draws Gitaxian Probe (real top); casts it targeting
+ *   Bolas; resolution pays the Phyrexian cost mechanically (Luis 16→14, logged) and
+ *   grants the real Private Hand Peek; Probe's "draw a card" fetches Lightning Bolt.
+ * Act 16 (TI, 103–105) — Table Tools Interlude, honestly framed as manual tools:
+ *   custom token form (real CREATE_TOKEN), Scry 1 (real batch scry), Monarch toggle
+ *   (real status action). Everything else lives in the post-victory sandbox.
+ * Act 17 (F1–F11, 106–116) — Finale at Bolas 3 (reached MECHANICALLY via the two
+ *   Insectile attacks; the old F1 life-set is now a pure no-op safety net): tap
+ *   Mountain, {R}, Bolt Bolas (Bolt really drawn at L8); Bolas Negates with REAL
+ *   mana (Island+Swamp tapped); tap two Mountains, {R}{R}, Reverberate (really
+ *   drawn at L6) copies the Bolt; copy resolves first → Bolas 0 → "Nicol Bolas is
  *   defeated."; Negate then counters only the original; victory gated on life <= 0.
  * ──────────────────────────────────────────────────────────────────────────────────
  */
@@ -586,17 +597,44 @@ const TUTORIAL_DUEL_STEPS = [
   makeDuelStep({ id: 'B4_08_regular_damage', act: 'Act 8 / Bolas Turn 4', title: 'Regular Damage', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', phase: 'combat_damage', sourceCard: 'Combat rules', requiredAction: 'Set Regular Damage.', exactUiAction: 'Tap the phase name to open Time Controls → Combat damage step → Regular damage.', legalPreconditions: 'Llanowar is gone and deals no regular damage.', completionCondition: 'Regular Damage active.', showMeAnchor: 'phase-indicator', storyText: TUTORIAL_STORY_TEXT.B4_08_regular_damage, bolasLine: TUTORIAL_BOLAS_LINES.B4_08_regular_damage }),
   makeDuelStep({ id: 'B4_09_bolas_pass', act: 'Act 8 / Bolas Turn 4', title: 'Bolas Ends His Turn', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', requiredAction: 'Open the Game Log and confirm Bolas passed the turn.', exactUiAction: 'Open the Game Log. Your next turn begins at Untap.', legalPreconditions: 'Combat complete and stack empty; the scripted Bolas ends his turn and hands the table back to Luis.', completionCondition: 'Game Log opened and contains “Luis begins a new turn.”', showMeAnchor: 'game-log-button', storyText: TUTORIAL_STORY_TEXT.B4_09_bolas_pass, bolasLine: TUTORIAL_BOLAS_LINES.B4_09_bolas_pass }),
   ...TUTORIAL_TOOL_SOURCES.map(([id, act, title, sourceCard, exactUiAction, manaPayment, completionCondition, showMeAnchor]) => makeDuelStep({ id, act, title, sourceCard, requiredAction: title, exactUiAction, manaPayment, legalPreconditions: `${sourceCard} is in the specified zone, visible mana/payment exists, and the log records the chapter snapshot before the tool is used.`, completionCondition, showMeAnchor, storyText: TUTORIAL_STORY_TEXT[id], bolasLine: TUTORIAL_BOLAS_LINES[id] })),
-  makeDuelStep({ id: 'F1_tap_mountain_bolt', act: 'Act 10 / Final Stack Lesson', title: 'Tap Mountain for Final Bolt', sourceCard: 'Mountain', requiredAction: 'Tap one Mountain for {R}.', exactUiAction: 'Tap an untapped Mountain.', manaPayment: 'Mountain produces {R}.', legalPreconditions: 'Bolas life is exactly 3; Luis controls three untapped Mountains; stack empty.', completionCondition: 'One Mountain tapped.', showMeAnchor: 'own-battlefield', expectedLifeTotals: { bolasBefore: 3 }, storyText: TUTORIAL_STORY_TEXT.F1_tap_mountain_bolt, bolasLine: TUTORIAL_BOLAS_LINES.F1_tap_mountain_bolt }),
-  makeDuelStep({ id: 'F2_add_r', act: 'Act 10 / Final Stack Lesson', title: 'Add Red for Bolt', sourceCard: 'Mountain', requiredAction: 'Add {R}.', exactUiAction: 'Player Counters & Statuses → Mana Pool → +R.', manaPayment: 'Luis mana pool R1.', legalPreconditions: 'One Mountain tapped for red.', completionCondition: 'Mana pool R1.', showMeAnchor: 'mana-pool-panel', storyText: TUTORIAL_STORY_TEXT.F2_add_r, bolasLine: TUTORIAL_BOLAS_LINES.F2_add_r }),
-  makeDuelStep({ id: 'F3_cast_bolt_bolas', act: 'Act 10 / Final Stack Lesson', title: 'Cast Final Bolt', sourceCard: 'Lightning Bolt', requiredAction: 'Cast Lightning Bolt targeting Nicol Bolas.', exactUiAction: 'Open Lightning Bolt → Cast + Target → select Nicol Bolas → Done.', manaPayment: '{R} from Mountain.', legalPreconditions: 'Lightning Bolt in Luis hand; Nicol Bolas is a legal player target at 3 life.', completionCondition: 'Lightning Bolt on stack targeting Bolas.', showMeAnchor: 'hand-area', storyText: TUTORIAL_STORY_TEXT.F3_cast_bolt_bolas, bolasLine: TUTORIAL_BOLAS_LINES.F3_cast_bolt_bolas }),
-  makeDuelStep({ id: 'F4_bolas_negate_real_mana', act: 'Act 10 / Final Stack Lesson', title: 'Bolas Casts Negate with Real Mana', turnOwner: 'Nicol Bolas', activePlayer: 'Luis', sourceCard: 'Negate', requiredAction: 'Inspect Negate on stack.', exactUiAction: 'Open stack and inspect Negate.', manaPayment: 'Bolas taps Island for {U} and Swamp for {1}.', legalPreconditions: 'Negate in Bolas hand; Island and Swamp untapped; Lightning Bolt is a noncreature spell on stack.', completionCondition: 'Negate inspected on stack.', showMeAnchor: 'stack-button', storyText: TUTORIAL_STORY_TEXT.F4_bolas_negate_real_mana, bolasLine: TUTORIAL_BOLAS_LINES.F4_bolas_negate_real_mana }),
-  makeDuelStep({ id: 'F5_tap_two_mountains', act: 'Act 10 / Final Stack Lesson', title: 'Tap Two Mountains for Reverberate', sourceCard: 'Mountain', requiredAction: 'Tap both remaining Mountains.', exactUiAction: 'Tap each of the two untapped Mountains. The step completes on the second tap.', manaPayment: 'Two Mountains produce {R}{R}.', legalPreconditions: 'Luis has two untapped Mountains remaining.', completionCondition: 'Both remaining Mountains are tapped (completes on the second tap).', showMeAnchor: 'own-battlefield', storyText: TUTORIAL_STORY_TEXT.F5_tap_two_mountains, bolasLine: TUTORIAL_BOLAS_LINES.F5_tap_two_mountains }),
-  makeDuelStep({ id: 'F6_add_rr', act: 'Act 10 / Final Stack Lesson', title: 'Add RR', sourceCard: 'Mountain', requiredAction: 'Add {R}{R}.', exactUiAction: 'Press +R twice in the mana pool. The step completes when the pool shows RR.', manaPayment: 'Luis mana pool has RR for Reverberate.', legalPreconditions: 'Two Mountains tapped for red.', completionCondition: 'Mana pool reaches RR for Reverberate (completes on the second +R).', showMeAnchor: 'mana-pool-panel', storyText: TUTORIAL_STORY_TEXT.F6_add_rr, bolasLine: TUTORIAL_BOLAS_LINES.F6_add_rr }),
-  makeDuelStep({ id: 'F7_reverberate_bolt', act: 'Act 10 / Final Stack Lesson', title: 'Cast Reverberate Targeting Bolt', sourceCard: 'Reverberate', requiredAction: 'Cast Reverberate targeting Lightning Bolt.', exactUiAction: 'Open Reverberate → Cast + Target → target Lightning Bolt on stack → Done.', manaPayment: '{R}{R} from two Mountains.', legalPreconditions: 'Reverberate in Luis hand; Lightning Bolt instant spell is on stack.', completionCondition: 'Reverberate on stack targeting Lightning Bolt.', showMeAnchor: 'hand-area', storyText: TUTORIAL_STORY_TEXT.F7_reverberate_bolt, bolasLine: TUTORIAL_BOLAS_LINES.F7_reverberate_bolt }),
-  makeDuelStep({ id: 'F8_resolve_reverberate', act: 'Act 10 / Final Stack Lesson', title: 'Resolve Reverberate', sourceCard: 'Reverberate', requiredAction: 'Resolve Reverberate.', exactUiAction: 'Resolve top stack item.', legalPreconditions: 'Reverberate is on top of stack targeting Lightning Bolt.', completionCondition: 'Lightning Bolt copy exists on stack targeting Nicol Bolas.', showMeAnchor: 'stack-panel', storyText: TUTORIAL_STORY_TEXT.F8_resolve_reverberate, bolasLine: TUTORIAL_BOLAS_LINES.F8_resolve_reverberate }),
-  makeDuelStep({ id: 'F9_resolve_bolt_copy_lethal', act: 'Act 10 / Final Stack Lesson', title: 'Resolve Bolt Copy for Lethal', sourceCard: 'Lightning Bolt copy', requiredAction: 'Resolve Lightning Bolt copy.', exactUiAction: 'Resolve top Lightning Bolt copy.', legalPreconditions: 'Bolas life is 3 and copy targets Nicol Bolas.', completionCondition: 'Bolas life <= 0; log says Nicol Bolas is defeated.', showMeAnchor: 'stack-panel', expectedLifeTotals: { bolasBefore: 3, bolasAfter: 0 }, expectedDamage: 'Lightning Bolt copy deals 3 damage to Nicol Bolas.', storyText: TUTORIAL_STORY_TEXT.F9_resolve_bolt_copy_lethal, bolasLine: TUTORIAL_BOLAS_LINES.F9_resolve_bolt_copy_lethal }),
-  makeDuelStep({ id: 'F10_resolve_negate_original', act: 'Act 10 / Final Stack Lesson', title: 'Resolve Negate and Original Bolt', sourceCard: 'Negate', requiredAction: 'Resolve remaining stack.', exactUiAction: 'Open Stack → Resolve top item. Negate resolves and counters only the original Lightning Bolt — too late to undo the copy.', legalPreconditions: 'Copy has already dealt lethal; Negate still targets original Lightning Bolt.', completionCondition: 'Stack empty; original Bolt in graveyard; Negate in Bolas graveyard.', showMeAnchor: 'stack-panel', storyText: TUTORIAL_STORY_TEXT.F10_resolve_negate_original, bolasLine: TUTORIAL_BOLAS_LINES.F10_resolve_negate_original }),
-  makeDuelStep({ id: 'F11_victory_complete', act: 'Act 10 / Final Stack Lesson', title: 'Victory: Nicol Bolas Defeated', sourceCard: 'Lightning Bolt copy', requiredAction: 'Inspect final log and finish tutorial.', exactUiAction: 'Open the Game Log, then Finish Tutorial.', legalPreconditions: 'Bolas life <= 0; stack empty; log includes “Nicol Bolas is defeated.”', completionCondition: 'Victory/tutorial-complete screen appears only after Bolas life <= 0.', showMeAnchor: 'game-log-button', completion: 'finish', storyText: TUTORIAL_STORY_TEXT.F11_victory_complete, bolasLine: TUTORIAL_BOLAS_LINES.F11_victory_complete })
+  makeDuelStep({ id: 'B5_01_bolas_turn_five', act: 'Act 10 / Bolas Turn 5', title: 'Bolas Draws and Plays Mountain', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', sourceCard: 'Mountain', requiredAction: 'Open the Game Log and review Bolas’s turn start.', exactUiAction: 'Open the Game Log: Bolas untaps, draws for Turn 5, and plays the Mountain he drew back on his second turn.', legalPreconditions: 'Bolas drew Mountain on his Turn 2 and held it; one land per turn is respected.', completionCondition: 'Game Log opened and contains “plays a Mountain”.', showMeAnchor: 'game-log-button', storyText: TUTORIAL_STORY_TEXT.B5_01_bolas_turn_five, bolasLine: TUTORIAL_BOLAS_LINES.B5_01_bolas_turn_five }),
+  makeDuelStep({ id: 'B5_02_vraskas_fall_cast', act: 'Act 10 / Bolas Turn 5', title: 'Bolas Casts Vraska’s Fall', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', sourceCard: 'Vraska’s Fall', requiredAction: 'Inspect Vraska’s Fall on the stack.', exactUiAction: 'Open the Stack and inspect Vraska’s Fall ({2}{B}: Bolas tapped Swamp, Swamp, and Island). It was in his opening hand all along.', manaPayment: 'Bolas taps Swamp for {B} and Swamp + Island for {2}.', legalPreconditions: 'Vraska’s Fall has been in Bolas’s opening hand since the duel began; three Bolas lands are tapped.', completionCondition: 'Stack panel opened with Vraska’s Fall visible.', showMeAnchor: 'stack-button', storyText: TUTORIAL_STORY_TEXT.B5_02_vraskas_fall_cast, bolasLine: TUTORIAL_BOLAS_LINES.B5_02_vraskas_fall_cast }),
+  makeDuelStep({ id: 'B5_03_resolve_vraskas', act: 'Act 10 / Bolas Turn 5', title: 'Resolve Vraska’s Fall', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', sourceCard: 'Vraska’s Fall', requiredAction: 'Resolve Vraska’s Fall.', exactUiAction: 'You operate the shared stack for both players: Resolve top item. The spell says you sacrifice a creature and get a poison counter.', legalPreconditions: 'Vraska’s Fall is on the stack; Luis has creatures to sacrifice.', completionCondition: 'Vraska’s Fall resolves to Bolas’s graveyard.', showMeAnchor: 'stack-panel', storyText: TUTORIAL_STORY_TEXT.B5_03_resolve_vraskas, bolasLine: TUTORIAL_BOLAS_LINES.B5_03_resolve_vraskas }),
+  makeDuelStep({ id: 'B5_04_sacrifice_goblin', act: 'Act 10 / Bolas Turn 5', title: 'Sacrifice a Goblin', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', sourceCard: 'Vraska’s Fall', requiredAction: 'Sacrifice one Goblin token: move it to your graveyard.', exactUiAction: 'You choose what you sacrifice. Open one Goblin token → Move to Graveyard. Tokens that die vanish from the game.', legalPreconditions: 'Vraska’s Fall resolved; Luis picks the sacrifice — keep Insectile, give up a Goblin.', completionCondition: 'A Goblin token moves battlefield → graveyard.', showMeAnchor: 'own-battlefield', storyText: TUTORIAL_STORY_TEXT.B5_04_sacrifice_goblin, bolasLine: TUTORIAL_BOLAS_LINES.B5_04_sacrifice_goblin }),
+  makeDuelStep({ id: 'B5_05_poison_counter', act: 'Act 10 / Bolas Turn 5', title: 'Take a Poison Counter', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', sourceCard: 'Vraska’s Fall', requiredAction: 'Add one poison counter to yourself.', exactUiAction: 'Open Player Counters & Statuses → add a Poison counter to Luis. You record effects on yourself, even when Bolas causes them.', legalPreconditions: 'Vraska’s Fall says “They get a poison counter.”', completionCondition: 'Luis has one poison counter.', showMeAnchor: 'player-counters-panel', storyText: TUTORIAL_STORY_TEXT.B5_05_poison_counter, bolasLine: TUTORIAL_BOLAS_LINES.B5_05_poison_counter }),
+  makeDuelStep({ id: 'B5_06_knight_attacks_two', act: 'Act 10 / Bolas Turn 5', title: 'Knight Attacks: Take Two', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', sourceCard: 'Knight of Malice', requiredAction: 'Open the Game Log and confirm the attack and turn end.', exactUiAction: 'Open the Game Log: the Knight attacks (it taps — no vigilance), you take 2 (20 → 18), and Bolas ends his turn. Your Turn 6 begins.', legalPreconditions: 'Knight is untapped and attacks alone; Luis declines blocks to keep his attackers ready; unblocked damage applies mechanically.', completionCondition: 'Game Log opened and contains “Luis begins Turn 6.”', showMeAnchor: 'game-log-button', expectedDamage: 'Knight of Malice deals 2 combat damage to Luis (20 → 18).', storyText: TUTORIAL_STORY_TEXT.B5_06_knight_attacks_two, bolasLine: TUTORIAL_BOLAS_LINES.B5_06_knight_attacks_two }),
+  makeDuelStep({ id: 'L6_01_draw_reverberate', act: 'Act 11 / Luis Turn 6', title: 'Draw Reverberate', phase: 'draw', sourceCard: 'Draw step', requiredAction: 'Draw one card: Reverberate.', exactUiAction: 'Tap the blue Draw button. Reverberate is next in your library — hold it; an echo needs thunder first.', legalPreconditions: 'Luis Turn 6 draw step; Reverberate is the top card of the library.', completionCondition: 'Reverberate moves library → hand after the Draw action.', showMeAnchor: 'draw-button', storyText: TUTORIAL_STORY_TEXT.L6_01_draw_reverberate, bolasLine: TUTORIAL_BOLAS_LINES.L6_01_draw_reverberate }),
+  makeDuelStep({ id: 'L6_02_attack_insectile', act: 'Act 11 / Luis Turn 6', title: 'Attack with Insectile', phase: 'combat_attackers', sourceCard: 'Insectile Aberration', requiredAction: 'Declare Insectile Aberration attacking Nicol Bolas.', exactUiAction: 'Tap Insectile → Attack → choose Nicol Bolas. The Goblin stays home to guard against the Knight.', legalPreconditions: 'Insectile (4 power with its counter) is untapped; Bolas’s Knight is tapped from his attack and Bonecrusher does not exist yet.', completionCondition: 'Insectile is marked attacking Nicol Bolas.', showMeAnchor: 'own-battlefield', storyText: TUTORIAL_STORY_TEXT.L6_02_attack_insectile, bolasLine: TUTORIAL_BOLAS_LINES.L6_02_attack_insectile }),
+  makeDuelStep({ id: 'L6_03_insectile_hits_nine', act: 'Act 11 / Luis Turn 6', title: 'Combat Damage: Bolas to 9', phase: 'combat_damage', sourceCard: 'Insectile Aberration', requiredAction: 'Watch Insectile’s 4 combat damage drop Nicol Bolas to 9.', exactUiAction: 'No action needed: Insectile taps as it attacks and unblocked damage applies automatically (13 → 9). Open the Game Log to see it.', legalPreconditions: 'Insectile is unblocked; attackers tap; the scripted game applies the damage.', completionCondition: 'Bolas life is 9 in real game state.', showMeAnchor: 'opponent-player-target', expectedLifeTotals: { bolasBefore: 13, bolasAfter: 9 }, expectedDamage: 'Insectile Aberration deals 4 combat damage to Nicol Bolas.', storyText: TUTORIAL_STORY_TEXT.L6_03_insectile_hits_nine, bolasLine: TUTORIAL_BOLAS_LINES.L6_03_insectile_hits_nine }),
+  makeDuelStep({ id: 'B6_01_bolas_bonecrusher', act: 'Act 12 / Bolas Turn 6', title: 'Bolas Casts Bonecrusher Giant', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', sourceCard: 'Bonecrusher Giant', requiredAction: 'Inspect Bonecrusher Giant on the stack.', exactUiAction: 'Open the Stack: Bolas untapped, drew Bonecrusher Giant, and cast it for {2}{R} — his Mountain finally pays off (Mountain, Island, Swamp tapped).', manaPayment: 'Bolas taps Mountain for {R} and Island + Swamp for {2}.', legalPreconditions: 'Bonecrusher Giant was the next card of Bolas’s library; he has four lands including the Mountain.', completionCondition: 'Stack panel opened with Bonecrusher Giant visible.', showMeAnchor: 'stack-button', storyText: TUTORIAL_STORY_TEXT.B6_01_bolas_bonecrusher, bolasLine: TUTORIAL_BOLAS_LINES.B6_01_bolas_bonecrusher }),
+  makeDuelStep({ id: 'B6_02_resolve_bonecrusher', act: 'Act 12 / Bolas Turn 6', title: 'Resolve Bonecrusher Giant', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', sourceCard: 'Bonecrusher Giant', requiredAction: 'Resolve Bonecrusher Giant.', exactUiAction: 'Resolve top stack item. The 4/3 Giant joins Bolas’s battlefield.', legalPreconditions: 'Bonecrusher Giant is the creature spell on top of the stack.', completionCondition: 'Bonecrusher Giant is on Bolas’s battlefield and the stack is empty.', showMeAnchor: 'stack-panel', storyText: TUTORIAL_STORY_TEXT.B6_02_resolve_bonecrusher, bolasLine: TUTORIAL_BOLAS_LINES.B6_02_resolve_bonecrusher }),
+  makeDuelStep({ id: 'B6_03_knight_attacks_again', act: 'Act 12 / Bolas Turn 6', title: 'Knight Attacks Again', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', sourceCard: 'Knight of Malice', requiredAction: 'Open the Game Log and confirm the attack and turn end.', exactUiAction: 'Open the Game Log: Bonecrusher has summoning sickness and cannot attack, but the Knight can — it taps, you take 2 (18 → 16), and Bolas ends his turn.', legalPreconditions: 'Bonecrusher entered this turn (summoning sickness); Knight is untapped and attacks; Insectile is tapped from your attack, so you take the hit.', completionCondition: 'Game Log opened and contains “Luis begins Turn 7.”', showMeAnchor: 'game-log-button', expectedDamage: 'Knight of Malice deals 2 combat damage to Luis (18 → 16).', storyText: TUTORIAL_STORY_TEXT.B6_03_knight_attacks_again, bolasLine: TUTORIAL_BOLAS_LINES.B6_03_knight_attacks_again }),
+  makeDuelStep({ id: 'L7_01_draw_rancor', act: 'Act 13 / Luis Turn 7', title: 'Draw Rancor', phase: 'draw', sourceCard: 'Draw step', requiredAction: 'Draw one card: Rancor.', exactUiAction: 'Tap the blue Draw button. Rancor is next in your library.', legalPreconditions: 'Luis Turn 7 draw step; Rancor is the top card of the library.', completionCondition: 'Rancor moves library → hand after the Draw action.', showMeAnchor: 'draw-button', storyText: TUTORIAL_STORY_TEXT.L7_01_draw_rancor, bolasLine: TUTORIAL_BOLAS_LINES.L7_01_draw_rancor }),
+  makeDuelStep({ id: 'L7_02_cast_rancor', act: 'Act 13 / Luis Turn 7', title: 'Cast Rancor at Insectile', sourceCard: 'Rancor', requiredAction: 'Tap Forest for {G}, then cast Rancor targeting Insectile Aberration.', exactUiAction: 'Tap Forest → Tap, add {G} in the mana pool, then open Rancor → Cast + Target → select Insectile → Done.', manaPayment: '{G} from Forest.', legalPreconditions: 'Rancor was just drawn; Forest is untapped; Insectile is a legal creature target.', completionCondition: 'Rancor is on the stack targeting Insectile Aberration.', showMeAnchor: 'hand-area', storyText: TUTORIAL_STORY_TEXT.L7_02_cast_rancor, bolasLine: TUTORIAL_BOLAS_LINES.L7_02_cast_rancor }),
+  makeDuelStep({ id: 'L7_03_attach_rancor', act: 'Act 13 / Luis Turn 7', title: 'Resolve and Attach Rancor', sourceCard: 'Rancor', requiredAction: 'Resolve Rancor, then attach it to Insectile.', exactUiAction: 'Resolve top stack item. Auras attach manually here: open Rancor → Attach to Permanent → choose Insectile. It now reads +2/+0.', legalPreconditions: 'Rancor resolved; the app represents Aura attachment with the attach helper.', completionCondition: 'Rancor is attached to Insectile Aberration.', showMeAnchor: 'card-detail', storyText: TUTORIAL_STORY_TEXT.L7_03_attach_rancor, bolasLine: TUTORIAL_BOLAS_LINES.L7_03_attach_rancor }),
+  makeDuelStep({ id: 'L7_04_attack_for_six', act: 'Act 13 / Luis Turn 7', title: 'Attack for Six', phase: 'combat_attackers', sourceCard: 'Insectile Aberration', requiredAction: 'Declare Insectile (now 6 power) attacking Nicol Bolas.', exactUiAction: 'Tap Insectile → Attack → choose Nicol Bolas. With the +1/+1 counter and Rancor it hits for 6.', legalPreconditions: 'Insectile untapped after your untap step; Bolas’s Knight is tapped from his attack; Bonecrusher could block — but Bolas wants the trade no more than you do.', completionCondition: 'Insectile is marked attacking Nicol Bolas.', showMeAnchor: 'own-battlefield', storyText: TUTORIAL_STORY_TEXT.L7_04_attack_for_six, bolasLine: TUTORIAL_BOLAS_LINES.L7_04_attack_for_six }),
+  makeDuelStep({ id: 'L7_05_bolas_at_three', act: 'Act 13 / Luis Turn 7', title: 'Combat Damage: Bolas to 3', phase: 'combat_damage', sourceCard: 'Insectile Aberration', requiredAction: 'Watch the scripted Bolas decline to block: 6 damage drops him to 3.', exactUiAction: 'No action needed: the scripted Bolas keeps Bonecrusher back, Insectile taps, and unblocked damage applies automatically (9 → 3).', legalPreconditions: 'Bolas declines blocks as the defending player; the scripted game applies the damage.', completionCondition: 'Bolas life is 3 in real game state.', showMeAnchor: 'opponent-player-target', expectedLifeTotals: { bolasBefore: 9, bolasAfter: 3 }, expectedDamage: 'Insectile Aberration (with Rancor) deals 6 combat damage to Nicol Bolas.', storyText: TUTORIAL_STORY_TEXT.L7_05_bolas_at_three, bolasLine: TUTORIAL_BOLAS_LINES.L7_05_bolas_at_three }),
+  makeDuelStep({ id: 'B7_01_bonecrusher_attacks', act: 'Act 14 / Bolas Turn 7', title: 'Bonecrusher Attacks', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', phase: 'combat_attackers', sourceCard: 'Bonecrusher Giant', requiredAction: 'Inspect Bonecrusher Giant attacking you.', exactUiAction: 'Open the Combat Summary: Bolas untaps, and Bonecrusher Giant attacks you (it taps — no vigilance).', legalPreconditions: 'Bonecrusher has been under Bolas’s control since last turn; it attacks and taps.', completionCondition: 'Combat Summary opened showing Bonecrusher attacking Luis.', showMeAnchor: 'combat-summary', storyText: TUTORIAL_STORY_TEXT.B7_01_bonecrusher_attacks, bolasLine: TUTORIAL_BOLAS_LINES.B7_01_bonecrusher_attacks }),
+  makeDuelStep({ id: 'B7_02_block_with_goblin', act: 'Act 14 / Bolas Turn 7', title: 'Block with Your Goblin', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', phase: 'combat_blockers', sourceCard: 'Goblin token', requiredAction: 'Declare your Goblin token blocking Bonecrusher Giant.', exactUiAction: 'Tap your Goblin → Block → choose the attacking Bonecrusher. You are the defending player; a chump block saves you 4 life.', legalPreconditions: 'Luis is the defending player; the Goblin is untapped; Insectile is tapped from your attack and cannot block.', completionCondition: 'The Goblin token is blocking Bonecrusher Giant.', showMeAnchor: 'own-battlefield', storyText: TUTORIAL_STORY_TEXT.B7_02_block_with_goblin, bolasLine: TUTORIAL_BOLAS_LINES.B7_02_block_with_goblin }),
+  makeDuelStep({ id: 'B7_03_goblin_dies', act: 'Act 14 / Bolas Turn 7', title: 'The Goblin Dies', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', phase: 'combat_damage', sourceCard: 'State-based actions', requiredAction: 'Move your dead Goblin token to the graveyard.', exactUiAction: 'Bonecrusher deals 4 to the 1/1 Goblin — lethal. Open the Goblin → Move to Graveyard. (Your Goblin dealt 1 back; the 4/3 Giant survives.)', legalPreconditions: 'The Goblin took lethal damage; you record the state-based action on your own card.', completionCondition: 'The Goblin token moves battlefield → graveyard.', showMeAnchor: 'card-detail', expectedDamage: 'Bonecrusher Giant deals 4 to the Goblin token; the Goblin dies.', storyText: TUTORIAL_STORY_TEXT.B7_03_goblin_dies, bolasLine: TUTORIAL_BOLAS_LINES.B7_03_goblin_dies }),
+  makeDuelStep({ id: 'L8_01_draw_probe', act: 'Act 15 / Luis Turn 8', title: 'Draw Gitaxian Probe', phase: 'draw', sourceCard: 'Draw step', requiredAction: 'Draw one card: Gitaxian Probe.', exactUiAction: 'Bolas ended his turn. Tap the blue Draw button — Gitaxian Probe is next in your library.', legalPreconditions: 'Luis Turn 8 draw step; Gitaxian Probe is the top card of the library.', completionCondition: 'Gitaxian Probe moves library → hand after the Draw action.', showMeAnchor: 'draw-button', storyText: TUTORIAL_STORY_TEXT.L8_01_draw_probe, bolasLine: TUTORIAL_BOLAS_LINES.L8_01_draw_probe }),
+  makeDuelStep({ id: 'L8_02_cast_probe', act: 'Act 15 / Luis Turn 8', title: 'Cast Probe for 2 Life', sourceCard: 'Gitaxian Probe', requiredAction: 'Cast Gitaxian Probe targeting Nicol Bolas, then resolve it.', exactUiAction: 'Open Gitaxian Probe → Cast + Target → select Nicol Bolas → Done, then resolve it. Its Phyrexian {U/P} cost is paid with 2 life — the game deducts it when the Probe resolves (16 → 14).', manaPayment: 'Phyrexian mana: 2 life instead of {U}.', legalPreconditions: 'Gitaxian Probe was just drawn; Phyrexian mana allows paying life; the life cost applies mechanically.', completionCondition: 'Gitaxian Probe resolves; Luis life is 14.', showMeAnchor: 'hand-area', expectedLifeTotals: { bolasBefore: 3 }, storyText: TUTORIAL_STORY_TEXT.L8_02_cast_probe, bolasLine: TUTORIAL_BOLAS_LINES.L8_02_cast_probe }),
+  makeDuelStep({ id: 'L8_03_private_peek', act: 'Act 15 / Luis Turn 8', title: 'Peek at Bolas’s Hand', sourceCard: 'Gitaxian Probe', requiredAction: 'Privately look at Nicol Bolas’s hand.', exactUiAction: 'Probe resolved: open Private Hand Peek on Nicol Bolas. Only you see it — exactly what the card allows.', legalPreconditions: 'Gitaxian Probe resolved this turn; its effect is “Look at target player’s hand.”', completionCondition: 'Private hand peek opened on Nicol Bolas.', showMeAnchor: 'private-hand-peek-button', storyText: TUTORIAL_STORY_TEXT.L8_03_private_peek, bolasLine: TUTORIAL_BOLAS_LINES.L8_03_private_peek }),
+  makeDuelStep({ id: 'L8_04_probe_draw_bolt', act: 'Act 15 / Luis Turn 8', title: 'Probe Draws You a Card', sourceCard: 'Gitaxian Probe', requiredAction: 'Draw one card from Probe’s effect: Lightning Bolt.', exactUiAction: 'Gitaxian Probe also says “Draw a card.” Tap the blue Draw button — Lightning Bolt is next. Your finale is now in hand.', legalPreconditions: 'Probe resolved; Lightning Bolt is the top card of the library.', completionCondition: 'Lightning Bolt moves library → hand after the Draw action.', showMeAnchor: 'draw-button', storyText: TUTORIAL_STORY_TEXT.L8_04_probe_draw_bolt, bolasLine: TUTORIAL_BOLAS_LINES.L8_04_probe_draw_bolt }),
+  makeDuelStep({ id: 'TI_01_custom_token', act: 'Act 16 / Table Tools Interlude', title: 'Custom Token Tool', sourceCard: 'Manual table tool', requiredAction: 'Create any custom token with the Custom Token form.', exactUiAction: 'The duel pauses for a tools tour. Open Token Tools → Custom token, name anything you like (stats too), and create it. This is a manual table tool for when a card effect makes a token with no preset.', manaPayment: 'No cost — manual table tool demonstration.', legalPreconditions: 'Interlude: explicitly outside the duel’s rules engine.', completionCondition: 'A custom (non-Goblin) token is actually created.', showMeAnchor: 'token-tools', storyText: TUTORIAL_STORY_TEXT.TI_01_custom_token, bolasLine: TUTORIAL_BOLAS_LINES.TI_01_custom_token }),
+  makeDuelStep({ id: 'TI_02_scry_one', act: 'Act 16 / Table Tools Interlude', title: 'Scry Tool', sourceCard: 'Manual table tool', requiredAction: 'Perform a real Scry 1 on your library.', exactUiAction: 'Open Library Tools → Batch actions → Scry 1. Look at your top card and keep it or bottom it — the tool for whenever an effect says “Scry”.', manaPayment: 'No cost — manual table tool demonstration.', legalPreconditions: 'Interlude: explicitly outside the duel’s rules engine.', completionCondition: 'A real Scry action is performed on your library.', showMeAnchor: 'library-menu-button', storyText: TUTORIAL_STORY_TEXT.TI_02_scry_one, bolasLine: TUTORIAL_BOLAS_LINES.TI_02_scry_one }),
+  makeDuelStep({ id: 'TI_03_monarch_toggle', act: 'Act 16 / Table Tools Interlude', title: 'Status Tools', sourceCard: 'Manual table tool', requiredAction: 'Toggle the Monarch status on yourself.', exactUiAction: 'Open Player Counters & Statuses → toggle Monarch. Statuses, day/night, emblems, dungeons and the Ring all live here — for when card effects grant them. (Explore the rest freely after the duel.)', manaPayment: 'No cost — manual table tool demonstration.', legalPreconditions: 'Interlude: explicitly outside the duel’s rules engine.', completionCondition: 'Monarch status is toggled on Luis.', showMeAnchor: 'status-panel', storyText: TUTORIAL_STORY_TEXT.TI_03_monarch_toggle, bolasLine: TUTORIAL_BOLAS_LINES.TI_03_monarch_toggle }),
+  makeDuelStep({ id: 'F1_tap_mountain_bolt', act: 'Act 17 / Final Stack Lesson', title: 'Tap Mountain for Final Bolt', sourceCard: 'Mountain', requiredAction: 'Tap one Mountain for {R}.', exactUiAction: 'Back to the duel: Bolas sits at 3 from real combat, and Lightning Bolt + Reverberate are in your hand from real draws. Tap an untapped Mountain.', manaPayment: 'Mountain produces {R}.', legalPreconditions: 'Bolas life is exactly 3 from Insectile’s two attacks; Luis controls three untapped Mountains; Lightning Bolt and Reverberate were genuinely drawn.', completionCondition: 'One Mountain tapped.', showMeAnchor: 'own-battlefield', expectedLifeTotals: { bolasBefore: 3 }, storyText: TUTORIAL_STORY_TEXT.F1_tap_mountain_bolt, bolasLine: TUTORIAL_BOLAS_LINES.F1_tap_mountain_bolt }),
+  makeDuelStep({ id: 'F2_add_r', act: 'Act 17 / Final Stack Lesson', title: 'Add Red for Bolt', sourceCard: 'Mountain', requiredAction: 'Add {R}.', exactUiAction: 'Player Counters & Statuses → Mana Pool → +R.', manaPayment: 'Luis mana pool R1.', legalPreconditions: 'One Mountain tapped for red.', completionCondition: 'Mana pool R1.', showMeAnchor: 'mana-pool-panel', storyText: TUTORIAL_STORY_TEXT.F2_add_r, bolasLine: TUTORIAL_BOLAS_LINES.F2_add_r }),
+  makeDuelStep({ id: 'F3_cast_bolt_bolas', act: 'Act 17 / Final Stack Lesson', title: 'Cast Final Bolt', sourceCard: 'Lightning Bolt', requiredAction: 'Cast Lightning Bolt targeting Nicol Bolas.', exactUiAction: 'Open Lightning Bolt → Cast + Target → select Nicol Bolas → Done.', manaPayment: '{R} from Mountain.', legalPreconditions: 'Lightning Bolt in Luis hand; Nicol Bolas is a legal player target at 3 life.', completionCondition: 'Lightning Bolt on stack targeting Bolas.', showMeAnchor: 'hand-area', storyText: TUTORIAL_STORY_TEXT.F3_cast_bolt_bolas, bolasLine: TUTORIAL_BOLAS_LINES.F3_cast_bolt_bolas }),
+  makeDuelStep({ id: 'F4_bolas_negate_real_mana', act: 'Act 17 / Final Stack Lesson', title: 'Bolas Casts Negate with Real Mana', turnOwner: 'Nicol Bolas', activePlayer: 'Luis', sourceCard: 'Negate', requiredAction: 'Inspect Negate on stack.', exactUiAction: 'Open stack and inspect Negate.', manaPayment: 'Bolas taps Island for {U} and Swamp for {1}.', legalPreconditions: 'Negate in Bolas hand; Island and Swamp untapped; Lightning Bolt is a noncreature spell on stack.', completionCondition: 'Negate inspected on stack.', showMeAnchor: 'stack-button', storyText: TUTORIAL_STORY_TEXT.F4_bolas_negate_real_mana, bolasLine: TUTORIAL_BOLAS_LINES.F4_bolas_negate_real_mana }),
+  makeDuelStep({ id: 'F5_tap_two_mountains', act: 'Act 17 / Final Stack Lesson', title: 'Tap Two Mountains for Reverberate', sourceCard: 'Mountain', requiredAction: 'Tap both remaining Mountains.', exactUiAction: 'Tap each of the two untapped Mountains. The step completes on the second tap.', manaPayment: 'Two Mountains produce {R}{R}.', legalPreconditions: 'Luis has two untapped Mountains remaining.', completionCondition: 'Both remaining Mountains are tapped (completes on the second tap).', showMeAnchor: 'own-battlefield', storyText: TUTORIAL_STORY_TEXT.F5_tap_two_mountains, bolasLine: TUTORIAL_BOLAS_LINES.F5_tap_two_mountains }),
+  makeDuelStep({ id: 'F6_add_rr', act: 'Act 17 / Final Stack Lesson', title: 'Add RR', sourceCard: 'Mountain', requiredAction: 'Add {R}{R}.', exactUiAction: 'Press +R twice in the mana pool. The step completes when the pool shows RR.', manaPayment: 'Luis mana pool has RR for Reverberate.', legalPreconditions: 'Two Mountains tapped for red.', completionCondition: 'Mana pool reaches RR for Reverberate (completes on the second +R).', showMeAnchor: 'mana-pool-panel', storyText: TUTORIAL_STORY_TEXT.F6_add_rr, bolasLine: TUTORIAL_BOLAS_LINES.F6_add_rr }),
+  makeDuelStep({ id: 'F7_reverberate_bolt', act: 'Act 17 / Final Stack Lesson', title: 'Cast Reverberate Targeting Bolt', sourceCard: 'Reverberate', requiredAction: 'Cast Reverberate targeting Lightning Bolt.', exactUiAction: 'Open Reverberate → Cast + Target → target Lightning Bolt on stack → Done.', manaPayment: '{R}{R} from two Mountains.', legalPreconditions: 'Reverberate in Luis hand; Lightning Bolt instant spell is on stack.', completionCondition: 'Reverberate on stack targeting Lightning Bolt.', showMeAnchor: 'hand-area', storyText: TUTORIAL_STORY_TEXT.F7_reverberate_bolt, bolasLine: TUTORIAL_BOLAS_LINES.F7_reverberate_bolt }),
+  makeDuelStep({ id: 'F8_resolve_reverberate', act: 'Act 17 / Final Stack Lesson', title: 'Resolve Reverberate', sourceCard: 'Reverberate', requiredAction: 'Resolve Reverberate.', exactUiAction: 'Resolve top stack item.', legalPreconditions: 'Reverberate is on top of stack targeting Lightning Bolt.', completionCondition: 'Lightning Bolt copy exists on stack targeting Nicol Bolas.', showMeAnchor: 'stack-panel', storyText: TUTORIAL_STORY_TEXT.F8_resolve_reverberate, bolasLine: TUTORIAL_BOLAS_LINES.F8_resolve_reverberate }),
+  makeDuelStep({ id: 'F9_resolve_bolt_copy_lethal', act: 'Act 17 / Final Stack Lesson', title: 'Resolve Bolt Copy for Lethal', sourceCard: 'Lightning Bolt copy', requiredAction: 'Resolve Lightning Bolt copy.', exactUiAction: 'Resolve top Lightning Bolt copy.', legalPreconditions: 'Bolas life is 3 and copy targets Nicol Bolas.', completionCondition: 'Bolas life <= 0; log says Nicol Bolas is defeated.', showMeAnchor: 'stack-panel', expectedLifeTotals: { bolasBefore: 3, bolasAfter: 0 }, expectedDamage: 'Lightning Bolt copy deals 3 damage to Nicol Bolas.', storyText: TUTORIAL_STORY_TEXT.F9_resolve_bolt_copy_lethal, bolasLine: TUTORIAL_BOLAS_LINES.F9_resolve_bolt_copy_lethal }),
+  makeDuelStep({ id: 'F10_resolve_negate_original', act: 'Act 17 / Final Stack Lesson', title: 'Resolve Negate and Original Bolt', sourceCard: 'Negate', requiredAction: 'Resolve remaining stack.', exactUiAction: 'Open Stack → Resolve top item. Negate resolves and counters only the original Lightning Bolt — too late to undo the copy.', legalPreconditions: 'Copy has already dealt lethal; Negate still targets original Lightning Bolt.', completionCondition: 'Stack empty; original Bolt in graveyard; Negate in Bolas graveyard.', showMeAnchor: 'stack-panel', storyText: TUTORIAL_STORY_TEXT.F10_resolve_negate_original, bolasLine: TUTORIAL_BOLAS_LINES.F10_resolve_negate_original }),
+  makeDuelStep({ id: 'F11_victory_complete', act: 'Act 17 / Final Stack Lesson', title: 'Victory: Nicol Bolas Defeated', sourceCard: 'Lightning Bolt copy', requiredAction: 'Inspect final log and finish tutorial.', exactUiAction: 'Open the Game Log, then Finish Tutorial. Afterwards the table stays open as a sandbox — try Clone, Act of Treason-style control changes, reveals, emblems, dungeons, day/night and the rest freely.', legalPreconditions: 'Bolas life <= 0; stack empty; log includes “Nicol Bolas is defeated.”', completionCondition: 'Victory/tutorial-complete screen appears only after Bolas life <= 0.', showMeAnchor: 'game-log-button', completion: 'finish', storyText: TUTORIAL_STORY_TEXT.F11_victory_complete, bolasLine: TUTORIAL_BOLAS_LINES.F11_victory_complete })
 ];
 
 const TUTORIAL_SCRIPT_STEPS = withTutorialRules(TUTORIAL_DUEL_STEPS);
@@ -978,9 +1016,23 @@ const TUTORIAL_NATURAL_PHASE_ADVANCE_STEP_IDS = Object.keys(TUTORIAL_NATURAL_PHA
 const TUTORIAL_DRAW_STEP_EXPECTED_CARD = {
   P2_02_draw_slip: 'Slip Out the Back',
   P3_05_draw_ponder: 'Ponder',
-  P4_02_draw_mountain: 'Mountain'
+  P4_02_draw_mountain: 'Mountain',
+  L6_01_draw_reverberate: 'Reverberate',
+  L7_01_draw_rancor: 'Rancor',
+  L8_01_draw_probe: 'Gitaxian Probe',
+  L8_04_probe_draw_bolt: 'Lightning Bolt'
   // P4_07 is a draw+cast bundle: it completes when Llanowar Elves hits the battlefield,
   // not on the draw alone, so it intentionally is NOT a pure draw step here.
+};
+// Steps whose setup must guarantee the named card sits on top of Luis's library
+// before the scripted draw. Mirrors the real library order; only repairs drift.
+const TUTORIAL_TOP_OF_LIBRARY_BY_STEP = {
+  P2_02_reach_draw: 'Slip Out the Back',
+  P2_02_draw_slip: 'Slip Out the Back',
+  L6_01_draw_reverberate: 'Reverberate',
+  L7_01_draw_rancor: 'Rancor',
+  L8_01_draw_probe: 'Gitaxian Probe',
+  L8_04_probe_draw_bolt: 'Lightning Bolt'
 };
 const isTutorialDrawStep = (stepId) => Object.prototype.hasOwnProperty.call(TUTORIAL_DRAW_STEP_EXPECTED_CARD, stepId);
 
@@ -3085,6 +3137,19 @@ const applyTutorialResolutionEffect = ({ currentGame, topItem, actionType, curre
     addLog('Slip Out the Back resolves: Insectile Aberration gets a +1/+1 counter and phases out.', { cardName: 'Slip Out the Back' });
   }
   if (itemName === 'Doom Blade') addLog('Doom Blade fizzles because its target is phased out.', { cardName: 'Doom Blade' });
+  if (itemName === 'Vraska’s Fall' || itemName === "Vraska's Fall") {
+    addLog('Vraska’s Fall resolves: Luis sacrifices a creature of his choice and gets a poison counter.', { cardName: 'Vraska’s Fall' });
+  }
+  if (itemName === 'Gitaxian Probe') {
+    // Phyrexian {U/P}: the cost was 2 life. Applied here, at resolution, exactly once
+    // (the stack item is consumed), so refresh/resume cannot double-charge it.
+    if (luisIndex >= 0) {
+      const lifeBefore = Number(nextPlayers[luisIndex].life ?? 0);
+      const lifeAfter = lifeBefore - 2;
+      nextPlayers[luisIndex] = { ...nextPlayers[luisIndex], life: lifeAfter };
+      addLog(`Gitaxian Probe: Luis pays 2 life for its Phyrexian cost (${lifeBefore} → ${lifeAfter}), looks at Nicol Bolas’s hand, and will draw a card.`, { lifeBefore, lifeAfter, targetPlayerId: nextPlayers[luisIndex].id });
+    }
+  }
   return { players: nextPlayers, stack: currentStack, cards: nextCards, extraLogEntries, cardsChanged };
 };
 
@@ -6569,6 +6634,9 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     if (stepId === 'B3_11_bolas_pass') return gameLogHasMessage('Luis begins Turn 4');
     if (stepId === 'B4_01_bolas_untaps') return gameLogHasMessage('Nicol Bolas untapped his permanents');
     if (stepId === 'B4_09_bolas_pass') return gameLogHasMessage('Luis begins a new turn');
+    if (stepId === 'B5_01_bolas_turn_five') return gameLogHasMessage('plays a Mountain');
+    if (stepId === 'B5_06_knight_attacks_two') return gameLogHasMessage('Luis begins Turn 6');
+    if (stepId === 'B6_03_knight_attacks_again') return gameLogHasMessage('Luis begins Turn 7');
     return true;
   };
 
@@ -6629,17 +6697,17 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       if (game?.priorityPlayerId && game.priorityPlayerId !== userId) return ignoreActionCompletion('P1_11 requires Luis to have priority before tapping Pass');
     }
     const actionStepMap = {
-      DRAW_CARD: ['beginning_phase_draw', 'P2_02_draw_slip', 'P3_05_draw_ponder', 'P4_02_draw_mountain'],
+      DRAW_CARD: ['beginning_phase_draw', 'P2_02_draw_slip', 'P3_05_draw_ponder', 'P4_02_draw_mountain', 'L6_01_draw_reverberate', 'L7_01_draw_rancor', 'L8_01_draw_probe', 'L8_04_probe_draw_bolt'],
       PLAY_LAND: ['play_land', 'P1_01_play_mountain', 'P2_04_play_island', 'P3_07_play_mountain', 'P4_04_play_third_mountain'],
-      CAST_SPELL: ['cast_spell_to_stack', 'cast_delver', 'final_spell', 'P1_08_target_bolas', 'P2_08_cast_delver', 'B3_05_cast_slip', 'F3_cast_bolt_bolas', 'F7_reverberate_bolt'],
+      CAST_SPELL: ['cast_spell_to_stack', 'cast_delver', 'final_spell', 'P1_08_target_bolas', 'P2_08_cast_delver', 'B3_05_cast_slip', 'L7_02_cast_rancor', 'F3_cast_bolt_bolas', 'F7_reverberate_bolt'],
       COPY_STACK_ITEM: ['copy_stack_item', 'final_in_response', 'F8_resolve_reverberate'],
-      RESOLVE_STACK_TOP: ['resolve_stack_item', 'counter_stack_item', 'cast_delver', 'final_in_response', 'P1_10_resolve_bolt', 'P2_09_resolve_delver', 'B2_04_resolve_knight', 'B3_06_resolve_slip', 'P4_05_cast_ponder', 'P4_07_draw_ponder', 'F8_resolve_reverberate', 'F9_resolve_bolt_copy_lethal', 'F10_resolve_negate_original'],
+      RESOLVE_STACK_TOP: ['resolve_stack_item', 'counter_stack_item', 'cast_delver', 'final_in_response', 'P1_10_resolve_bolt', 'P2_09_resolve_delver', 'B2_04_resolve_knight', 'B3_06_resolve_slip', 'P4_05_cast_ponder', 'P4_07_draw_ponder', 'B5_03_resolve_vraskas', 'B6_02_resolve_bonecrusher', 'L8_02_cast_probe', 'F8_resolve_reverberate', 'F9_resolve_bolt_copy_lethal', 'F10_resolve_negate_original'],
       COUNTER_STACK_TOP: ['counter_stack_item', 'final_in_response', 'B3_09_fizzle_doom_blade', 'F10_resolve_negate_original'],
       PASS_PRIORITY: ['pass_priority', 'final_trial', 'async_oath', 'P1_11_pass', ...TUTORIAL_NATURAL_PHASE_ADVANCE_STEP_IDS, 'P3_08_pass', 'P4_15_pass'],
       MANUAL_SET_STEP: payload?.phaseId === 'combat_attackers' ? ['set_attackers_phase'] : (payload?.phaseId === 'untap' ? ['P4_01_untap_phase_in'] : []),
       SET_COMBAT_DAMAGE_STEP: payload?.combatDamageStep === COMBAT_DAMAGE_STEPS.FIRST_STRIKE ? ['first_strike_step', 'B4_05_first_strike_damage'] : (payload?.combatDamageStep === COMBAT_DAMAGE_STEPS.REGULAR ? ['regular_damage_step', 'P4_12_regular_damage', 'B4_08_regular_damage'] : []),
-      SET_ATTACK_TARGET: ['declare_attacker_player', 'attack_planeswalker_battle_note', 'P4_10_attack_bolas'],
-      TOGGLE_BLOCK_TARGET: ['declare_blocker_note', 'B4_04_block_with_llanowar'],
+      SET_ATTACK_TARGET: ['declare_attacker_player', 'attack_planeswalker_battle_note', 'P4_10_attack_bolas', 'L6_02_attack_insectile', 'L7_04_attack_for_six'],
+      TOGGLE_BLOCK_TARGET: ['declare_blocker_note', 'B4_04_block_with_llanowar', 'B7_02_block_with_goblin'],
       TAP_TOGGLE: ['tap_mountain_red', 'tap_card', 'P1_04_tap_mountain', 'P2_05_tap_island', 'B3_03_tap_island_slip', 'F1_tap_mountain_bolt', 'F5_tap_two_mountains'],
       TEMP_DAMAGE: ['damage_markers', 'B4_06_mark_llanowar_damage'],
       MOD_COUNTER: ['add_counter', 'B3_07_add_counter'],
@@ -6649,31 +6717,31 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       TOGGLE_FACE: ['face_down_reveal'],
       REVEAL_CARD: ['reveal_top_delver', 'P3_03_delver_reveal_ponder'],
       BATCH_REVEAL_LIBRARY: ['reveal_top_delver', 'batch_library_actions', 'opponent_library_tools', 'P3_03_delver_reveal_ponder'],
-      MOVE_ZONE: ['B4_07_llanowar_graveyard'],
+      MOVE_ZONE: ['B4_07_llanowar_graveyard', 'B5_04_sacrifice_goblin', 'B7_03_goblin_dies'],
       BATCH_DRAW_LIBRARY: ['batch_library_actions', 'opponent_library_tools'],
       BATCH_MILL_LIBRARY: ['batch_library_actions', 'opponent_library_tools'],
-      BATCH_EXILE_LIBRARY: ['batch_library_actions', 'opponent_library_tools', 'tool_light_up_stage'],
-      BATCH_SCRY_LIBRARY: ['batch_library_actions', 'opponent_library_tools', 'tool_opt_scry'],
-      BATCH_SURVEIL_LIBRARY: ['batch_library_actions', 'opponent_library_tools', 'tool_consider_surveil'],
-      REORDER_TOP_LIBRARY: ['opponent_library_tools', 'P4_06_reorder_ponder', 'tool_ponder_reorder', 'tool_portent_bolas_library'],
+      BATCH_EXILE_LIBRARY: ['batch_library_actions', 'opponent_library_tools'],
+      BATCH_SCRY_LIBRARY: ['batch_library_actions', 'opponent_library_tools', 'TI_02_scry_one'],
+      BATCH_SURVEIL_LIBRARY: ['batch_library_actions', 'opponent_library_tools'],
+      REORDER_TOP_LIBRARY: ['opponent_library_tools', 'P4_06_reorder_ponder'],
       SHUFFLE_LIBRARY: ['opponent_library_tools'],
-      CREATE_TOKEN: ['create_token', 'deck_tokens_note', 'custom_token_note', 'tool_dragon_fodder', 'tool_goblin_template', 'tool_mirror_cell'],
+      CREATE_TOKEN: ['create_token', 'deck_tokens_note', 'custom_token_note', 'tool_dragon_fodder', 'tool_goblin_template', 'TI_01_custom_token'],
       TARGET: ['target_system'],
-      ATTACH_CARD: (payload?.targetPlayerId || payload?.targetType === 'player') ? ['attach_to_player_note', 'tool_curse_attach'] : ['attach_to_permanent', 'tool_rancor_attach'],
-      CLONE_CARD: ['clone_control', 'tool_clone'],
-      CHANGE_CONTROL: ['tool_act_of_treason'],
-      PRIVATE_PEEK_HAND: ['private_hand_peek', 'tool_gitaxian_probe'],
-      REVEAL_ALL_HAND: ['reveal_hand_note', 'tool_open_book_hex'],
+      ATTACH_CARD: (payload?.targetPlayerId || payload?.targetType === 'player') ? ['attach_to_player_note'] : ['attach_to_permanent', 'L7_03_attach_rancor'],
+      CLONE_CARD: ['clone_control'],
+      CHANGE_CONTROL: [],
+      PRIVATE_PEEK_HAND: ['private_hand_peek', 'L8_03_private_peek'],
+      REVEAL_ALL_HAND: ['reveal_hand_note'],
       TOGGLE_HAND_REVEAL: ['reveal_hand_note'],
-      PLAYER_COUNTER: ['player_counters', 'tool_vraskas_fall_poison', 'tool_attune_energy', 'tool_ezuri_experience'],
+      PLAYER_COUNTER: ['player_counters', 'B5_05_poison_counter'],
       MANA_POOL_ADJUST: ['add_red_mana', 'mana_pool', 'P1_05_add_r', 'P2_06_add_u', 'B3_04_add_u_slip', 'F2_add_r', 'F6_add_rr'],
       MANA_POOL_CLEAR: ['mana_pool'],
-      PLAYER_STATUS_TOGGLE: ['statuses', 'tool_throne_monarch', 'tool_citys_blessing'],
-      RING_TEMPTATION: ['statuses', 'tool_birthday_escape_ring'],
+      PLAYER_STATUS_TOGGLE: ['statuses', 'TI_03_monarch_toggle'],
+      RING_TEMPTATION: ['statuses'],
       TOGGLE_PLAYER_STATUS: ['statuses'],
-      SET_DAY_NIGHT: ['statuses', 'tool_celestus_day'],
-      ADD_PLAYER_EMBLEM: ['emblems', 'tool_chandra_emblem'],
-      ADD_PLAYER_REMINDER: ['dungeons_note', 'tool_nadaar_dungeon'],
+      SET_DAY_NIGHT: ['statuses'],
+      ADD_PLAYER_EMBLEM: ['emblems'],
+      ADD_PLAYER_REMINDER: ['dungeons_note'],
       ROOM_CODE_COPIED: ['G01_room_code', 'intro', 'room_code', 'watch_cleanup_note'],
       COMMANDER_TAX: ['commander_note'],
       COMMANDER_DAMAGE: ['commander_note'],
@@ -6736,6 +6804,35 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         const movedCard = getTutorialActionCard(payload?.cardId);
         return actionType === 'MOVE_ZONE' && getCardDisplayName(movedCard) === 'Llanowar Elves' && (payload?.targetZone === ZONES.GRAVEYARD || payload?.zone === ZONES.GRAVEYARD);
       }
+      if (['B5_04_sacrifice_goblin', 'B7_03_goblin_dies'].includes(stepId)) {
+        const movedCard = getTutorialActionCard(payload?.cardId);
+        return actionType === 'MOVE_ZONE' && /goblin/i.test(getCardDisplayName(movedCard, '')) && (payload?.targetZone === ZONES.GRAVEYARD || payload?.zone === ZONES.GRAVEYARD);
+      }
+      if (stepId === 'B5_05_poison_counter') {
+        const counterLabel = String(payload?.counterType || payload?.label || payload?.name || '');
+        return actionType === 'PLAYER_COUNTER' && (!payload?.targetPlayerId || payload.targetPlayerId === userId) && /poison/i.test(counterLabel) && Number(payload?.amount ?? 1) > 0;
+      }
+      if (['L6_02_attack_insectile', 'L7_04_attack_for_six'].includes(stepId)) {
+        const attackingCard = getTutorialActionCard(payload?.cardId);
+        const attackingName = getCardDisplayName(attackingCard, '');
+        return actionType === 'SET_ATTACK_TARGET' && ['Insectile Aberration', 'Delver of Secrets'].includes(attackingName);
+      }
+      if (stepId === 'L7_02_cast_rancor') {
+        const card = getTutorialActionCard(payload?.cardId);
+        return actionType === 'CAST_SPELL' && getCardDisplayName(card) === 'Rancor';
+      }
+      if (stepId === 'L7_03_attach_rancor') {
+        const source = getTutorialActionCard(payload?.cardId);
+        return actionType === 'ATTACH_CARD' && getCardDisplayName(source) === 'Rancor';
+      }
+      if (['B5_03_resolve_vraskas', 'B6_02_resolve_bonecrusher', 'L8_02_cast_probe'].includes(stepId)) {
+        const stackItem = stackItemForPayload();
+        const expectedStackName = stepId === 'B5_03_resolve_vraskas' ? 'Vraska’s Fall' : (stepId === 'B6_02_resolve_bonecrusher' ? 'Bonecrusher Giant' : 'Gitaxian Probe');
+        return actionType === 'RESOLVE_STACK_TOP' && String(stackItem?.name || '').replace(/'/g, '’') === expectedStackName;
+      }
+      if (stepId === 'TI_01_custom_token') {
+        return actionType === 'CREATE_TOKEN' && !/goblin/i.test(String(payload?.name || ''));
+      }
       if (['P2_06_add_u', 'B3_04_add_u_slip'].includes(stepId)) return actionType === 'MANA_POOL_ADJUST' && payload?.color === 'U' && Number(payload?.amount) > 0;
       if (['cast_spell_to_stack', 'P1_08_target_bolas', 'F3_cast_bolt_bolas'].includes(stepId)) {
         const card = getTutorialActionCard(payload?.cardId);
@@ -6788,6 +6885,11 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         const attacker = getTutorialActionCard(payload?.attackerId);
         return actionType === 'TOGGLE_BLOCK_TARGET' && game?.phase === 'combat_blockers' && getCardDisplayName(blocker) === 'Llanowar Elves' && ['Dragon Token', 'Knight of Malice'].includes(getCardDisplayName(attacker));
       }
+      if (stepId === 'B7_02_block_with_goblin') {
+        const blocker = getTutorialActionCard(payload?.cardId);
+        const attacker = getTutorialActionCard(payload?.attackerId);
+        return actionType === 'TOGGLE_BLOCK_TARGET' && game?.phase === 'combat_blockers' && /goblin/i.test(getCardDisplayName(blocker, '')) && getCardDisplayName(attacker) === 'Bonecrusher Giant';
+      }
       if (stepId === 'P4_07_draw_ponder') {
         // Draw+summon bundle: completes when Llanowar Elves actually resolves.
         const stackItem = stackItemForPayload();
@@ -6801,18 +6903,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         const goblinTokensBefore = (game?.cards || []).filter((card) => card.controllerId === userId && card.zone === ZONES.BATTLEFIELD && /goblin/i.test(getCardDisplayName(card, '')) && /token/i.test(getCardTypeLine(card))).length;
         return actionType === 'CREATE_TOKEN' && /goblin/i.test(String(payload?.name || '')) && goblinTokensBefore >= 1;
       }
-      if (stepId === 'tool_mirror_cell') {
-        return actionType === 'CREATE_TOKEN' && !/goblin/i.test(String(payload?.name || ''));
-      }
-      if (['P4_06_reorder_ponder', 'tool_ponder_reorder'].includes(stepId)) {
+      if (stepId === 'P4_06_reorder_ponder') {
         return actionType === 'REORDER_TOP_LIBRARY' && (!payload?.ownerId || payload.ownerId === userId);
-      }
-      if (stepId === 'tool_portent_bolas_library') {
-        return actionType === 'REORDER_TOP_LIBRARY' && Boolean(payload?.ownerId) && payload.ownerId !== userId;
-      }
-      if (stepId === 'tool_rancor_attach') {
-        const source = getTutorialActionCard(payload?.cardId);
-        return actionType === 'ATTACH_CARD' && getCardDisplayName(source) === 'Rancor';
       }
       return true;
     };
@@ -6944,9 +7036,9 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   useEffect(() => {
     if (!isTutorialGame) return;
     const liveStepId = (optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.stepId || 'intro';
-    if (stackDetailOpen && ['inspect_stack', 'bolas_negate', 'bolas_removal', 'final_bolas_response', 'P1_09_inspect_stack', 'B2_03_bolas_cast_knight', 'B3_02_bolas_doom_blade', 'F4_bolas_negate_real_mana'].includes(liveStepId)) maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'stackDetailOpen' });
-    if (recapOpen && ['game_log', 'async_oath', 'manual_toolbox_note', 'B1_01_bolas_island', 'B1_02_bolas_pass', 'B2_01_bolas_draw_mountain', 'B2_05_bolas_pass', 'B3_01_bolas_swamp', 'B3_11_bolas_pass', 'B4_01_bolas_untaps', 'B4_09_bolas_pass', 'F11_victory_complete'].includes(liveStepId)) maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'recapOpen' });
-    if (libraryMenuOpen && ['open_library_tools', 'opponent_library_tools', 'G05_open_library_tools', 'tool_praetors_grasp', 'tool_thought_scour'].includes(liveStepId)) maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'libraryMenuOpen' });
+    if (stackDetailOpen && ['inspect_stack', 'bolas_negate', 'bolas_removal', 'final_bolas_response', 'P1_09_inspect_stack', 'B2_03_bolas_cast_knight', 'B3_02_bolas_doom_blade', 'B5_02_vraskas_fall_cast', 'B6_01_bolas_bonecrusher', 'F4_bolas_negate_real_mana'].includes(liveStepId)) maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'stackDetailOpen' });
+    if (recapOpen && ['game_log', 'async_oath', 'manual_toolbox_note', 'B1_01_bolas_island', 'B1_02_bolas_pass', 'B2_01_bolas_draw_mountain', 'B2_05_bolas_pass', 'B3_01_bolas_swamp', 'B3_11_bolas_pass', 'B4_01_bolas_untaps', 'B4_09_bolas_pass', 'B5_01_bolas_turn_five', 'B5_06_knight_attacks_two', 'B6_03_knight_attacks_again', 'F11_victory_complete'].includes(liveStepId)) maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'recapOpen' });
+    if (libraryMenuOpen && ['open_library_tools', 'opponent_library_tools', 'G05_open_library_tools'].includes(liveStepId)) maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'libraryMenuOpen' });
     if (libraryBatchOpen && liveStepId === 'batch_library_actions') maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'libraryBatchOpen' });
     if (tokenModal && ['deck_tokens_note', 'custom_token_note'].includes(liveStepId)) maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'tokenModalOpen' });
     if (playerStatsOpen && ['player_panel', 'dungeons_note', 'commander_note'].includes(liveStepId)) maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'playerStatsOpen' });
@@ -6975,13 +7067,13 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       }
       return;
     }
-    if (activeStepId === 'P4_13_apply_insectile_damage') {
-      // Primary completion: the scripted setup applies Insectile's 4 combat damage
-      // (Bolas 17 → 13) when this step arms; the step auto-advances from the real
-      // life total. Also covers refresh/resume, where life is already 13 or less.
+    // Scripted-combat-damage steps: the setup applies the damage when the step arms
+    // and the step auto-advances from the real life total (refresh/resume included).
+    const scriptedBolasLifeTargets = { P4_13_apply_insectile_damage: 13, L6_03_insectile_hits_nine: 9, L7_05_bolas_at_three: 3 };
+    if (Object.prototype.hasOwnProperty.call(scriptedBolasLifeTargets, activeStepId)) {
       const bolasPlayer = (game?.players || []).find((player) => /Nicol Bolas/i.test(player?.name || ''));
-      if (bolasPlayer && Number(bolasPlayer.life) <= 13) {
-        maybeCompleteTutorialStep('P4_13_apply_insectile_damage', { source: 'state-transition', detail: 'bolasLifeAt13' });
+      if (bolasPlayer && Number(bolasPlayer.life) <= scriptedBolasLifeTargets[activeStepId]) {
+        maybeCompleteTutorialStep(activeStepId, { source: 'state-transition', detail: `bolasLifeAt${scriptedBolasLifeTargets[activeStepId]}` });
       }
       return;
     }
@@ -7291,14 +7383,45 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       F8_resolve_reverberate: [{ name: 'Reverberate', zone: 'stack_zone', ownerId: userId, controllerId: userId, stack: true, targetName: 'Lightning Bolt' }],
       F9_resolve_bolt_copy_lethal: [{ name: 'Lightning Bolt', zone: 'stack_zone', ownerId: userId, controllerId: userId, stack: true, targetName: 'Nicol Bolas' }],
       F10_resolve_negate_original: [],
-      // Act 9: Dragon Fodder and Rancor are the next cards in Luis's real library
-      // order — moving them to hand IS the scripted Turn 5/Turn 6 draw (logged below).
+      // Act 9: Dragon Fodder is the next card in Luis's real library order — moving
+      // it to hand IS the scripted Turn 5 draw (logged below).
       tool_dragon_fodder: [{ name: 'Dragon Fodder', zone: ZONES.HAND, ownerId: userId, controllerId: userId }],
-      tool_rancor_attach: [
+      // Acts 10-15: the duel continues with real scripted turns. These entries are
+      // resume-safety nets; the live flow produces every card via real draws/casts.
+      B5_01_bolas_turn_five: [{ name: 'Mountain', zone: ZONES.BATTLEFIELD, ownerId: opponent?.id || userId, controllerId: opponent?.id || userId }],
+      B5_02_vraskas_fall_cast: [{ name: 'Vraska’s Fall', zone: 'stack_zone', ownerId: opponent?.id || userId, controllerId: opponent?.id || userId, stack: true, targetName: 'Luis' }],
+      B5_03_resolve_vraskas: [{ name: 'Vraska’s Fall', zone: 'stack_zone', ownerId: opponent?.id || userId, controllerId: opponent?.id || userId, stack: true, targetName: 'Luis' }],
+      B5_04_sacrifice_goblin: [],
+      B5_05_poison_counter: [],
+      B5_06_knight_attacks_two: [],
+      L6_01_draw_reverberate: [],
+      L6_02_attack_insectile: [{ name: 'Delver of Secrets', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId, activeFaceIndex: 1 }],
+      L6_03_insectile_hits_nine: [],
+      B6_01_bolas_bonecrusher: [{ name: 'Bonecrusher Giant', zone: 'stack_zone', ownerId: opponent?.id || userId, controllerId: opponent?.id || userId, stack: true }],
+      B6_02_resolve_bonecrusher: [{ name: 'Bonecrusher Giant', zone: 'stack_zone', ownerId: opponent?.id || userId, controllerId: opponent?.id || userId, stack: true }],
+      B6_03_knight_attacks_again: [],
+      L7_01_draw_rancor: [],
+      L7_02_cast_rancor: [
         { name: 'Rancor', zone: ZONES.HAND, ownerId: userId, controllerId: userId },
         { name: 'Forest', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId }
-      ]
-    }[stepId] || (/^tool_/.test(stepId) ? [] : null);
+      ],
+      L7_03_attach_rancor: [],
+      L7_04_attack_for_six: [{ name: 'Delver of Secrets', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId, activeFaceIndex: 1 }],
+      L7_05_bolas_at_three: [],
+      B7_01_bonecrusher_attacks: [
+        { name: 'Bonecrusher Giant', zone: ZONES.BATTLEFIELD, ownerId: opponent?.id || userId, controllerId: opponent?.id || userId, tapped: true },
+        { name: 'Knight of Malice', zone: ZONES.BATTLEFIELD, ownerId: opponent?.id || userId, controllerId: opponent?.id || userId }
+      ],
+      B7_02_block_with_goblin: [
+        { name: 'Bonecrusher Giant', zone: ZONES.BATTLEFIELD, ownerId: opponent?.id || userId, controllerId: opponent?.id || userId, tapped: true },
+        { name: 'Goblin', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId }
+      ],
+      B7_03_goblin_dies: [],
+      L8_01_draw_probe: [],
+      L8_02_cast_probe: [{ name: 'Gitaxian Probe', zone: ZONES.HAND, ownerId: userId, controllerId: userId }],
+      L8_03_private_peek: [],
+      L8_04_probe_draw_bolt: []
+    }[stepId] || (/^(tool_|TI_)/.test(stepId) ? [] : null);
     if (!needs) return;
     if (stepId === 'P1_01_play_mountain' && !hasExactTutorialOpeningHand(game.cards || [], userId) && !(game.cards || []).some((card) => getCardDisplayName(card, card?.name || '') === 'Mountain' && card.controllerId === userId && card.zone === ZONES.BATTLEFIELD)) {
       const message = 'The tutorial hand is out of sync. Reset tutorial battle to continue cleanly.';
@@ -7357,14 +7480,15 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     });
 
     const findTutorialCard = (name, controllerId = null) => nextCards.find((card) => (card.name === name || card.card_faces?.some((face) => face?.name === name)) && (!controllerId || card.controllerId === controllerId));
-    if (['P2_02_reach_draw', 'P2_02_draw_slip'].includes(stepId)) {
+    const expectedTopOfLibraryName = TUTORIAL_TOP_OF_LIBRARY_BY_STEP[stepId];
+    if (expectedTopOfLibraryName) {
       const topLuisLibraryCard = nextCards.find((card) => card.ownerId === userId && card.zone === ZONES.LIBRARY);
-      const slipCard = nextCards.find((card) => card.ownerId === userId && card.zone === ZONES.LIBRARY && getCardDisplayName(card) === 'Slip Out the Back');
-      if (slipCard?.instanceId && topLuisLibraryCard?.instanceId !== slipCard.instanceId) {
+      const expectedTopCard = nextCards.find((card) => card.ownerId === userId && card.zone === ZONES.LIBRARY && getCardDisplayName(card) === expectedTopOfLibraryName);
+      if (expectedTopCard?.instanceId && topLuisLibraryCard?.instanceId !== expectedTopCard.instanceId) {
         nextCards = [
-          ...nextCards.filter((card) => card.instanceId !== slipCard.instanceId && !(card.ownerId === userId && card.zone === ZONES.LIBRARY)),
-          slipCard,
-          ...nextCards.filter((card) => card.instanceId !== slipCard.instanceId && card.ownerId === userId && card.zone === ZONES.LIBRARY)
+          ...nextCards.filter((card) => card.instanceId !== expectedTopCard.instanceId && !(card.ownerId === userId && card.zone === ZONES.LIBRARY)),
+          expectedTopCard,
+          ...nextCards.filter((card) => card.instanceId !== expectedTopCard.instanceId && card.ownerId === userId && card.zone === ZONES.LIBRARY)
         ];
         changed = true;
       }
@@ -7458,8 +7582,41 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       forcedPhase = 'combat_end';
       forcedTurnPlayerId = userId;
       forcedStack = [];
-    } else if (/^tool_/.test(stepId)) {
-      // Act 9 tool showcase plays out across Luis's Turn 5+ main phases.
+    } else if (['B5_01_bolas_turn_five', 'B5_02_vraskas_fall_cast', 'B5_03_resolve_vraskas', 'B5_04_sacrifice_goblin', 'B5_05_poison_counter', 'B6_01_bolas_bonecrusher', 'B6_02_resolve_bonecrusher'].includes(stepId)) {
+      forcedPhase = 'main1';
+      forcedTurnPlayerId = opponentId || game.turnPlayerId;
+    } else if (['B5_06_knight_attacks_two', 'B6_03_knight_attacks_again'].includes(stepId)) {
+      // Scripted Bolas combat plus turn-end: hand the table back to Luis at his untap.
+      forcedPhase = 'untap';
+      forcedTurnPlayerId = userId;
+      forcedStack = [];
+    } else if (['L6_01_draw_reverberate', 'L7_01_draw_rancor', 'L8_01_draw_probe', 'L8_04_probe_draw_bolt'].includes(stepId)) {
+      forcedPhase = 'draw';
+      forcedTurnPlayerId = userId;
+      forcedStack = [];
+    } else if (['L6_02_attack_insectile', 'L7_04_attack_for_six'].includes(stepId)) {
+      forcedPhase = 'combat_attackers';
+      forcedTurnPlayerId = userId;
+      forcedStack = [];
+    } else if (['L6_03_insectile_hits_nine', 'L7_05_bolas_at_three'].includes(stepId)) {
+      forcedPhase = 'combat_damage';
+      forcedTurnPlayerId = userId;
+      forcedStack = [];
+    } else if (['L7_02_cast_rancor', 'L7_03_attach_rancor', 'L8_02_cast_probe', 'L8_03_private_peek'].includes(stepId)) {
+      forcedPhase = 'main1';
+      forcedTurnPlayerId = userId;
+    } else if (['B7_01_bonecrusher_attacks', 'B7_02_block_with_goblin'].includes(stepId)) {
+      forcedPhase = stepId === 'B7_01_bonecrusher_attacks' ? 'combat_attackers' : 'combat_blockers';
+      forcedTurnPlayerId = opponentId || game.turnPlayerId;
+      forcedStack = [];
+      const bonecrusherAttacker = findTutorialCard('Bonecrusher Giant', opponentId);
+      if (bonecrusherAttacker?.instanceId) forcedCombat = normalizeCombatState({ attackers: { [bonecrusherAttacker.instanceId]: normalizeAttackTarget({ type: 'player', id: userId, targetId: userId, kind: 'player' }, game, bonecrusherAttacker) || { type: 'player', id: userId, targetId: userId, kind: 'player' } }, blockers: {}, combatDamageStep: null });
+    } else if (stepId === 'B7_03_goblin_dies') {
+      // Keep the player's real block assignment in combat state for the damage step.
+      forcedPhase = 'combat_damage';
+      forcedTurnPlayerId = opponentId || game.turnPlayerId;
+    } else if (/^(tool_|TI_)/.test(stepId)) {
+      // Turn 5 token scene and the Table Tools Interlude play out in Luis's main phase.
       forcedPhase = 'main1';
       forcedTurnPlayerId = userId;
     }
@@ -7601,10 +7758,19 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       })]);
     };
     const updateBolasLife = (lifeTotal, reason) => {
-      const currentPlayers = Array.isArray(game.players) ? game.players : [];
+      const currentPlayers = Array.isArray(updates.players) ? updates.players : (Array.isArray(game.players) ? game.players : []);
       const bolasPlayer = currentPlayers.find((player) => /Nicol Bolas/i.test(player?.name || ''));
       if (!bolasPlayer || Number(bolasPlayer.life) === lifeTotal) return;
       updates.players = currentPlayers.map((player) => player.id === bolasPlayer.id ? { ...player, life: lifeTotal } : player);
+      updates.log = pruneLogForFirestore([...(updates.log || game.log || []), buildGameLogEntry({ currentGame: game, playerId: userId, playerName: 'Tutorial', type: 'TUTORIAL_SNAPSHOT', category: 'tutorial', message: reason })]);
+    };
+    // Scripted combat damage TO Luis works the same way: absolute target totals keep
+    // refresh/resume from double-applying, and each change logs exactly once.
+    const updateLuisLife = (lifeTotal, reason) => {
+      const currentPlayers = Array.isArray(updates.players) ? updates.players : (Array.isArray(game.players) ? game.players : []);
+      const luisPlayer = currentPlayers.find((player) => player?.id === userId);
+      if (!luisPlayer || Number(luisPlayer.life) === lifeTotal) return;
+      updates.players = currentPlayers.map((player) => player.id === userId ? { ...player, life: lifeTotal } : player);
       updates.log = pruneLogForFirestore([...(updates.log || game.log || []), buildGameLogEntry({ currentGame: game, playerId: userId, playerName: 'Tutorial', type: 'TUTORIAL_SNAPSHOT', category: 'tutorial', message: reason })]);
     };
     const ensureBolasHasPlayedIsland = () => {
@@ -7784,14 +7950,114 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         } : player);
       }
     }
-    if (stepId === 'tool_rancor_attach') {
-      appendTutorialLogOnce('Turn 6: Luis untaps and draws Rancor.', 'TUTORIAL_SCRIPT', 'tutorial');
+    // ---- Acts 10-15: scripted Bolas turns and mechanical combat consequences ----
+    // Every block is idempotent: card moves/taps no-op once the state matches, life
+    // setters no-op at the target total, and logs are appended once per run.
+    const untapBolasPermanents = (exceptNames = []) => {
+      let untappedBolasCard = false;
+      nextCards = nextCards.map((card) => {
+        if (card.controllerId !== opponentId || card.zone !== ZONES.BATTLEFIELD || !card.tapped || card.phasedOut) return card;
+        if (exceptNames.some((name) => cardNameIs(card, name))) return card;
+        untappedBolasCard = true;
+        return { ...card, tapped: false };
+      });
+      if (untappedBolasCard) changed = true;
+    };
+    const tapLuisInsectileForAttack = () => {
+      const attackingInsectile = nextCards.find((card) => card.controllerId === userId && card.zone === ZONES.BATTLEFIELD && (cardNameIs(card, 'Insectile Aberration') || cardNameIs(card, 'Delver of Secrets')));
+      if (attackingInsectile && !attackingInsectile.tapped) {
+        nextCards = nextCards.map((card) => card.instanceId === attackingInsectile.instanceId ? { ...card, tapped: true } : card);
+        changed = true;
+      }
+    };
+    if (stepId === 'B5_01_bolas_turn_five') {
+      untapBolasPermanents();
+      appendTutorialLogOnce('Turn 5 (Bolas): Nicol Bolas untaps, draws for the turn, and plays a Mountain — the land he drew on his second turn.', 'PLAY_LAND', 'card');
+    }
+    if (stepId === 'B5_02_vraskas_fall_cast') {
+      // Bolas pays {2}{B} by tapping Swamp, Swamp, and Island; his Mountain stays open.
+      let tappedAnyForVraskas = false;
+      nextCards = nextCards.map((card) => {
+        if (card.controllerId !== opponentId || card.zone !== ZONES.BATTLEFIELD || card.tapped || card.phasedOut) return card;
+        if (!cardNameIs(card, 'Swamp') && !cardNameIs(card, 'Island')) return card;
+        tappedAnyForVraskas = true;
+        return { ...card, tapped: true };
+      });
+      if (tappedAnyForVraskas) changed = true;
+      appendTutorialLogOnce('Nicol Bolas taps Swamp, Swamp, and Island, then casts Vraska’s Fall targeting Luis.', 'CAST_SPELL', 'card');
+    }
+    if (stepId === 'B5_06_knight_attacks_two') {
+      const bolasKnightForAttack = nextCards.find((card) => card.controllerId === opponentId && card.zone === ZONES.BATTLEFIELD && cardNameIs(card, 'Knight of Malice'));
+      if (bolasKnightForAttack && !bolasKnightForAttack.tapped) {
+        nextCards = nextCards.map((card) => card.instanceId === bolasKnightForAttack.instanceId ? { ...card, tapped: true } : card);
+        changed = true;
+      }
+      appendTutorialLogOnce('Nicol Bolas attacks with Knight of Malice (it taps — no vigilance). Luis declines to block.', 'SET_ATTACK_TARGET', 'combat');
+      updateLuisLife(18, 'Knight of Malice deals 2 combat damage to Luis. Luis goes to 18.');
+      appendTutorialLogOnce('Nicol Bolas ended his turn. Luis begins Turn 6.', 'PASS_TURN', 'priority');
+    }
+    if (stepId === 'L6_03_insectile_hits_nine') {
+      tapLuisInsectileForAttack();
+      appendTutorialLogOnce('Insectile Aberration taps as it attacks. Unblocked: 4 combat damage to Nicol Bolas.', 'TUTORIAL_SCRIPT', 'combat');
+      updateBolasLife(9, 'Insectile Aberration deals 4 combat damage to Nicol Bolas. Nicol Bolas goes to 9.');
+    }
+    if (stepId === 'B6_01_bolas_bonecrusher') {
+      untapBolasPermanents();
+      // Bolas pays {2}{R} for Bonecrusher Giant: Mountain for red, Island + Swamp for generic.
+      const bonecrusherCostNames = ['Mountain', 'Island', 'Swamp'];
+      let tappedAnyForBonecrusher = false;
+      nextCards = nextCards.map((card) => {
+        if (card.controllerId !== opponentId || card.zone !== ZONES.BATTLEFIELD || card.tapped || card.phasedOut) return card;
+        const costIndex = bonecrusherCostNames.findIndex((name) => cardNameIs(card, name));
+        if (costIndex < 0) return card;
+        bonecrusherCostNames.splice(costIndex, 1);
+        tappedAnyForBonecrusher = true;
+        return { ...card, tapped: true };
+      });
+      if (tappedAnyForBonecrusher) changed = true;
+      appendTutorialLogOnce('Turn 6 (Bolas): Nicol Bolas untaps, draws, taps Mountain, Island, and Swamp, and casts Bonecrusher Giant.', 'CAST_SPELL', 'card');
+    }
+    if (stepId === 'B6_03_knight_attacks_again') {
+      const bolasKnightSecondAttack = nextCards.find((card) => card.controllerId === opponentId && card.zone === ZONES.BATTLEFIELD && cardNameIs(card, 'Knight of Malice'));
+      if (bolasKnightSecondAttack && !bolasKnightSecondAttack.tapped) {
+        nextCards = nextCards.map((card) => card.instanceId === bolasKnightSecondAttack.instanceId ? { ...card, tapped: true } : card);
+        changed = true;
+      }
+      appendTutorialLogOnce('Bonecrusher Giant has summoning sickness. Knight of Malice attacks again (it taps); Luis takes 2.', 'SET_ATTACK_TARGET', 'combat');
+      updateLuisLife(16, 'Knight of Malice deals 2 combat damage to Luis. Luis goes to 16.');
+      appendTutorialLogOnce('Nicol Bolas ended his turn. Luis begins Turn 7.', 'PASS_TURN', 'priority');
+    }
+    if (stepId === 'L7_05_bolas_at_three') {
+      tapLuisInsectileForAttack();
+      appendTutorialLogOnce('The scripted Bolas declines to block with Bonecrusher. Insectile Aberration (with Rancor) taps and hits for 6.', 'TUTORIAL_SCRIPT', 'combat');
+      updateBolasLife(3, 'Insectile Aberration deals 6 combat damage to Nicol Bolas. Nicol Bolas goes to 3.');
+    }
+    if (stepId === 'B7_01_bonecrusher_attacks') {
+      // Bolas untaps for Turn 7 (Knight and lands); Bonecrusher then attacks and taps —
+      // the needs entry asserts the tap, so keep it out of the untap pass.
+      untapBolasPermanents(['Bonecrusher Giant']);
+      appendTutorialLogOnce('Turn 7 (Bolas): Nicol Bolas untaps, then attacks with Bonecrusher Giant (it taps — no vigilance).', 'SET_ATTACK_TARGET', 'combat');
+    }
+    if (stepId === 'B7_03_goblin_dies') {
+      appendTutorialLogOnce('Bonecrusher Giant deals 4 to the blocking Goblin — lethal. The Goblin dealt 1 back; the 4/3 Giant survives.', 'TUTORIAL_SCRIPT', 'combat');
+    }
+    if (stepId === 'L8_01_draw_probe') {
+      // Bolas's Turn 7 ends after the Goblin trade; Luis untaps for Turn 8. The forced
+      // phase here is Draw, so the untap is applied manually (and idempotently).
+      let untappedLuisCard = false;
+      nextCards = nextCards.map((card) => {
+        if (card.controllerId !== userId || card.zone !== ZONES.BATTLEFIELD || !card.tapped || card.phasedOut) return card;
+        untappedLuisCard = true;
+        return { ...card, tapped: false };
+      });
+      if (untappedLuisCard) changed = true;
+      appendTutorialLogOnce('Nicol Bolas ended his turn. Luis begins Turn 8 and untaps.', 'PASS_TURN', 'priority');
     }
     // Unblocked combat damage is a game consequence, not a player chore: the scripted
-    // duel applies Insectile's 4 damage itself. updateBolasLife no-ops once life is 13,
-    // so refresh/resume cannot double-apply the damage or duplicate the log entry.
+    // duel applies it. The life setters no-op at the target total, so refresh/resume
+    // cannot double-apply damage or duplicate the log entry.
     if (stepId === 'P4_13_apply_insectile_damage') updateBolasLife(13, 'Insectile Aberration deals 4 combat damage to Nicol Bolas. Nicol Bolas goes to 13.');
-    if (stepId === 'F1_tap_mountain_bolt') updateBolasLife(3, 'Several turns later, Insectile, the Curse, and earlier spells have pushed Nicol Bolas to 3 life.');
+    if (stepId === 'F1_tap_mountain_bolt') updateBolasLife(3, 'Safety net: Nicol Bolas stands at 3 life after Insectile’s two attacks.');
     if (forcedPhase === 'untap' && forcedTurnPlayerId) {
       // Tutorial-only: forced jumps into the untap step skip the natural untap that
       // advancePassPriorityState performs, so apply it here. Phased-out permanents
@@ -12529,7 +12795,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             <BookOpen size={20} />
           </button>
           <button
-            onClick={() => { setRevealsOpen(true); maybeCompleteTutorialStep('reveal_hand_note'); maybeCompleteTutorialStep('tool_open_book_hex'); }}
+            onClick={() => { setRevealsOpen(true); maybeCompleteTutorialStep('reveal_hand_note'); }}
             data-tutorial-anchor="reveal-tools"
             className={`relative z-20 pointer-events-auto flex flex-col items-center justify-center px-2 py-1 rounded hover:bg-slate-700${getTutorialAnchorClass(currentTutorialAnchor, 'reveal-tools', tutorialPulseAnchor)}`}
             title="View reveals and reveal tools"
@@ -12831,7 +13097,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               </div>
             ) : <div />}
 
-            <div data-tutorial-anchor="combat-summary" onClick={() => { maybeCompleteTutorialStep('bolas_blocks_summary'); maybeCompleteTutorialStep('combat_summary_note'); maybeCompleteTutorialStep('bolas_declares_attacker'); maybeCompleteTutorialStep('P4_11_combat_summary'); maybeCompleteTutorialStep('B4_02_bolas_combat'); maybeCompleteTutorialStep('B4_03_knight_attacks'); }} className={`bg-slate-900/90 border border-slate-700 rounded-lg p-3 text-xs space-y-2${getTutorialAnchorClass(currentTutorialAnchor, 'combat-summary', tutorialPulseAnchor)}`}>
+            <div data-tutorial-anchor="combat-summary" onClick={() => { maybeCompleteTutorialStep('bolas_blocks_summary'); maybeCompleteTutorialStep('combat_summary_note'); maybeCompleteTutorialStep('bolas_declares_attacker'); maybeCompleteTutorialStep('P4_11_combat_summary'); maybeCompleteTutorialStep('B4_02_bolas_combat'); maybeCompleteTutorialStep('B4_03_knight_attacks'); maybeCompleteTutorialStep('B7_01_bonecrusher_attacks'); }} className={`bg-slate-900/90 border border-slate-700 rounded-lg p-3 text-xs space-y-2${getTutorialAnchorClass(currentTutorialAnchor, 'combat-summary', tutorialPulseAnchor)}`}>
               <div className="font-bold text-slate-200 uppercase tracking-wider">Combat Summary</div>
               <div className="flex flex-wrap items-center gap-2">
                 <span className="font-semibold text-slate-300">Damage step:</span>

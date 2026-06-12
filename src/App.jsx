@@ -369,7 +369,7 @@ const TUTORIAL_BOLAS_LINES = {
   P4_10_attack_bolas: 'Send the insect at me. History loves a doomed flight.',
   P4_11_combat_summary: 'Review the assault. Even arrogance benefits from accounting.',
   P4_12_regular_damage: 'Damage step. Teeth meet ledger.',
-  P4_13_apply_insectile_damage: 'Three damage lands. Annoying, like thunder with delusions.',
+  P4_13_apply_insectile_damage: 'Four damage lands. Annoying, like thunder with delusions.',
   P4_14_end_combat: 'Combat ends. The paperwork has teeth marks.',
   P4_15_pass: 'Pass the turn. Try not to look proud of arithmetic.',
   B4_01_bolas_untaps: 'My board untaps. The machine remembers who built it.',
@@ -558,7 +558,7 @@ const TUTORIAL_DUEL_STEPS = [
   makeDuelStep({ id: 'P4_10_attack_bolas', act: 'Act 7 / Luis Turn 4', title: 'Attack Bolas with Insectile', phase: 'combat_attackers', sourceCard: 'Insectile Aberration', requiredAction: 'Declare Insectile attacking Nicol Bolas.', exactUiAction: 'Tap Insectile → Attack → choose Nicol Bolas.', legalPreconditions: 'Insectile has been controlled since previous turn, is phased in, has flying, and Knight cannot block flying.', completionCondition: 'Insectile marked attacking Bolas.', showMeAnchor: 'own-battlefield', storyText: TUTORIAL_STORY_TEXT.P4_10_attack_bolas, bolasLine: TUTORIAL_BOLAS_LINES.P4_10_attack_bolas }),
   makeDuelStep({ id: 'P4_11_combat_summary', act: 'Act 7 / Luis Turn 4', title: 'Inspect Combat Summary', phase: 'combat_attackers', sourceCard: 'Combat assignment', requiredAction: 'Open Combat Summary.', exactUiAction: 'Open Combat Summary.', legalPreconditions: 'Insectile attacking Bolas; no blockers.', completionCondition: 'Combat Summary opened.', showMeAnchor: 'combat-summary', storyText: TUTORIAL_STORY_TEXT.P4_11_combat_summary, bolasLine: TUTORIAL_BOLAS_LINES.P4_11_combat_summary }),
   makeDuelStep({ id: 'P4_12_regular_damage', act: 'Act 7 / Luis Turn 4', title: 'Regular Combat Damage', phase: 'combat_damage', sourceCard: 'Combat rules', requiredAction: 'Set Regular Combat Damage.', exactUiAction: 'Tap the phase name to open Time Controls → Combat damage step → Regular damage.', legalPreconditions: 'No first/double strike combatants in this combat.', completionCondition: 'Regular combat damage active.', showMeAnchor: 'phase-indicator', storyText: TUTORIAL_STORY_TEXT.P4_12_regular_damage, bolasLine: TUTORIAL_BOLAS_LINES.P4_12_regular_damage }),
-  makeDuelStep({ id: 'P4_13_apply_insectile_damage', act: 'Act 7 / Luis Turn 4', title: 'Apply Combat Damage', phase: 'combat_damage', sourceCard: 'Insectile Aberration', requiredAction: 'Apply Insectile’s 4 combat damage: lower Nicol Bolas from 17 to 13 life.', exactUiAction: 'Tap the − life button on Nicol Bolas’s player area four times (17 → 13).', legalPreconditions: 'Insectile is 4 power because of +1/+1 counter; unblocked; damage is applied by the player.', completionCondition: 'Player lowers Bolas life to 13 or less via life change.', showMeAnchor: 'opponent-player-target', expectedLifeTotals: { bolasBefore: 17, bolasAfter: 13 }, expectedDamage: 'Insectile Aberration deals 4 combat damage to Nicol Bolas.', storyText: TUTORIAL_STORY_TEXT.P4_13_apply_insectile_damage, bolasLine: TUTORIAL_BOLAS_LINES.P4_13_apply_insectile_damage }),
+  makeDuelStep({ id: 'P4_13_apply_insectile_damage', act: 'Act 7 / Luis Turn 4', title: 'Combat Damage Lands', phase: 'combat_damage', sourceCard: 'Insectile Aberration', requiredAction: 'Confirm Insectile’s 4 combat damage drops Nicol Bolas to 13.', exactUiAction: 'No tap needed: unblocked combat damage applies automatically in this scripted duel. Watch Bolas’s life fall to 13 — the Game Log records the hit.', legalPreconditions: 'Insectile is 4 power because of the +1/+1 counter; unblocked; the scripted game applies the damage at the damage step.', completionCondition: 'Bolas life is 13 in real game state.', showMeAnchor: 'opponent-player-target', expectedLifeTotals: { bolasBefore: 17, bolasAfter: 13 }, expectedDamage: 'Insectile Aberration deals 4 combat damage to Nicol Bolas.', storyText: TUTORIAL_STORY_TEXT.P4_13_apply_insectile_damage, bolasLine: TUTORIAL_BOLAS_LINES.P4_13_apply_insectile_damage }),
   makeDuelStep({ id: 'P4_14_end_combat', act: 'Act 7 / Luis Turn 4', title: 'Let Combat End', phase: 'combat_end', requiredAction: 'Advance to End Combat.', exactUiAction: 'Use Pass or AutoPass to continue until End Combat.', legalPreconditions: 'Combat damage applied, stack empty, and damage step priority is available.', completionCondition: 'Current game phase is End Combat after a Pass or AutoPass advance.', showMeAnchor: 'autopass-button', storyText: TUTORIAL_STORY_TEXT.P4_14_end_combat, bolasLine: TUTORIAL_BOLAS_LINES.P4_14_end_combat }),
   makeDuelStep({ id: 'P4_15_pass', act: 'Act 7 / Luis Turn 4', title: 'Pass Turn', requiredAction: 'Pass.', exactUiAction: 'Tap Pass.', legalPreconditions: 'Stack empty.', completionCondition: 'Pass tapped.', showMeAnchor: 'pass-button', storyText: TUTORIAL_STORY_TEXT.P4_15_pass, bolasLine: TUTORIAL_BOLAS_LINES.P4_15_pass }),
   makeDuelStep({ id: 'B4_01_bolas_untaps', act: 'Act 8 / Bolas Turn 4', title: 'Bolas Untaps', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', phase: 'untap', sourceCard: 'Chapter snapshot', requiredAction: 'Open the Game Log and review the snapshot.', exactUiAction: 'Open the Game Log.', legalPreconditions: 'Snapshot logs Luis played Forest and cast Llanowar Elves in his second main phase; Bolas then untaps his permanents.', completionCondition: 'Game Log opened and contains “Nicol Bolas untapped his permanents.”', showMeAnchor: 'game-log-button', storyText: TUTORIAL_STORY_TEXT.B4_01_bolas_untaps, bolasLine: TUTORIAL_BOLAS_LINES.B4_01_bolas_untaps }),
@@ -566,8 +566,8 @@ const TUTORIAL_DUEL_STEPS = [
   makeDuelStep({ id: 'B4_03_knight_attacks', act: 'Act 8 / Bolas Turn 4', title: 'Knight Attacks Luis', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', phase: 'combat_attackers', sourceCard: 'Knight of Malice', requiredAction: 'Inspect Knight attacking Luis.', exactUiAction: 'Inspect Combat Summary.', legalPreconditions: 'Knight has been controlled since a prior turn and can attack.', completionCondition: 'Combat Summary shows Knight attacking Luis.', showMeAnchor: 'combat-summary', storyText: TUTORIAL_STORY_TEXT.B4_03_knight_attacks, bolasLine: TUTORIAL_BOLAS_LINES.B4_03_knight_attacks }),
   makeDuelStep({ id: 'B4_04_block_with_llanowar', act: 'Act 8 / Bolas Turn 4', title: 'Block with Llanowar', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', phase: 'combat_blockers', sourceCard: 'Llanowar Elves', requiredAction: 'Declare Llanowar blocking Knight of Malice.', exactUiAction: 'Tap Llanowar Elves → Block → choose attacking Knight.', legalPreconditions: 'Luis is defending player; Llanowar is untapped and can block.', completionCondition: 'Llanowar blocks Knight.', showMeAnchor: 'own-battlefield', storyText: TUTORIAL_STORY_TEXT.B4_04_block_with_llanowar, bolasLine: TUTORIAL_BOLAS_LINES.B4_04_block_with_llanowar }),
   makeDuelStep({ id: 'B4_05_first_strike_damage', act: 'Act 8 / Bolas Turn 4', title: 'First Strike Damage', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', phase: 'combat_damage', sourceCard: 'Knight of Malice', requiredAction: 'Set First Strike Damage.', exactUiAction: 'Tap the phase name to open Time Controls → Combat damage step → First-strike damage. You operate the shared table even on Bolas’s turn.', legalPreconditions: 'Knight of Malice has first strike.', completionCondition: 'First Strike Damage active.', showMeAnchor: 'phase-indicator', storyText: TUTORIAL_STORY_TEXT.B4_05_first_strike_damage, bolasLine: TUTORIAL_BOLAS_LINES.B4_05_first_strike_damage }),
-  makeDuelStep({ id: 'B4_06_mark_llanowar_damage', act: 'Act 8 / Bolas Turn 4', title: 'Mark Lethal Damage', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', phase: 'combat_damage', sourceCard: 'Knight of Malice', requiredAction: 'Add 2 temporary damage to Llanowar Elves.', exactUiAction: 'Open Llanowar → add 2 temporary damage.', legalPreconditions: 'Knight deals first-strike damage before Llanowar can deal regular damage.', completionCondition: 'Llanowar has 2 damage marked.', showMeAnchor: 'card-detail', expectedDamage: 'Knight of Malice deals 2 first-strike damage to Llanowar Elves.', storyText: TUTORIAL_STORY_TEXT.B4_06_mark_llanowar_damage, bolasLine: TUTORIAL_BOLAS_LINES.B4_06_mark_llanowar_damage }),
-  makeDuelStep({ id: 'B4_07_llanowar_graveyard', act: 'Act 8 / Bolas Turn 4', title: 'Move Llanowar to Graveyard', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', phase: 'combat_damage', sourceCard: 'State-based actions', requiredAction: 'Move Llanowar Elves to graveyard.', exactUiAction: 'Open Llanowar → Move to Graveyard.', legalPreconditions: 'Llanowar is 1/1 with 2 damage marked; lethal damage destroys it.', completionCondition: 'Llanowar zone battlefield → graveyard.', showMeAnchor: 'card-detail', expectedDamage: 'Llanowar Elves is destroyed by lethal damage.', storyText: TUTORIAL_STORY_TEXT.B4_07_llanowar_graveyard, bolasLine: TUTORIAL_BOLAS_LINES.B4_07_llanowar_graveyard }),
+  makeDuelStep({ id: 'B4_06_mark_llanowar_damage', act: 'Act 8 / Bolas Turn 4', title: 'Mark Lethal Damage', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', phase: 'combat_damage', sourceCard: 'Knight of Malice', requiredAction: 'Mark Knight’s 2 first-strike damage on your Llanowar Elves.', exactUiAction: 'Open Llanowar → add 2 temporary damage. This teaches the damage-marker tool: you track damage on your own creatures.', legalPreconditions: 'Knight deals first-strike damage before Llanowar can deal regular damage; the defending player records it with the marker tool.', completionCondition: 'Llanowar has 2 damage marked.', showMeAnchor: 'card-detail', expectedDamage: 'Knight of Malice deals 2 first-strike damage to Llanowar Elves.', storyText: TUTORIAL_STORY_TEXT.B4_06_mark_llanowar_damage, bolasLine: TUTORIAL_BOLAS_LINES.B4_06_mark_llanowar_damage }),
+  makeDuelStep({ id: 'B4_07_llanowar_graveyard', act: 'Act 8 / Bolas Turn 4', title: 'Move Llanowar to Graveyard', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', phase: 'combat_damage', sourceCard: 'State-based actions', requiredAction: 'Move your dead Llanowar Elves to the graveyard.', exactUiAction: 'Open Llanowar → Move to Graveyard. This teaches the zone tool: lethal damage destroys it, and you record the state-based action on your own card.', legalPreconditions: 'Llanowar is 1/1 with 2 damage marked; lethal damage destroys it.', completionCondition: 'Llanowar zone battlefield → graveyard.', showMeAnchor: 'card-detail', expectedDamage: 'Llanowar Elves is destroyed by lethal damage.', storyText: TUTORIAL_STORY_TEXT.B4_07_llanowar_graveyard, bolasLine: TUTORIAL_BOLAS_LINES.B4_07_llanowar_graveyard }),
   makeDuelStep({ id: 'B4_08_regular_damage', act: 'Act 8 / Bolas Turn 4', title: 'Regular Damage', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', phase: 'combat_damage', sourceCard: 'Combat rules', requiredAction: 'Set Regular Damage.', exactUiAction: 'Tap the phase name to open Time Controls → Combat damage step → Regular damage.', legalPreconditions: 'Llanowar is gone and deals no regular damage.', completionCondition: 'Regular Damage active.', showMeAnchor: 'phase-indicator', storyText: TUTORIAL_STORY_TEXT.B4_08_regular_damage, bolasLine: TUTORIAL_BOLAS_LINES.B4_08_regular_damage }),
   makeDuelStep({ id: 'B4_09_bolas_pass', act: 'Act 8 / Bolas Turn 4', title: 'Bolas Ends His Turn', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', requiredAction: 'Open the Game Log and confirm Bolas passed the turn.', exactUiAction: 'Open the Game Log. Your next turn begins at Untap.', legalPreconditions: 'Combat complete and stack empty; the scripted Bolas ends his turn and hands the table back to Luis.', completionCondition: 'Game Log opened and contains “Luis begins a new turn.”', showMeAnchor: 'game-log-button', storyText: TUTORIAL_STORY_TEXT.B4_09_bolas_pass, bolasLine: TUTORIAL_BOLAS_LINES.B4_09_bolas_pass }),
   ...TUTORIAL_TOOL_SOURCES.map(([id, act, title, sourceCard, exactUiAction, manaPayment, completionCondition, showMeAnchor]) => makeDuelStep({ id, act, title, sourceCard, requiredAction: title, exactUiAction, manaPayment, legalPreconditions: `${sourceCard} is in the specified zone, visible mana/payment exists, and the log records the chapter snapshot before the tool is used.`, completionCondition, showMeAnchor, storyText: TUTORIAL_STORY_TEXT[id], bolasLine: TUTORIAL_BOLAS_LINES[id] })),
@@ -954,6 +954,19 @@ const TUTORIAL_NATURAL_PHASE_ADVANCE_STEPS = {
   P4_14_end_combat: { fromPhase: 'combat_damage', targetPhase: 'combat_end', completionDetail: 'PASS_PRIORITY:combat_end' }
 };
 const TUTORIAL_NATURAL_PHASE_ADVANCE_STEP_IDS = Object.keys(TUTORIAL_NATURAL_PHASE_ADVANCE_STEPS);
+
+// Tutorial steps whose required action is drawing a card. Completion requires a real
+// Draw action while the step is armed, verified against the named card landing in
+// Luis's hand (null = any card, checked via hand-count delta from the step baseline).
+// P3_05/P4_02 also appear in TUTORIAL_NATURAL_PHASE_ADVANCE_STEPS for their
+// "advance to Draw" half; the Draw half is judged here, never by the pass rule.
+const TUTORIAL_DRAW_STEP_EXPECTED_CARD = {
+  P2_02_draw_slip: 'Slip Out the Back',
+  P3_05_draw_ponder: 'Ponder',
+  P4_02_draw_mountain: 'Mountain',
+  P4_07_draw_ponder: null
+};
+const isTutorialDrawStep = (stepId) => Object.prototype.hasOwnProperty.call(TUTORIAL_DRAW_STEP_EXPECTED_CARD, stepId);
 
 const COMBAT_DAMAGE_STEPS = {
   FIRST_STRIKE: 'firstStrike',
@@ -6169,6 +6182,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     if (!isTutorialGame || !currentTutorialStep?.id) {
       tutorialStepActivationRef.current = null;
       tutorialP210UsedAutoPassUntilEndRef.current = false;
+      tutorialDrawSlipLastActionTypeRef.current = null;
       setTutorialActivationDebug(null);
       return undefined;
     }
@@ -6189,6 +6203,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     };
     tutorialStepActivationRef.current = activation;
     tutorialP210UsedAutoPassUntilEndRef.current = false;
+    tutorialDrawSlipLastActionTypeRef.current = null;
     setTutorialActivationDebug({
       activationId: activation.id,
       stepEnteredAt: new Date(activation.wallEnteredAt).toISOString(),
@@ -6600,7 +6615,6 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       RESOLVE_STACK_TOP: ['resolve_stack_item', 'counter_stack_item', 'cast_delver', 'final_in_response', 'P1_10_resolve_bolt', 'P2_09_resolve_delver', 'B2_04_resolve_knight', 'B3_06_resolve_slip', 'P4_05_cast_ponder', 'F8_resolve_reverberate', 'F9_resolve_bolt_copy_lethal', 'F10_resolve_negate_original'],
       COUNTER_STACK_TOP: ['counter_stack_item', 'final_in_response', 'B3_09_fizzle_doom_blade', 'F10_resolve_negate_original'],
       PASS_PRIORITY: ['pass_priority', 'final_trial', 'async_oath', 'P1_11_pass', ...TUTORIAL_NATURAL_PHASE_ADVANCE_STEP_IDS, 'P3_08_pass', 'P4_15_pass'],
-      LIFE_CHANGE: ['P4_13_apply_insectile_damage'],
       MANUAL_SET_STEP: payload?.phaseId === 'combat_attackers' ? ['set_attackers_phase'] : (payload?.phaseId === 'untap' ? ['P4_01_untap_phase_in'] : []),
       SET_COMBAT_DAMAGE_STEP: payload?.combatDamageStep === COMBAT_DAMAGE_STEPS.FIRST_STRIKE ? ['first_strike_step', 'B4_05_first_strike_damage'] : (payload?.combatDamageStep === COMBAT_DAMAGE_STEPS.REGULAR ? ['regular_damage_step', 'P4_12_regular_damage', 'B4_08_regular_damage'] : []),
       SET_ATTACK_TARGET: ['declare_attacker_player', 'attack_planeswalker_battle_note', 'P4_10_attack_bolas'],
@@ -6652,22 +6666,33 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     const stackItemForPayload = () => (game?.stack || []).find((item) => item?.id === payload?.stackItemId || item?.sourceId === payload?.stackItemId);
     const tutorialActionMatchesStep = () => {
       const naturalPhaseAdvance = TUTORIAL_NATURAL_PHASE_ADVANCE_STEPS[stepId];
-      if (naturalPhaseAdvance) {
-        return actionType === 'PASS_PRIORITY' && (game?.stack || []).length === 0 && game?.phase === naturalPhaseAdvance.fromPhase && (!game?.priorityPlayerId || game.priorityPlayerId === userId);
+      // Two-part steps ("advance to Draw, then draw") live in both maps. The
+      // phase-advance rule must only judge Pass actions; letting it judge the
+      // follow-up Draw rejected every beginning-of-turn draw after P2_02.
+      if (naturalPhaseAdvance && actionType === 'PASS_PRIORITY') {
+        return (game?.stack || []).length === 0 && game?.phase === naturalPhaseAdvance.fromPhase && (!game?.priorityPlayerId || game.priorityPlayerId === userId);
       }
-      if (stepId === 'P2_02_draw_slip') {
+      if (isTutorialDrawStep(stepId)) {
         tutorialDrawSlipLastActionTypeRef.current = actionType;
-        const handCards = (game?.cards || []).filter((card) => card.ownerId === userId && card.zone === ZONES.HAND);
-        const handCardNames = handCards.map((card) => getCardDisplayName(card, ''));
-        const hasSlipOutInHand = handCards.some((card) => getCardDisplayName(card, '') === 'Slip Out the Back');
-        console.log('[Tutorial Draw Slip Out completion]', {
+        if (actionType !== 'DRAW_CARD') return false;
+        const expectedCardName = TUTORIAL_DRAW_STEP_EXPECTED_CARD[stepId];
+        if (!expectedCardName) return true;
+        // This can run before the write is reflected in React state: accept the
+        // draw when the named card already shows in hand, or is still shown as
+        // the library top card that this draw moves to hand.
+        const myCards = (game?.cards || []).filter((card) => card.ownerId === userId);
+        const expectedInHand = myCards.some((card) => card.zone === ZONES.HAND && getCardDisplayName(card, '') === expectedCardName);
+        const topLibraryCard = myCards.find((card) => card.zone === ZONES.LIBRARY);
+        const expectedOnTop = Boolean(topLibraryCard && getCardDisplayName(topLibraryCard, '') === expectedCardName);
+        console.log('[Tutorial draw completion]', {
           activeStepId: stepId,
           lastActionType: actionType,
-          handCardNames,
-          hasSlipOutInHand,
+          expectedCardName,
+          expectedInHand,
+          expectedOnTop,
           phase: game?.phase || null
         });
-        return actionType === 'DRAW_CARD' && hasSlipOutInHand;
+        return expectedInHand || expectedOnTop;
       }
       if (['tap_mountain_red', 'P1_04_tap_mountain', 'F1_tap_mountain_bolt'].includes(stepId)) {
         const card = getTutorialActionCard(payload?.cardId);
@@ -6685,12 +6710,6 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         // Completes when the pool reaches {R}{R}: pre-action pool R plus this adjustment >= 2.
         const myPoolRedBefore = Number(((game?.players || []).find((player) => player.id === userId)?.manaPool || {}).R) || 0;
         return actionType === 'MANA_POOL_ADJUST' && payload?.color === 'R' && Number(payload?.amount) > 0 && (myPoolRedBefore + Number(payload?.amount)) >= 2;
-      }
-      if (stepId === 'P4_13_apply_insectile_damage') {
-        const targetPlayer = (game?.players || []).find((player) => player.id === payload?.targetPlayerId);
-        if (!targetPlayer || !/Nicol Bolas/i.test(targetPlayer?.name || '')) return false;
-        const lifeAfter = (Number(targetPlayer.life) || 0) + (Number(payload?.amount) || 0);
-        return actionType === 'LIFE_CHANGE' && Number(payload?.amount) < 0 && lifeAfter <= 13;
       }
       if (stepId === 'B4_07_llanowar_graveyard') {
         const movedCard = getTutorialActionCard(payload?.cardId);
@@ -6844,24 +6863,34 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   useEffect(() => {
     if (!isTutorialGame || !userId) return;
     const liveStepId = (optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.stepId || 'intro';
-    if (liveStepId !== 'P2_02_draw_slip') return;
+    if (!isTutorialDrawStep(liveStepId)) return;
 
+    const expectedCardName = TUTORIAL_DRAW_STEP_EXPECTED_CARD[liveStepId];
     const handCards = (game?.cards || []).filter((card) => card.ownerId === userId && card.zone === ZONES.HAND);
-    const handCardNames = handCards.map((card) => getCardDisplayName(card, ''));
-    const hasSlipOutInHand = handCards.some((card) => getCardDisplayName(card, '') === 'Slip Out the Back');
     const lastActionType = tutorialDrawSlipLastActionTypeRef.current;
+    const activation = tutorialStepActivationRef.current;
+    const baselineHandCount = activation?.stepId === liveStepId ? activation?.baseline?.handCount : null;
+    // Named steps verify the scripted card is in hand (the per-step setup keeps it
+    // in the library until this step's draw, so presence means the draw happened —
+    // and on resume, presence means re-drawing is impossible and advancing is right).
+    // Unnamed steps fall back to a hand-count delta from the step-start snapshot.
+    const drawnIntoHand = expectedCardName
+      ? handCards.some((card) => getCardDisplayName(card, '') === expectedCardName)
+      : Number.isFinite(baselineHandCount) && handCards.length > baselineHandCount;
 
-    console.log('[Tutorial Draw Slip Out completion]', {
+    console.log('[Tutorial draw completion]', {
       activeStepId: liveStepId,
       lastActionType,
-      handCardNames,
-      hasSlipOutInHand,
+      expectedCardName,
+      drawnIntoHand,
+      handCount: handCards.length,
+      baselineHandCount,
       phase: game?.phase || null
     });
 
-    if (!hasSlipOutInHand) return;
+    if (!drawnIntoHand) return;
     if (lastActionType === 'DRAW_CARD' || lastActionType === null) {
-      maybeCompleteTutorialStep('P2_02_draw_slip', { source: 'state-transition', detail: hasSlipOutInHand && lastActionType === null ? 'resume-slip-already-in-hand' : 'draw-slip-in-hand' });
+      maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: lastActionType === null ? 'resume-draw-already-in-hand' : 'draw-card-in-hand' });
     }
   }, [isTutorialGame, userId, game?.cards, game?.phase, displayedTutorialState?.stepId, game?.tutorial?.stepId]);
 
@@ -6881,8 +6910,9 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     if (!isTutorialGame || !userId) return;
     const activeStepId = (optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.stepId || 'intro';
     if (activeStepId === 'P4_13_apply_insectile_damage') {
-      // Resume safety: the LIFE_CHANGE action normally completes this step; this covers
-      // a refresh landing after the player already lowered Bolas to 13 or less.
+      // Primary completion: the scripted setup applies Insectile's 4 combat damage
+      // (Bolas 17 → 13) when this step arms; the step auto-advances from the real
+      // life total. Also covers refresh/resume, where life is already 13 or less.
       const bolasPlayer = (game?.players || []).find((player) => /Nicol Bolas/i.test(player?.name || ''));
       if (bolasPlayer && Number(bolasPlayer.life) <= 13) {
         maybeCompleteTutorialStep('P4_13_apply_insectile_damage', { source: 'state-transition', detail: 'bolasLifeAt13' });
@@ -7148,6 +7178,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       P4_10_attack_bolas: [{ name: 'Delver of Secrets', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId, activeFaceIndex: 1 }],
       P4_11_combat_summary: [],
       P4_12_regular_damage: [],
+      P4_13_apply_insectile_damage: [],
       P4_14_end_combat: [],
       P4_15_pass: [],
       B4_01_bolas_untaps: [
@@ -7640,6 +7671,10 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     if (stepId === 'F4_bolas_negate_real_mana') {
       appendTutorialLogOnce('Nicol Bolas taps Island and Swamp, then casts Negate targeting Lightning Bolt.', 'CAST_SPELL', 'card');
     }
+    // Unblocked combat damage is a game consequence, not a player chore: the scripted
+    // duel applies Insectile's 4 damage itself. updateBolasLife no-ops once life is 13,
+    // so refresh/resume cannot double-apply the damage or duplicate the log entry.
+    if (stepId === 'P4_13_apply_insectile_damage') updateBolasLife(13, 'Insectile Aberration deals 4 combat damage to Nicol Bolas. Nicol Bolas goes to 13.');
     if (stepId === 'F1_tap_mountain_bolt') updateBolasLife(3, 'Several turns later, Insectile, the Curse, and earlier spells have pushed Nicol Bolas to 3 life.');
     if (forcedPhase === 'untap' && forcedTurnPlayerId) {
       // Tutorial-only: forced jumps into the untap step skip the natural untap that

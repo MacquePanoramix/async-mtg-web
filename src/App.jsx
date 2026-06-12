@@ -24,6 +24,37 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
+
+const FIRESTORE_RESOURCE_EXHAUSTED_MESSAGE = 'Firebase quota/rate limit reached. The app is making too many Firestore requests or the free quota is temporarily exhausted.';
+
+const isResourceExhaustedError = (error) => {
+  const code = String(error?.code || '').toLowerCase();
+  const message = String(error?.message || error || '').toLowerCase();
+  return code === 'resource-exhausted'
+    || message.includes('quota exceeded')
+    || message.includes('resource-exhausted');
+};
+
+const createLobbyFirestoreCounter = (actionName) => {
+  const counts = { getDoc: 0, getDocs: 0, setDoc: 0, updateDoc: 0, runTransaction: 0 };
+  const log = (operation, meta = {}) => {
+    counts[operation] = (counts[operation] || 0) + 1;
+    if (import.meta.env.DEV) {
+      console.info('[Lobby Firestore]', actionName, operation, { ...meta, count: counts[operation], totals: { ...counts } });
+    }
+  };
+  return {
+    counts,
+    getDoc: (ref, meta) => { log('getDoc', meta); return getDoc(ref); },
+    getDocs: (ref, meta) => { log('getDocs', meta); return getDocs(ref); },
+    setDoc: (ref, data, options, meta) => { log('setDoc', meta); return options ? setDoc(ref, data, options) : setDoc(ref, data); },
+    updateDoc: (ref, data, meta) => { log('updateDoc', meta); return updateDoc(ref, data); },
+    runTransaction: (database, callback, meta) => { log('runTransaction', meta); return runTransaction(database, callback); },
+    logTotals: () => {
+      if (import.meta.env.DEV) console.info('[Lobby Firestore]', actionName, 'totals', { ...counts });
+    }
+  };
+};
 // REMOVED: const appId... (no longer needed)
 
 // --- Constants & Types ---
@@ -31,6 +62,580 @@ const db = getFirestore(app);
 const GAME_MODES = {
   REGULAR: 'regular',
   COMMANDER: 'commander'
+};
+
+const TUTORIAL_SCRIPT_VERSION = 11;
+const TUTORIAL_RULES_BY_STEP_ID = {
+  intro: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Inspect room code', sourceCardOrEffect: 'Async room setup', boardPrecondition: 'Tutorial duel exists', stackPrecondition: 'Stack may be empty', completionCondition: 'Room code tapped', tutorialTargetAnchor: 'room-code' },
+  room_code: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Copy room code', sourceCardOrEffect: 'Async room setup', boardPrecondition: 'Tutorial duel exists', stackPrecondition: 'Stack may be empty', completionCondition: 'Room code tapped', tutorialTargetAnchor: 'room-code' },
+  battlefields: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Inspect own battlefield', sourceCardOrEffect: 'Table orientation', boardPrecondition: 'Two players seated', stackPrecondition: 'Stack may be empty', completionCondition: 'Own battlefield tapped', tutorialTargetAnchor: 'own-battlefield' },
+  hand_area: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Inspect a hand card', sourceCardOrEffect: 'Opening hand', boardPrecondition: 'Player has cards in hand', stackPrecondition: 'Stack may be empty', completionCondition: 'Card detail opened', tutorialTargetAnchor: 'hand-area' },
+  import_deck: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Open import deck', sourceCardOrEffect: 'Pre-game deck registration note', boardPrecondition: 'Import tool visible', stackPrecondition: 'Stack may be empty', completionCondition: 'Import deck opened', tutorialTargetAnchor: 'import-deck-button' },
+  play_land: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Play land', sourceCardOrEffect: 'Land play for turn', boardPrecondition: 'Mountain in hand', stackPrecondition: 'Stack empty', expectedZoneChange: 'Mountain: hand -> battlefield', completionCondition: 'Mountain played', tutorialTargetAnchor: 'hand-area' },
+  tap_mountain_red: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Tap Mountain for red mana', sourceCardOrEffect: 'Mountain mana ability', boardPrecondition: 'Mountain on battlefield and untapped after replay', stackPrecondition: 'Mana abilities do not use the stack', expectedZoneChange: 'Mountain becomes tapped', completionCondition: 'Mountain tapped after step activation', tutorialTargetAnchor: 'own-battlefield' },
+  add_red_mana: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Add {R} to the mana pool', sourceCardOrEffect: 'Manual mana pool tracking for Mountain', boardPrecondition: 'Tapped Mountain is visible as the red source', stackPrecondition: 'Mana abilities do not use the stack', completionCondition: 'Red mana pool increased after step activation', tutorialTargetAnchor: 'mana-pool-panel' },
+  cast_spell_to_stack: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Cast Lightning Bolt with a target', sourceCardOrEffect: 'Lightning Bolt targeting Nicol Bolas', boardPrecondition: 'Lightning Bolt in hand; Mountain tapped on battlefield as red source; {R} recorded in mana pool; Nicol Bolas is the target', stackPrecondition: 'Stack empty before casting', expectedZoneChange: 'Lightning Bolt: hand -> stack with Nicol Bolas target', completionCondition: 'Lightning Bolt is on stack with Nicol Bolas as target', tutorialTargetAnchor: 'hand-area' },
+  inspect_stack: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Open stack', sourceCardOrEffect: 'Lightning Bolt waiting on stack', boardPrecondition: 'Lightning Bolt on stack', stackPrecondition: 'Lightning Bolt on stack', completionCondition: 'Stack panel opened', tutorialTargetAnchor: 'stack-button', teachesPriorityWithStack: true },
+  bolas_negate: { actor: 'bolas', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Inspect Bolas’s response', sourceCardOrEffect: 'Negate targeting Lightning Bolt', boardPrecondition: 'Lightning Bolt on stack', stackPrecondition: 'Negate above Lightning Bolt', completionCondition: 'Stack panel opened/Negate inspected', tutorialTargetAnchor: 'stack-button', teachesPriorityWithStack: true },
+  copy_stack_item: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Copy Lightning Bolt on the stack', sourceCardOrEffect: 'Reverberate targeting Lightning Bolt; tutorial explicitly grants {R}{R} for this stack-tool lesson', boardPrecondition: 'Lightning Bolt and Negate on stack; Mountain remains tapped; scripted lesson mana covers Reverberate', stackPrecondition: 'Negate above Lightning Bolt before copy; Bolt copy expected above both after action', expectedZoneChange: 'Lightning Bolt copy created on stack', completionCondition: 'Copy Stack Item performed on Lightning Bolt, representing Reverberate targeting Bolt', tutorialTargetAnchor: 'stack-panel', teachesPriorityWithStack: true },
+  resolve_stack_item: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Resolve copied Lightning Bolt', sourceCardOrEffect: 'Lightning Bolt copy from Reverberate', boardPrecondition: 'Lightning Bolt copy on top of stack', stackPrecondition: 'Copy on top; Negate and original beneath', expectedZoneChange: 'Lightning Bolt copy leaves stack', completionCondition: 'Resolve top stack item', tutorialTargetAnchor: 'stack-panel', teachesPriorityWithStack: true },
+  counter_stack_item: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Resolve Negate, then counter original Bolt if it remains', sourceCardOrEffect: 'Negate targeting original Lightning Bolt', boardPrecondition: 'Negate and original Lightning Bolt remain on stack', stackPrecondition: 'Negate can counter original Lightning Bolt; stack should be cleared before phase changes', expectedZoneChange: 'Negate and original Bolt leave stack', completionCondition: 'Negate and original Bolt are cleared from the stack', tutorialTargetAnchor: 'stack-panel', teachesPriorityWithStack: true },
+  pass_priority: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'end', requiredAction: 'Pass priority after stack is empty', sourceCardOrEffect: 'Turn priority after main-phase stack lesson', boardPrecondition: 'No pending spell lesson', stackPrecondition: 'Stack empty', completionCondition: 'Pass priority tapped', tutorialTargetAnchor: 'pass-button' },
+  game_log: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'end', requiredAction: 'Open game log', sourceCardOrEffect: 'Async communication', boardPrecondition: 'Log available', stackPrecondition: 'Stack empty', completionCondition: 'Game Log opened', tutorialTargetAnchor: 'game-log-button' },
+  beginning_phase_draw: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'draw', requiredAction: 'Set draw step and draw for turn', sourceCardOrEffect: 'Normal draw step', boardPrecondition: 'Player starting Turn 2', stackPrecondition: 'Stack empty', expectedZoneChange: 'Top library card -> hand', completionCondition: 'Draw card action', tutorialTargetAnchor: 'phase-indicator' },
+  cast_delver: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Play Island, then cast and resolve Delver of Secrets', sourceCardOrEffect: 'Delver of Secrets creature spell', boardPrecondition: 'Delver in hand; Island in hand or on battlefield as blue source', stackPrecondition: 'Stack empty before cast; Delver resolves before leaving main phase', expectedZoneChange: 'Island: hand -> battlefield; Delver: hand -> stack -> battlefield', completionCondition: 'Cast/resolve Delver action', tutorialTargetAnchor: 'hand-area', teachesPriorityWithStack: true },
+  bolas_removal: { actor: 'bolas', turnOwner: 'bolas', activePlayer: 'bolas', phase: 'main1', requiredAction: 'Inspect Doom Blade on stack', sourceCardOrEffect: 'Doom Blade targeting Delver', boardPrecondition: 'Delver on battlefield', stackPrecondition: 'Doom Blade on stack targeting Delver', completionCondition: 'Stack inspected', tutorialTargetAnchor: 'stack-button', teachesPriorityWithStack: true },
+  phase_card: { actor: 'player', turnOwner: 'bolas', activePlayer: 'bolas', phase: 'main1', requiredAction: 'Phase out Delver', sourceCardOrEffect: 'Slip Out the Back targeting Delver in response to Doom Blade', boardPrecondition: 'Delver on battlefield; Island/blue source available; Doom Blade on stack', stackPrecondition: 'Slip Out the Back resolving over Doom Blade', expectedZoneChange: 'Delver becomes phased out', completionCondition: 'Phase toggle action', tutorialTargetAnchor: 'card-detail', teachesPriorityWithStack: true },
+  add_counter: { actor: 'player', turnOwner: 'bolas', activePlayer: 'bolas', phase: 'main1', requiredAction: 'Add +1/+1 counter to Delver', sourceCardOrEffect: 'Slip Out the Back', boardPrecondition: 'Delver is the Slip Out the Back target', stackPrecondition: 'Slip Out the Back resolving', completionCondition: '+1/+1 counter added', tutorialTargetAnchor: 'card-detail', teachesPriorityWithStack: true },
+  add_reminder: { actor: 'player', turnOwner: 'bolas', activePlayer: 'bolas', phase: 'main1', requiredAction: 'Add temporary reminder marker', sourceCardOrEffect: 'Manual memory for until-end-of-turn effects', boardPrecondition: 'A temporary effect is being represented', stackPrecondition: 'Stack may be empty after resolution', completionCondition: 'Reminder added', tutorialTargetAnchor: 'card-detail' },
+  tap_card: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'untap', requiredAction: 'Tap and untap permanent to represent phasing return/tapping tools', sourceCardOrEffect: 'Untap step / permanent status representation', boardPrecondition: 'Delver/Insectile Aberration on battlefield', stackPrecondition: 'Stack empty', completionCondition: 'Tap/untap toggled', tutorialTargetAnchor: 'card-detail' },
+  reveal_top_delver: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'upkeep', requiredAction: 'Reveal top card for Delver trigger', sourceCardOrEffect: 'Delver of Secrets upkeep trigger', boardPrecondition: 'Delver on battlefield; instant/sorcery on top of library', stackPrecondition: 'Delver trigger being represented in upkeep', completionCondition: 'Top card revealed', tutorialTargetAnchor: 'library-menu-button' },
+  transform_card: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'upkeep', requiredAction: 'Transform Delver', sourceCardOrEffect: 'Delver upkeep trigger after revealing instant/sorcery', boardPrecondition: 'Delver of Secrets face up on battlefield', stackPrecondition: 'Delver trigger resolving/represented', expectedZoneChange: 'Delver face -> Insectile Aberration face', completionCondition: 'Switch card face action', tutorialTargetAnchor: 'card-detail' },
+  face_down_reveal: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Turn face down/reveal for a Cloak-style effect', sourceCardOrEffect: 'Cloak/Morph-style hidden-information effect', boardPrecondition: 'Creature permanent on battlefield', stackPrecondition: 'Stack empty after effect resolved', completionCondition: 'Face-down/reveal action', tutorialTargetAnchor: 'card-detail' },
+  set_attackers_phase: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'combat_attackers', requiredAction: 'Move to declare attackers', sourceCardOrEffect: 'Normal combat sequence after beginning combat', boardPrecondition: 'Player controls a creature able to attack', stackPrecondition: 'Stack empty before changing to combat', completionCondition: 'Phase set to Attackers', tutorialTargetAnchor: 'phase-indicator' },
+  declare_attacker_player: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'combat_attackers', requiredAction: 'Declare attacker against Bolas', sourceCardOrEffect: 'Normal declare attackers turn-based action', boardPrecondition: 'Player controls attacker', stackPrecondition: 'Stack empty', completionCondition: 'Attack target set', tutorialTargetAnchor: 'card-detail' },
+  attack_planeswalker_battle_note: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'combat_attackers', requiredAction: 'Choose an attack target', sourceCardOrEffect: 'Attack target rules for players/planeswalkers/battles', boardPrecondition: 'Attacking creature and Bolas/planeswalker target available', stackPrecondition: 'Stack empty', completionCondition: 'Attack target set', tutorialTargetAnchor: 'card-detail' },
+  bolas_blocks_summary: { actor: 'bolas', turnOwner: 'player', activePlayer: 'player', phase: 'combat_blockers', requiredAction: 'Inspect automatic Bolas blocker', sourceCardOrEffect: 'Bolas declares Zombie Token as defending player', boardPrecondition: 'Player is attacking; Bolas controls Zombie Token', stackPrecondition: 'Stack empty', completionCondition: 'Combat summary opened with blocker assigned', tutorialTargetAnchor: 'combat-summary' },
+  first_strike_step: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'combat_damage', requiredAction: 'Set first-strike damage step', sourceCardOrEffect: 'A first-strike/double-strike combat demonstration', boardPrecondition: 'Combat has attacker/blocker assignment', stackPrecondition: 'Stack empty before damage step', completionCondition: 'First-strike damage selected', tutorialTargetAnchor: 'phase-indicator' },
+  regular_damage_step: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'combat_damage', requiredAction: 'Set regular damage step', sourceCardOrEffect: 'Normal combat damage after first-strike window', boardPrecondition: 'Combat has attacker/blocker assignment', stackPrecondition: 'Stack empty before damage step', completionCondition: 'Regular damage selected', tutorialTargetAnchor: 'phase-indicator' },
+  damage_markers: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'combat_damage', requiredAction: 'Mark combat damage on creature', sourceCardOrEffect: 'Combat damage assignment', boardPrecondition: 'Creature was dealt damage in combat', stackPrecondition: 'Stack empty', completionCondition: 'Temporary damage added', tutorialTargetAnchor: 'card-detail' },
+  combat_summary_note: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'combat_end', requiredAction: 'Inspect combat summary', sourceCardOrEffect: 'Combat record after attacker/blocker declaration', boardPrecondition: 'Combat assignment exists', stackPrecondition: 'Stack empty', completionCondition: 'Combat summary tapped', tutorialTargetAnchor: 'combat-summary' },
+  bolas_declares_attacker: { actor: 'bolas', turnOwner: 'bolas', activePlayer: 'bolas', phase: 'combat_attackers', requiredAction: 'Inspect Bolas attacking creature', sourceCardOrEffect: 'Bolas declares Dragon Token as attacker', boardPrecondition: 'Bolas controls attacking creature; player controls blocker', stackPrecondition: 'Stack empty', completionCondition: 'Combat summary opened', tutorialTargetAnchor: 'combat-summary' },
+  declare_blocker_note: { actor: 'player', turnOwner: 'bolas', activePlayer: 'bolas', phase: 'combat_blockers', requiredAction: 'Declare blocker as defending player', sourceCardOrEffect: 'Normal declare blockers turn-based action on Bolas’s attack', boardPrecondition: 'Bolas is attacking player; player controls untapped blocker', stackPrecondition: 'Stack empty', completionCondition: 'Player marks a blocker', tutorialTargetAnchor: 'combat-summary' },
+  private_hand_peek: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Privately inspect Bolas hand', sourceCardOrEffect: 'Duress/Gitaxian Probe-style hand inspection', boardPrecondition: 'Bolas has cards in hand', stackPrecondition: 'Inspection effect resolved', completionCondition: 'Private hand peek opened', tutorialTargetAnchor: 'private-hand-peek-button' },
+  reveal_hand_note: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Reveal Bolas hand publicly', sourceCardOrEffect: 'Reveal-hand effect that makes information public', boardPrecondition: 'Player hand exists', stackPrecondition: 'Reveal effect resolved', completionCondition: 'Reveal tools used/opened', tutorialTargetAnchor: 'reveal-tools' },
+  open_library_tools: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Open own library tools', sourceCardOrEffect: 'Ponder/Preordain-style library manipulation', boardPrecondition: 'Player library exists', stackPrecondition: 'Library manipulation effect resolving/resolved', completionCondition: 'Library tools opened', tutorialTargetAnchor: 'library-menu-button' },
+  batch_library_actions: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Open batch library actions', sourceCardOrEffect: 'Mill/reveal/exile/scry/surveil effect', boardPrecondition: 'Library exists', stackPrecondition: 'Batch effect resolving/resolved', completionCondition: 'Batch actions opened', tutorialTargetAnchor: 'library-menu-button' },
+  opponent_library_tools: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Inspect opponent-library tools', sourceCardOrEffect: 'Portent/fateseal-style effect', boardPrecondition: 'Bolas library exists', stackPrecondition: 'Portent/fateseal effect resolving/resolved', completionCondition: 'Opponent library section inspected', tutorialTargetAnchor: 'library-menu-button' },
+  create_token: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Create Goblin tokens', sourceCardOrEffect: 'Dragon Fodder', boardPrecondition: 'Mountain plus another mana source available; Dragon Fodder resolved', stackPrecondition: 'Token-making spell/effect resolved', expectedZoneChange: 'Goblin tokens created on battlefield', completionCondition: 'Create token action', tutorialTargetAnchor: 'token-tools' },
+  deck_tokens_note: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Use deck-derived token template', sourceCardOrEffect: 'Dragon Fodder token template', boardPrecondition: 'Deck-derived token templates available if imported', stackPrecondition: 'Token-making effect resolved', completionCondition: 'Token tools/template opened', tutorialTargetAnchor: 'token-tools' },
+  custom_token_note: { actor: 'system', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Edit custom token form for unusual token', sourceCardOrEffect: 'Scripted unusual token-producing effect', boardPrecondition: 'Token tool open', stackPrecondition: 'Token effect resolved', completionCondition: 'Custom token form opened', tutorialTargetAnchor: 'token-tools' },
+  target_system: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Mark a target', sourceCardOrEffect: 'Giant Growth targeting a creature', boardPrecondition: 'Forest available; Giant Growth/effect on stack and creature target exists', stackPrecondition: 'Targeting spell/effect on stack', completionCondition: 'Target marker action', tutorialTargetAnchor: 'target-tools', teachesPriorityWithStack: true },
+  attach_to_permanent: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Attach Rancor to creature', sourceCardOrEffect: 'Rancor Aura enchanting a creature', boardPrecondition: 'Forest available; Rancor and creature on battlefield after Aura resolved', stackPrecondition: 'Aura spell resolved', completionCondition: 'Attach card action', tutorialTargetAnchor: 'card-detail' },
+  attach_to_player_note: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Attach Curse to Bolas', sourceCardOrEffect: 'Curse of the Pierced Heart enchanting a player', boardPrecondition: 'Mountain plus another mana source available; Curse on battlefield and Bolas is enchanted player', stackPrecondition: 'Curse spell resolved', completionCondition: 'Attach to player action', tutorialTargetAnchor: 'card-detail' },
+  clone_control: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Use Clone to represent copying a creature', sourceCardOrEffect: 'Clone copying a creature with late-game scripted setup mana', boardPrecondition: 'Clone effect is being represented after resolving with visible creatures', stackPrecondition: 'Clone effect resolved', completionCondition: 'Clone action performed on Clone', tutorialTargetAnchor: 'card-detail' },
+  player_panel: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Open player counters/status panel', sourceCardOrEffect: 'Player-level effect setup', boardPrecondition: 'Player panel button visible', stackPrecondition: 'Stack empty or effect resolved', completionCondition: 'Panel opened', tutorialTargetAnchor: 'player-counters-button' },
+  mana_pool: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Add and clear mana', sourceCardOrEffect: 'Llanowar Elves taps for {G}', boardPrecondition: 'Llanowar Elves/permanent mana source available', stackPrecondition: 'Mana ability does not use stack; clear at step end', completionCondition: 'Mana adjusted/cleared', tutorialTargetAnchor: 'mana-pool-panel' },
+  player_counters: { actor: 'player', turnOwner: 'bolas', activePlayer: 'bolas', phase: 'combat_damage', requiredAction: 'Add/remove player counter', sourceCardOrEffect: 'Bolas poison counter effect', boardPrecondition: 'Player has received player-level counter effect', stackPrecondition: 'Effect/combat damage resolved', completionCondition: 'Player counter changed', tutorialTargetAnchor: 'player-counters-panel' },
+  statuses: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Toggle status/day/night/ring', sourceCardOrEffect: 'Monarch/initiative/daybound/Ring-tempts effect', boardPrecondition: 'Relevant status effect has occurred', stackPrecondition: 'Status-granting effect resolved', completionCondition: 'Status toggled', tutorialTargetAnchor: 'status-panel' },
+  emblems: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Add emblem', sourceCardOrEffect: 'Planeswalker ultimate emblem effect', boardPrecondition: 'Planeswalker emblem effect resolved', stackPrecondition: 'Emblem effect resolved', completionCondition: 'Emblem added', tutorialTargetAnchor: 'player-counters-panel' },
+  dungeons_note: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Open dungeon reference', sourceCardOrEffect: 'Venture/initiative effect', boardPrecondition: 'Dungeon/initiative reference available', stackPrecondition: 'Venture/initiative effect resolved', completionCondition: 'Dungeon reference/panel opened', tutorialTargetAnchor: 'player-counters-panel' },
+  commander_note: { actor: 'system', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Inspect commander tools', sourceCardOrEffect: 'Commander rules variant', boardPrecondition: 'Commander tools may exist by game mode', stackPrecondition: 'Not a stack action', completionCondition: 'Commander tools inspected', tutorialTargetAnchor: 'player-counters-panel' },
+  final_spell: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Cast lethal Lightning Bolt', sourceCardOrEffect: 'Lightning Bolt', boardPrecondition: 'Lightning Bolt in hand; Mountain/red source on battlefield; Bolas at lethal range', stackPrecondition: 'Stack empty before casting', expectedZoneChange: 'Lightning Bolt: hand -> stack', completionCondition: 'Final spell cast', tutorialTargetAnchor: 'hand-area' },
+  final_bolas_response: { actor: 'bolas', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Inspect Bolas response', sourceCardOrEffect: 'Negate targeting final Lightning Bolt', boardPrecondition: 'Final Lightning Bolt on stack', stackPrecondition: 'Negate above final spell', completionCondition: 'Stack opened', tutorialTargetAnchor: 'stack-button', teachesPriorityWithStack: true },
+  final_in_response: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Answer on stack', sourceCardOrEffect: 'Reverberate/counter-answer to Bolas response', boardPrecondition: 'Bolas response on stack', stackPrecondition: 'Player response can be placed above Bolas response', completionCondition: 'Stack response action', tutorialTargetAnchor: 'stack-panel', teachesPriorityWithStack: true },
+  final_trial: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Pass priority to finish', sourceCardOrEffect: 'Priority after final stack exchange', boardPrecondition: 'Winning line represented', stackPrecondition: 'Stack resolved or intentionally being passed through', completionCondition: 'Pass priority tapped', tutorialTargetAnchor: 'pass-button', teachesPriorityWithStack: true },
+  async_oath: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'end', requiredAction: 'Open game log and pass priority', sourceCardOrEffect: 'Async table etiquette after duel', boardPrecondition: 'Duel ending', stackPrecondition: 'Stack empty', completionCondition: 'Game Log/pass action', tutorialTargetAnchor: 'game-log-button' },
+  watch_cleanup_note: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'end', requiredAction: 'Copy room code for sharing', sourceCardOrEffect: 'Async room sharing', boardPrecondition: 'Room code visible', stackPrecondition: 'Stack empty', completionCondition: 'Room code tapped', tutorialTargetAnchor: 'room-code' },
+  manual_toolbox_note: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'end', requiredAction: 'Open game log notes', sourceCardOrEffect: 'Manual tabletop responsibility', boardPrecondition: 'Game can continue as manual board', stackPrecondition: 'Stack empty', completionCondition: 'Game Log focused', tutorialTargetAnchor: 'game-log-button' },
+  tutorial_complete: { actor: 'system', turnOwner: 'player', activePlayer: 'player', phase: 'end', requiredAction: 'Finish tutorial', sourceCardOrEffect: 'Tutorial complete', boardPrecondition: 'Final step reached', stackPrecondition: 'No tutorial stack required', completionCondition: 'Finish/continue selected', tutorialTargetAnchor: null }
+};
+
+const withTutorialRules = (steps) => steps.map((step) => ({ ...step, rules: { ...(TUTORIAL_RULES_BY_STEP_ID[step.id] || {}), ...(step.rules || {}) } }));
+
+const TUTORIAL_FALLBACK_BOLAS_LINE = '[missing Bolas line]';
+const TUTORIAL_LEGACY_FALLBACK_BOLAS_LINE = 'Play the board state exactly as it exists.';
+
+const TUTORIAL_RESOURCE_REQUIREMENTS_BY_STEP_ID = {
+  tap_mountain_red: { card: 'Mountain', cost: 'tap', expectedZone: 'battlefield', requiredSources: { R: 1 }, sourceCards: ['Mountain'] },
+  add_red_mana: { card: 'Mountain', cost: '{T}: add {R}', expectedZone: 'battlefield', requiredSources: { R: 1 }, sourceCards: ['Mountain'] },
+  cast_spell_to_stack: { card: 'Lightning Bolt', cost: '{R}', expectedZone: 'hand', requiredSources: { R: 1 }, sourceCards: ['Mountain'], target: 'Nicol Bolas' },
+  copy_stack_item: { card: 'Reverberate', cost: '{R}{R}', expectedZone: 'hand/effect', requiredSources: { R: 2 }, sourceCards: ['Mountain'], scriptedMana: '{R}{R} explicitly granted for stack-tool lesson', target: 'Lightning Bolt on stack' },
+  cast_delver: { card: 'Delver of Secrets', cost: '{U}', expectedZone: 'hand', requiredSources: { U: 1 }, sourceCards: ['Island'] },
+  phase_card: { card: 'Slip Out the Back', cost: '{U}', expectedZone: 'hand/stack', requiredSources: { U: 1 }, sourceCards: ['Island'], target: 'Delver of Secrets/Insectile Aberration on battlefield' },
+  bolas_negate: { card: 'Negate', cost: '{1}{U}', expectedZone: 'scripted Bolas response', requiredSources: { U: 1 }, scriptedMana: 'Bolas boss mana', target: 'Lightning Bolt on stack' },
+  bolas_removal: { card: 'Doom Blade', cost: '{1}{B}', expectedZone: 'scripted Bolas response', requiredSources: { B: 1 }, scriptedMana: 'Bolas boss mana', target: 'Delver on battlefield' },
+  create_token: { card: 'Dragon Fodder', cost: '{1}{R}', expectedZone: 'hand/stack before token creation', requiredSources: { R: 1, generic: 1 }, sourceCards: ['Mountain', 'Island'] },
+  target_system: { card: 'Giant Growth', cost: '{G}', expectedZone: 'stack', requiredSources: { G: 1 }, sourceCards: ['Forest'], target: 'Llanowar Elves on battlefield' },
+  attach_to_permanent: { card: 'Rancor', cost: '{G}', expectedZone: 'battlefield after resolving', requiredSources: { G: 1 }, sourceCards: ['Forest'], target: 'Llanowar Elves on battlefield' },
+  attach_to_player_note: { card: 'Curse of the Pierced Heart', cost: '{1}{R}', expectedZone: 'battlefield after resolving', requiredSources: { R: 1, generic: 1 }, sourceCards: ['Mountain', 'Island'] },
+  clone_control: { card: 'Clone / Act of Treason', cost: '{3}{U} / {2}{R}', expectedZone: 'battlefield/resolved effect', requiredSources: { U: 1, R: 1, generic: 5 }, scriptedMana: 'late-game scripted setup has already resolved these showcase effects', target: 'visible battlefield creatures' },
+  mana_pool: { card: 'Llanowar Elves', cost: 'mana ability', expectedZone: 'battlefield', requiredSources: { G: 1 }, sourceCards: ['Llanowar Elves', 'Forest'] },
+  final_spell: { card: 'Lightning Bolt', cost: '{R}', expectedZone: 'hand', requiredSources: { R: 1 }, sourceCards: ['Mountain'], target: 'Nicol Bolas' },
+  final_in_response: { card: 'Reverberate/counter-answer', cost: 'response spell', expectedZone: 'hand/stack', requiredSources: { R: 2 }, sourceCards: ['Mountain'], scriptedMana: 'final scripted response mana' }
+};
+
+const validateTutorialScriptRules = (steps = []) => {
+  if (import.meta.env.PROD) return;
+  const stepById = new Map(steps.map((step) => [step.id, step]));
+  steps.forEach((step) => {
+    const rules = step.rules || {};
+    const warn = (message) => console.warn(`[Tutorial rules] ${step.id}: ${message}`);
+    if ([TUTORIAL_FALLBACK_BOLAS_LINE, TUTORIAL_LEGACY_FALLBACK_BOLAS_LINE].includes(step.dialogue)) console.warn(`[Tutorial flavor] Step ${step.id} is using fallback Bolas dialogue.`);
+    if (!rules.completionCondition) warn('tutorial step has no real completion condition');
+    if (step.completion !== 'finish' && !rules.tutorialTargetAnchor && step.anchor) warn('Show me target metadata is missing');
+    if (rules.requiredAction?.toLowerCase().includes('block') && rules.phase !== 'combat_blockers') warn('blockers are requested outside Declare Blockers');
+    if (rules.requiredAction?.toLowerCase().includes('declare attacker') && rules.phase !== 'combat_attackers') warn('attackers are requested outside Declare Attackers');
+    if (rules.requiredAction?.toLowerCase().includes('declare blocker') && !(rules.turnOwner === 'bolas' && rules.activePlayer === 'bolas' && rules.actor === 'player')) warn('player is asked to declare blockers when they are not the defending player');
+    if (step.id === 'declare_blocker_note' && rules.turnOwner === 'player') warn('player is asked to block while player is attacking');
+    if (rules.phase && !['untap', 'upkeep', 'draw', 'main1', 'combat_begin', 'combat_attackers', 'combat_blockers', 'combat_damage', 'combat_end', 'main2', 'end', 'cleanup'].includes(rules.phase)) warn(`unknown phase ${rules.phase}`);
+    if ((rules.phase || '').startsWith('combat') && /stack.*non-empty/i.test(rules.stackPrecondition || '') && !rules.teachesPriorityWithStack) warn('combat phase has non-empty stack without priority lesson');
+    if (/resolve/i.test(rules.requiredAction || '') && /stack/i.test(rules.sourceCardOrEffect || '') && !/stack/i.test(rules.stackPrecondition || '')) warn('spell resolves without stack precondition');
+    if (/transform/i.test(rules.requiredAction || '') && !/Delver|DFC|double-faced/i.test(`${rules.sourceCardOrEffect} ${rules.boardPrecondition}`)) warn('transform is requested without DFC justification');
+    if (/opponent.*library/i.test(`${step.id} ${rules.requiredAction}`) && !/Portent|fateseal|opponent/i.test(rules.sourceCardOrEffect || '')) warn('opponent library tools requested with no effect justification');
+    if (/private.*hand/i.test(`${step.id} ${rules.requiredAction}`) && !/Duress|Probe|inspection/i.test(rules.sourceCardOrEffect || '')) warn('private hand peek requested with no hand-inspection effect');
+    if (/attach/i.test(rules.requiredAction || '') && !/Aura|Equipment|Curse|Rancor|enchant/i.test(`${rules.sourceCardOrEffect} ${rules.boardPrecondition}`)) warn('attach requested with no Aura/Equipment/Curse-style reason');
+    if (/Clone|Give Control|control-change/i.test(rules.requiredAction || '') && !/Clone|Act of Treason|stealing|copying/i.test(rules.sourceCardOrEffect || '')) warn('clone/control change requested with no card/effect reason');
+    if (/counter|status|emblem|dungeon|mana/i.test(step.id) && !rules.sourceCardOrEffect) warn('player status/counter step lacks source effect');
+
+    const resourceRequirement = TUTORIAL_RESOURCE_REQUIREMENTS_BY_STEP_ID[step.id];
+    if (resourceRequirement) {
+      const metadata = `${rules.requiredAction || ''} ${rules.sourceCardOrEffect || ''} ${rules.boardPrecondition || ''} ${step.objective || ''} ${step.hint || ''}`;
+      Object.entries(resourceRequirement.requiredSources || {}).forEach(([symbol, count]) => {
+        if (symbol === 'generic') return;
+        const hasVisibleSource = (resourceRequirement.sourceCards || []).some((sourceName) => metadata.includes(sourceName));
+        if (count > 0 && !hasVisibleSource && !resourceRequirement.scriptedMana) warn(`${resourceRequirement.card} needs ${count} ${symbol} source(s), but no matching source or scripted mana is documented`);
+      });
+      if (/hand/.test(resourceRequirement.expectedZone || '') && !/hand|scripted|effect/i.test(metadata)) warn(`${resourceRequirement.card} expected zone is not documented`);
+      if (resourceRequirement.target && !metadata.includes(resourceRequirement.target.split(' ')[0])) warn(`${resourceRequirement.card} target is not documented: ${resourceRequirement.target}`);
+      if (resourceRequirement.scriptedMana && !/scripted|grants|boss mana|lesson mana|setup/i.test(metadata)) warn(`${resourceRequirement.card} relies on scripted mana, but the step text does not say so`);
+    }
+  });
+  const requireOrder = (ids, label) => {
+    const indexes = ids.map((id) => steps.findIndex((step) => step.id === id));
+    if (indexes.some((index) => index < 0) || !indexes.every((index, i) => i === 0 || index > indexes[i - 1])) console.warn(`[Tutorial rules] ${label} order is invalid: ${ids.join(' → ')}`);
+  };
+  requireOrder(['G05_open_library_tools', 'G06_mulligan_7', 'G07_undo_mulligan', 'P1_01_play_mountain', 'P1_04_tap_mountain', 'P1_05_add_r', 'P1_08_target_bolas', 'P1_10_resolve_bolt'], 'mulligan undo lesson into first Bolt path');
+  requireOrder(['B2_02_bolas_swamp', 'B2_03_bolas_cast_knight', 'B2_04_resolve_knight'], 'Bolas Knight with mana');
+  requireOrder(['B3_02_bolas_doom_blade', 'B3_03_tap_island_slip', 'B3_05_cast_slip', 'B3_06_resolve_slip', 'B3_09_fizzle_doom_blade'], 'Doom Blade / Slip Out stack');
+  requireOrder(['F1_tap_mountain_bolt', 'F2_add_r', 'F3_cast_bolt_bolas', 'F4_bolas_negate_real_mana', 'F5_tap_two_mountains', 'F6_add_rr', 'F7_reverberate_bolt', 'F8_resolve_reverberate', 'F9_resolve_bolt_copy_lethal', 'F10_resolve_negate_original', 'F11_victory_complete'], 'final lethal');
+  if (!/life is 17/i.test(stepById.get('P1_10_resolve_bolt')?.completionCondition || '')) console.warn('[Tutorial rules] first Lightning Bolt must complete on Bolas life 17');
+  if (!/Island.*Swamp/i.test(`${stepById.get('F4_bolas_negate_real_mana')?.manaPayment || ''} ${stepById.get('F4_bolas_negate_real_mana')?.legalPreconditions || ''}`)) console.warn('[Tutorial rules] Negate must document visible Island + Swamp payment');
+  if (!/RR|\{R\}\{R\}/i.test(`${stepById.get('F6_add_rr')?.completionCondition || ''} ${stepById.get('F7_reverberate_bolt')?.manaPayment || ''}`)) console.warn('[Tutorial rules] Reverberate must document RR payment');
+  if (!/Bolas life <= 0/i.test(stepById.get('F11_victory_complete')?.completionCondition || '')) console.warn('[Tutorial rules] final tutorial completion must require Bolas life <= 0');
+  steps.filter((step) => /^tool_/.test(step.id)).forEach((step) => {
+    if (!step.sourceCard || /some effect|scripted tutorial duel/i.test(step.sourceCard)) console.warn(`[Tutorial rules] ${step.id}: tool step lacks a specific source card/effect`);
+    if (!step.manaPayment) console.warn(`[Tutorial rules] ${step.id}: tool step lacks visible payment/snapshot payment`);
+  });
+};
+
+const makeDuelStep = ({
+  id,
+  act,
+  title,
+  turnOwner = 'Luis',
+  activePlayer = turnOwner,
+  phase = 'main1',
+  sourceCard = 'Scripted tutorial duel',
+  sourceEffect = '',
+  requiredAction,
+  exactUiAction,
+  manaPayment = null,
+  legalPreconditions = '',
+  completionCondition,
+  showMeAnchor = null,
+  expectedLifeTotals = null,
+  expectedDamage = null,
+  storyText = '',
+  bolasLine = '',
+  completion = 'detect'
+}) => ({
+  id,
+  chapter: act,
+  act,
+  title,
+  scene: storyText || `${turnOwner} ${phase}.`,
+  dialogue: bolasLine || TUTORIAL_FALLBACK_BOLAS_LINE,
+  objective: requiredAction,
+  hint: exactUiAction,
+  anchor: showMeAnchor,
+  completion,
+  turnOwner,
+  activePlayer,
+  phase,
+  sourceCard,
+  sourceEffect,
+  requiredAction,
+  exactUiAction,
+  manaPayment,
+  legalPreconditions,
+  completionCondition,
+  showMeAnchor,
+  expectedLifeTotals,
+  expectedDamage,
+  rules: {
+    actor: /Bolas/i.test(turnOwner) && !/^B4-04|^B4-05|^B4-06|^B4-07|^B4-08/.test(id) ? 'bolas' : 'player',
+    turnOwner: /Bolas/i.test(turnOwner) ? 'bolas' : 'player',
+    activePlayer: /Bolas/i.test(activePlayer) ? 'bolas' : 'player',
+    phase,
+    requiredAction,
+    sourceCardOrEffect: `${sourceCard}${sourceEffect ? ` — ${sourceEffect}` : ''}`,
+    boardPrecondition: legalPreconditions,
+    stackPrecondition: /stack/i.test(legalPreconditions) ? legalPreconditions : 'Stack state specified by duel ledger.',
+    completionCondition,
+    tutorialTargetAnchor: showMeAnchor,
+    manaPayment,
+    expectedLifeTotals,
+    expectedDamage
+  }
+});
+
+const TUTORIAL_OPENING_HAND_LUIS = ['Mountain', 'Mountain', 'Island', 'Forest', 'Lightning Bolt', 'Delver of Secrets // Insectile Aberration', 'Ponder'];
+const TUTORIAL_LIBRARY_LUIS = ['Slip Out the Back', 'Mountain', 'Reverberate', 'Dragon Fodder', 'Rancor', 'Giant Growth', 'Gitaxian Probe', 'Portent', 'Thought Scour', 'Plains', 'Throne of the High City', 'The Celestus', 'Birthday Escape', 'Attune with Aether', 'Curse of the Pierced Heart', 'Act of Treason', 'Clone', 'Nadaar, Selfless Paladin', 'Lightning Bolt', 'Reverberate'];
+const TUTORIAL_OPENING_HAND_BOLAS = ['Island', 'Swamp', 'Swamp', 'Negate', 'Doom Blade', 'Knight of Malice', 'Vraska’s Fall'];
+const TUTORIAL_LIBRARY_BOLAS = ['Mountain', 'Cancel', 'Bonecrusher Giant', 'Swamp', 'Island'];
+const TUTORIAL_CARD_IMAGES_ERROR = 'Tutorial card images could not load. Try again.';
+const tutorialCardCatalogCache = new Map();
+const TUTORIAL_TOOL_SOURCES = [
+  ['tool_dragon_fodder', 'Act 9 / Tools — Dragon Fodder', 'Dragon Fodder tokens', 'Dragon Fodder', 'Luis taps Mountain plus another land, casts Dragon Fodder, resolves it, then opens Token Tools to create two 1/1 red Goblins.', '{1}{R}: Mountain + one land', 'Two Goblin tokens exist.', 'token-tools'],
+  ['tool_goblin_template', 'Act 9 / Tools — Deck Token Template', 'Use Goblin token template', 'Dragon Fodder', 'Use the deck-derived Goblin token template created by Dragon Fodder.', 'Resolved Dragon Fodder', 'Goblin template used.', 'token-tools'],
+  ['tool_mirror_cell', 'Act 9 / Tools — Custom Token', 'Mirror-Cell Experiment custom token', 'Mirror-Cell Experiment', 'Luis taps two lands, casts Mirror-Cell Experiment, resolves it, then creates a custom 0/1 Reflection artifact creature token.', '{2}: two lands', 'Reflection token exists.', 'token-tools'],
+  ['tool_rancor_attach', 'Act 9 / Tools — Rancor', 'Attach Rancor to a creature', 'Rancor', 'Tap Forest for {G}, cast Rancor with Cast + Target, target a creature, resolve, then Attach to Permanent.', '{G}: Forest', 'Rancor is attached to target creature.', 'card-detail'],
+  ['tool_curse_attach', 'Act 9 / Tools — Curse', 'Attach Curse to Nicol Bolas', 'Curse of the Pierced Heart', 'Tap Mountain plus another land, cast Curse with Cast + Target targeting Nicol Bolas, resolve, then Attach to Player.', '{1}{R}: Mountain + one land', 'Curse is attached to Nicol Bolas.', 'card-detail'],
+  ['tool_gitaxian_probe', 'Act 9 / Tools — Gitaxian Probe', 'Private hand peek', 'Gitaxian Probe', 'Luis pays 2 life for Phyrexian mana, casts Gitaxian Probe, resolves it, opens Private Hand Peek for Bolas hand, then draws.', '2 life instead of {U}', 'Private peek opened and Luis life decreased by 2.', 'private-hand-peek-button'],
+  ['tool_open_book_hex', 'Act 9 / Tools — Open-Book Hex', 'Public hand reveal', 'Open-Book Hex', 'Tap Island for {U}, cast Open-Book Hex targeting Nicol Bolas, resolve, then publicly reveal Bolas hand.', '{U}: Island', 'Bolas hand publicly revealed.', 'reveal-tools'],
+  ['tool_ponder_reorder', 'Act 9 / Tools — Ponder', 'Own library reorder', 'Ponder', 'Tap Island for {U}, cast and resolve Ponder, reorder top three cards, then draw one.', '{U}: Island', 'Top cards reordered and a card drawn.', 'library-menu-button'],
+  ['tool_opt_scry', 'Act 9 / Tools — Opt', 'Scry 1', 'Opt', 'Tap Island for {U}, cast Opt, resolve, Scry 1, then draw.', '{U}: Island', 'Scry action performed.', 'library-menu-button'],
+  ['tool_consider_surveil', 'Act 9 / Tools — Consider', 'Surveil 1', 'Consider', 'Tap Island for {U}, cast Consider, resolve, Surveil 1, then draw.', '{U}: Island', 'Surveil action performed.', 'library-menu-button'],
+  ['tool_portent_bolas_library', 'Act 9 / Tools — Portent', 'Reorder Bolas library', 'Portent', 'Tap Island for {U}, cast Portent targeting Nicol Bolas, resolve, then reorder Bolas top three cards.', '{U}: Island', 'Bolas top cards reordered.', 'library-menu-button'],
+  ['tool_praetors_grasp', 'Act 9 / Tools — Praetor’s Grasp', 'Search Bolas library', 'Praetor’s Grasp', 'Tap Swamp plus two lands, cast Praetor’s Grasp targeting Nicol Bolas, resolve, then search Bolas library and exile a card.', '{2}{B}: Swamp + two lands', 'Opponent library searched and a card exiled.', 'library-menu-button'],
+  ['tool_thought_scour', 'Act 9 / Tools — Thought Scour', 'Mill Bolas for two', 'Thought Scour', 'Tap Island for {U}, cast Thought Scour with Cast + Target targeting Nicol Bolas, resolve, then mill Bolas top two cards.', '{U}: Island', 'Bolas mills two cards.', 'library-menu-button'],
+  ['tool_light_up_stage', 'Act 9 / Tools — Light Up the Stage', 'Exile top two', 'Light Up the Stage', 'Tap Mountain and other lands, cast Light Up the Stage, resolve, then exile top two from Luis library.', 'Visible red/generic lands', 'Top two cards exiled.', 'library-menu-button'],
+  ['tool_act_of_treason', 'Act 9 / Tools — Act of Treason', 'Gain control of Knight', 'Act of Treason', 'Tap Mountain plus two lands, cast Act of Treason targeting Knight of Malice, resolve, give control to Luis, add until-end reminder.', '{2}{R}: Mountain + two lands', 'Knight controller is Luis and reminder exists.', 'card-detail'],
+  ['tool_clone', 'Act 9 / Tools — Clone', 'Clone a creature', 'Clone', 'Tap Island plus three lands, cast Clone, resolve, then mark Clone as a copy of Knight or Insectile.', '{3}{U}: Island + three lands', 'Clone marked as copy.', 'card-detail'],
+  ['tool_throne_monarch', 'Act 9 / Tools — Throne', 'Become the monarch', 'Throne of the High City', 'Tap four lands, tap and sacrifice Throne of the High City, resolve the ability, then toggle Monarch for Luis.', '{4}, tap, sacrifice Throne', 'Luis has Monarch.', 'status-panel'],
+  ['tool_nadaar_dungeon', 'Act 9 / Tools — Nadaar', 'Venture into dungeon', 'Nadaar, Selfless Paladin', 'Tap Plains plus two lands, cast Nadaar, resolve, its ETB ventures, then mark the first dungeon room.', '{2}{W}: Plains + two lands', 'Dungeon/venture state marked.', 'player-counters-panel'],
+  ['tool_celestus_day', 'Act 9 / Tools — Celestus', 'Make it day', 'The Celestus', 'Tap three lands, cast The Celestus, resolve, then set Day in Player Counters & Statuses.', '{3}: three lands', 'Day status active.', 'status-panel'],
+  ['tool_birthday_escape_ring', 'Act 9 / Tools — Birthday Escape', 'The Ring tempts you', 'Birthday Escape', 'Tap Island for {U}, cast Birthday Escape, resolve, draw a card, then increase Ring temptation to 1.', '{U}: Island', 'Ring temptation = 1.', 'status-panel'],
+  ['tool_vraskas_fall_poison', 'Act 9 / Tools — Vraska’s Fall', 'Bolas gives Luis poison', 'Vraska’s Fall', 'Bolas taps Swamp plus two lands, casts Vraska’s Fall, resolves it, Luis sacrifices if needed, then adds one poison counter.', '{2}{B}: Bolas Swamp + two lands', 'Luis poison = 1.', 'player-counters-panel'],
+  ['tool_attune_energy', 'Act 9 / Tools — Attune', 'Gain energy', 'Attune with Aether', 'Tap Forest for {G}, cast Attune with Aether, resolve, search/reveal a basic if desired, then add two Energy.', '{G}: Forest', 'Luis energy increased by 2.', 'player-counters-panel'],
+  ['tool_ezuri_experience', 'Act 9 / Tools — Ezuri', 'Gain experience', 'Ezuri, Claw of Progress', 'Snapshot: Ezuri is on battlefield. Cast or create a small creature; Ezuri triggers; add one Experience.', 'Snapshot legal mana already logged', 'Luis experience = 1.', 'player-counters-panel'],
+  ['tool_chandra_emblem', 'Act 9 / Tools — Chandra', 'Add Chandra emblem', 'Chandra, Torch of Defiance', 'Snapshot: Chandra survived to ultimate. Activate ultimate, resolve, then add Chandra emblem.', 'Planeswalker loyalty snapshot', 'Luis has Chandra emblem.', 'player-counters-panel'],
+  ['tool_citys_blessing', 'Act 9 / Tools — Ascend', 'Gain city’s blessing', 'Tendershoot Dryad / ascend', 'Snapshot: Luis controls ten permanents and an ascend card; ascend condition is met; toggle City’s Blessing.', 'Ten permanents snapshot', 'Luis has City’s Blessing.', 'status-panel']
+];
+
+const TUTORIAL_BOLAS_LINES = {
+  G01_room_code: 'A duel begins with a door. Even rebellion needs paperwork.',
+  G02_opponent_area: 'Look closely. Empty boards have ended fuller lives than yours.',
+  G03_own_battlefield: 'Behold your empire: a magnificent nothing. We improve it.',
+  G04_open_bolt: 'Lightning in hand. How adorable when hope has a casting cost.',
+  G05_open_library_tools: 'Libraries are not piles of cards. They are futures stacked badly.',
+  G06_mulligan_7: 'Seven fresh futures. How generous of fate to provide more ways to disappoint me.',
+  G07_undo_mulligan: 'Undo, then. Drag time backward by the collar. Do not mistake this mercy for strategy.',
+  P1_01_play_mountain: 'A Mountain. A red cathedral where bad decisions learn to pray.',
+  P1_04_tap_mountain: 'Good. Even destruction must first produce a receipt.',
+  P1_05_add_r: 'Name the mana, little spark. Power ignored is power wasted.',
+  P1_06_open_bolt: 'Open the Bolt. Let us admire your tiny weather.',
+  P1_07_bolt_cast_target: 'A spell without a target is merely theater. Choose violence precisely.',
+  P1_08_target_bolas: 'Point it at me. I admire courage when it is numerically doomed.',
+  P1_09_inspect_stack: 'The stack is where violence learns patience.',
+  P1_10_resolve_bolt: 'Pain noted. Do not confuse notation with victory.',
+  P1_11_pass: 'Pass the turn. The universe exhales, and I inhale.',
+  B1_01_bolas_island: 'An Island. Blue mana: the color of saying no with manners.',
+  B1_02_bolas_pass: 'I pass because suspense is cheaper than mercy.',
+  P2_02_reach_draw: 'A turn does not leap. It crawls, step by step, until the card at the top can no longer pretend it is safe.',
+  P2_02_draw_slip: 'Now draw. Fate hands you a side door and dares you to call it strategy.',
+  P2_03_main1: 'Main phase. The portion where intentions become evidence.',
+  P2_04_play_island: 'An Island joins you. Perhaps now your thoughts can swim.',
+  P2_05_tap_island: 'Tap the Island. Blue mana prefers permission slips.',
+  P2_06_add_u: 'Record the blue. Memory is the leash on cheating.',
+  P2_07_open_delver: 'Tiny scholars are dangerous. They read one book and grow wings.',
+  P2_08_cast_delver: 'Cast your student. I hope it survives the syllabus.',
+  P2_09_resolve_delver: 'There it stands, convinced knowledge is armor.',
+  P2_10_pass: 'Good. Surrender the remaining crumbs of your turn. I prefer my victims punctual.',
+  B2_01_bolas_draw_mountain: 'I draw a Mountain. Even tyrants enjoy reliable scenery.',
+  B2_02_bolas_swamp: 'A Swamp arrives. Black mana is ambition with better lighting.',
+  B2_03_bolas_cast_knight: 'My Knight enters the lesson plan. Please applaud with fear.',
+  B2_04_resolve_knight: 'Resolved. A blade with credentials now disagrees with you.',
+  B2_05_bolas_pass: 'I pass. A civilized monster lets dread marinate.',
+  P3_01_untap: 'Untap. Your permanents remember how optimism stands upright.',
+  P3_02_upkeep: 'Upkeep: the bill for still existing.',
+  P3_03_delver_reveal_ponder: 'Reveal Ponder. Scholarship is about to become insect architecture.',
+  P3_04_transform_delver: 'There it is: ambition, molting into anatomy.',
+  P3_05_draw_ponder: 'Draw the thought you advertised. Subtlety has left the table.',
+  P3_06_main1: 'Main phase again. Make a plan; I collect failed plans.',
+  P3_07_play_mountain: 'Another Mountain. Your little volcano committee grows bold.',
+  P3_08_pass: 'Pass with wings untapped. Restraint looks strange on you.',
+  B3_01_bolas_swamp: 'Another Swamp. The shadows now have a quorum.',
+  B3_02_bolas_doom_blade: 'I have prepared a concise lesson in deletion.',
+  B3_03_tap_island_slip: 'Tap blue. Escape always begins with admitting the wall exists.',
+  B3_04_add_u_slip: 'Bank the blue mana. Cowardice, itemized correctly, becomes tactics.',
+  B3_05_cast_slip: 'You escaped sideways. Irritating. But educational.',
+  B3_06_resolve_slip: 'Phased out. Not gone—merely rude to reality.',
+  B3_07_add_counter: 'A counter remains, like a smirk nailed to the creature.',
+  B3_08_phase_insectile: 'Mark its absence. Even invisibility needs paperwork.',
+  B3_09_fizzle_doom_blade: 'My Blade finds no victim. How briefly embarrassing for physics.',
+  B3_10_add_phase_reminder: 'Add the reminder. Memory is how cowards survive my schedule.',
+  B3_11_bolas_pass: 'I pass. Your reprieve has a very small expiration date.',
+  P4_01_untap_phase_in: 'Untap, and let your insect trespass back into existence.',
+  P4_02_draw_mountain: 'Draw a Mountain. Subtle as a thrown cathedral.',
+  P4_03_main1: 'Main phase. Place your ambition where I can reach it.',
+  P4_04_play_third_mountain: 'A third Mountain. The choir of bad ideas is warming up.',
+  P4_05_cast_ponder: 'Ponder. The future hates being reorganized by amateurs.',
+  P4_06_reorder_ponder: 'Rearrange destiny. It will resent you, but obey.',
+  P4_07_draw_ponder: 'Draw the chosen card. See? Prophecy has a handle.',
+  P4_08_begin_combat: 'Combat is not chaos. It is bureaucracy with teeth.',
+  P4_09_attackers_step: 'Declare attackers. Courage must sign in before swinging.',
+  P4_10_attack_bolas: 'Send the insect at me. History loves a doomed flight.',
+  P4_11_combat_summary: 'Review the assault. Even arrogance benefits from accounting.',
+  P4_12_regular_damage: 'Damage step. Teeth meet ledger.',
+  P4_13_apply_insectile_damage: 'Three damage lands. Annoying, like thunder with delusions.',
+  P4_14_end_combat: 'Combat ends. The paperwork has teeth marks.',
+  P4_15_pass: 'Pass the turn. Try not to look proud of arithmetic.',
+  B4_01_bolas_untaps: 'My board untaps. The machine remembers who built it.',
+  B4_02_bolas_combat: 'My combat begins. Please stand where the lesson can reach you.',
+  B4_03_knight_attacks: 'The Knight attacks. Politeness, sharpened into a weapon.',
+  B4_04_block_with_llanowar: 'Now defend yourself properly. Not heroically. Properly.',
+  B4_05_first_strike_damage: 'First strike speaks first. The rest of combat waits its turn.',
+  B4_06_mark_llanowar_damage: 'Mark the wound. Accuracy is cruelty with a ruler.',
+  B4_07_llanowar_graveyard: 'Move the Elf away. Bravery composts beautifully.',
+  B4_08_regular_damage: 'Regular damage arrives late, but still bills you.',
+  B4_09_bolas_pass: 'I pass. Surviving me is not the same as keeping pace.',
+  tool_dragon_fodder: 'Some armies are born from cardboard. Yours appear loudly edible.',
+  tool_goblin_template: 'Use the template. Even goblin mobs enjoy institutional support.',
+  tool_mirror_cell: 'A custom reflection? Vanity usually waits until after victory.',
+  tool_rancor_attach: 'Attach Rancor. Rage is more effective when properly fastened.',
+  tool_curse_attach: 'A Curse for me? Charming. I collect lesser inconveniences.',
+  tool_gitaxian_probe: 'Peek at my hand. Knowledge will not make it less frightening.',
+  tool_open_book_hex: 'Public revelation. Humiliation, but with an audience.',
+  tool_ponder_reorder: 'Your library top pretends not to be rearrangeable. Correct it.',
+  tool_opt_scry: 'Scry one. Stare at fate until it blinks.',
+  tool_consider_surveil: 'Surveil. Some futures improve when buried quickly.',
+  tool_portent_bolas_library: 'Touch my library gently. It has eaten better magicians.',
+  tool_praetors_grasp: 'Search my library. Theft is ambition wearing gloves.',
+  tool_thought_scour: 'Mill me for two. Even my scraps have dramatic lighting.',
+  tool_light_up_stage: 'Exile the top cards. Theater improves when the roof catches fire.',
+  tool_act_of_treason: 'Steal my Knight. Treason is a lesson best returned sharpened.',
+  tool_clone: 'Clone something. Imitation is flattery with rules text.',
+  tool_throne_monarch: 'A crown? Charming. Try not to bleed on it.',
+  tool_nadaar_dungeon: 'A dungeon is a checklist with better architecture.',
+  tool_celestus_day: 'Turn the day. Even the sky has a settings menu.',
+  tool_birthday_escape_ring: 'Tempted by a ring? Small jewelry, large consequences.',
+  tool_vraskas_fall_poison: 'Poison counter. Some wounds prefer the player.',
+  tool_attune_energy: 'Gather energy. Invisible resources are still resources.',
+  tool_ezuri_experience: 'Experience counters. Congratulations: your scars have resumes.',
+  tool_chandra_emblem: 'An emblem. Fire with a stationery department.',
+  tool_citys_blessing: 'The city blesses you. Municipal approval at last.',
+  F1_tap_mountain_bolt: 'Tap the Mountain. Final defiance needs a spark.',
+  F2_add_r: 'Record the red. Revolutions fail when accounting gets lazy.',
+  F3_cast_bolt_bolas: 'Aim carefully, little planeswalker. This is arithmetic wearing myth.',
+  F4_bolas_negate_real_mana: 'You thought the spell was yours because you cast it. Adorable.',
+  F5_tap_two_mountains: 'More Mountains. The choir returns for the loud ending.',
+  F6_add_rr: 'Two red mana. Drama is expensive; pay correctly.',
+  F7_reverberate_bolt: 'Copy the Bolt. Echoes are dangerous when they learn your name.',
+  F8_resolve_reverberate: 'Let the echo become real. Even I respect useful audacity.',
+  F9_resolve_bolt_copy_lethal: 'Resolve it. Legends often forget arithmetic can still kill them.',
+  F10_resolve_negate_original: 'My Negate bites the original. Too late is still precise.',
+  F11_victory_complete: 'Impossible. No—merely inconvenient. Remember the distinction.'
+};
+
+const TUTORIAL_STORY_TEXT = {
+  G01_room_code: 'The duel chamber opens with a code-sigil burning above the table.',
+  G02_opponent_area: 'Across the battlefield, Nicol Bolas waits with theatrical patience.',
+  G05_open_library_tools: 'The lower toolbar hides a small book-shaped gate. Bolas smiles as if he knows the ending already.',
+  G06_mulligan_7: 'Bolas offers you seven new possibilities. None of them are free.',
+  G07_undo_mulligan: 'The new hand flickers. Bolas raises one claw, amused. The table remembers what happened.',
+  P1_01_play_mountain: 'The first land hits the battlefield, and the duel becomes real.',
+  P1_09_inspect_stack: 'Your Lightning Bolt hangs above the table, waiting its turn to matter.',
+  P1_10_resolve_bolt: 'The spell descends and the elder dragon actually loses life.',
+  P2_08_cast_delver: 'A human wizard steps into a duel wildly above his academic rank.',
+  P3_04_transform_delver: 'The scholar tears open into wings and hunger.',
+  B3_02_bolas_doom_blade: 'Bolas raises one claw and points at your transformed threat.',
+  B3_05_cast_slip: 'Your creature dodges not backward, but sideways out of reality.',
+  P4_08_begin_combat: 'The battlefield tightens into lanes, choices, and consequences.',
+  B4_04_block_with_llanowar: 'A fragile blocker stands between you and Bolas’s blade.',
+  tool_throne_monarch: 'A crown appears on the table, wholly too shiny for safety.',
+  tool_nadaar_dungeon: 'A dungeon card becomes the map for a miniature expedition.',
+  F3_cast_bolt_bolas: 'The last Lightning Bolt rises toward Nicol Bolas with lethal promise.',
+  F4_bolas_negate_real_mana: 'Bolas answers with real mana and a counterspell on the stack.',
+  F7_reverberate_bolt: 'You answer his answer by making thunder speak twice.',
+  F9_resolve_bolt_copy_lethal: 'The copied Bolt reaches Bolas before his counterspell can save him.',
+  F11_victory_complete: 'The dragon is defeated, though his pride refuses to fall quietly.'
+};
+
+const TUTORIAL_DUEL_STEPS = [
+  makeDuelStep({ id: 'G01_room_code', act: 'Act 0 / Entering the Table', title: 'Inspect Room Code', requiredAction: 'Tap/copy the room code.', exactUiAction: 'Tap the room code in the header.', legalPreconditions: 'Tutorial duel exists; no turn actions have begun.', completionCondition: 'Room code tapped/copied after step activation.', showMeAnchor: 'room-code', storyText: TUTORIAL_STORY_TEXT.G01_room_code, bolasLine: TUTORIAL_BOLAS_LINES.G01_room_code }),
+  makeDuelStep({ id: 'G02_opponent_area', act: 'Act 0 / Entering the Table', title: 'Inspect Nicol Bolas', requiredAction: 'Inspect Nicol Bolas’s player area.', exactUiAction: 'Tap Nicol Bolas’s name, battlefield, or life area.', legalPreconditions: 'Nicol Bolas is seated as the scripted opponent at 20 life.', completionCondition: 'Opponent panel inspected.', showMeAnchor: 'opponent-battlefield', storyText: TUTORIAL_STORY_TEXT.G02_opponent_area, bolasLine: TUTORIAL_BOLAS_LINES.G02_opponent_area }),
+  makeDuelStep({ id: 'G03_own_battlefield', act: 'Act 0 / Entering the Table', title: 'Inspect Your Battlefield', requiredAction: 'Tap your battlefield.', exactUiAction: 'Tap the empty lower battlefield.', legalPreconditions: 'Luis battlefield is empty before turn one.', completionCondition: 'Own battlefield inspected.', showMeAnchor: 'own-battlefield', storyText: TUTORIAL_STORY_TEXT.G03_own_battlefield, bolasLine: TUTORIAL_BOLAS_LINES.G03_own_battlefield }),
+  makeDuelStep({ id: 'G04_open_bolt', act: 'Act 0 / Entering the Table', title: 'Open Lightning Bolt', sourceCard: 'Lightning Bolt', requiredAction: 'Open Lightning Bolt from hand.', exactUiAction: 'Tap Lightning Bolt in your hand.', legalPreconditions: 'Lightning Bolt starts in Luis opening hand.', completionCondition: 'Lightning Bolt detail opens from hand after step activation.', showMeAnchor: 'hand-area', storyText: TUTORIAL_STORY_TEXT.G04_open_bolt, bolasLine: TUTORIAL_BOLAS_LINES.G04_open_bolt }),
+  makeDuelStep({ id: 'G05_open_library_tools', act: 'Act 0 / Entering the Table', title: 'The Library Gate', sourceCard: 'Opening hand procedure', requiredAction: 'Open Library Tools.', exactUiAction: 'Swipe the lower toolbar sideways if needed, then tap the book/library icon.', legalPreconditions: 'Tutorial duel exists; lower toolbar can open library tools.', completionCondition: 'Library tools menu is open.', showMeAnchor: 'library-menu-button', storyText: TUTORIAL_STORY_TEXT.G05_open_library_tools, bolasLine: TUTORIAL_BOLAS_LINES.G05_open_library_tools }),
+  makeDuelStep({ id: 'G06_mulligan_7', act: 'Act 0 / Entering the Table', title: 'The False Opening Hand', sourceCard: 'Opening hand procedure', requiredAction: 'Tap Mulligan (7).', exactUiAction: 'In Library Tools, tap Mulligan (7).', legalPreconditions: 'Pre-game mulligans happen before turns begin; Luis has the scripted opening hand before the action.', completionCondition: 'Mulligan (7) happens after this step becomes active and Luis’s hand visibly changes.', showMeAnchor: 'mulligan-button', storyText: TUTORIAL_STORY_TEXT.G06_mulligan_7, bolasLine: TUTORIAL_BOLAS_LINES.G06_mulligan_7 }),
+  makeDuelStep({ id: 'G07_undo_mulligan', act: 'Act 0 / Entering the Table', title: 'Time Objects', sourceCard: 'Undo table correction', requiredAction: 'Undo the mulligan.', exactUiAction: 'Tap the orange Undo button, then confirm. Undo restores the original tutorial hand.', legalPreconditions: 'Mulligan (7) changed Luis’s hand and created an undo entry.', completionCondition: 'Undo completes and Luis’s hand is exactly Mountain, Mountain, Island, Forest, Lightning Bolt, Delver of Secrets, Ponder.', showMeAnchor: 'undo-button', storyText: TUTORIAL_STORY_TEXT.G07_undo_mulligan, bolasLine: TUTORIAL_BOLAS_LINES.G07_undo_mulligan }),
+  makeDuelStep({ id: 'P1_01_play_mountain', act: 'Act 1 / Luis Turn 1 — Main 1', title: 'Play Mountain', sourceCard: 'Mountain', requiredAction: 'Play Mountain from hand.', exactUiAction: 'Tap Mountain in hand → Play Land.', legalPreconditions: 'Luis Turn 1 Main 1; stack empty; Mountain in hand; Luis has not played a land this turn.', completionCondition: 'Mountain moves hand → battlefield.', showMeAnchor: 'hand-area', storyText: TUTORIAL_STORY_TEXT.P1_01_play_mountain, bolasLine: TUTORIAL_BOLAS_LINES.P1_01_play_mountain }),
+  makeDuelStep({ id: 'P1_04_tap_mountain', act: 'Act 1 / Luis Turn 1 — Main 1', title: 'Tap Mountain', sourceCard: 'Mountain', sourceEffect: '{T}: add {R}', requiredAction: 'Tap Mountain for red mana.', exactUiAction: 'Tap Mountain on battlefield → Tap.', manaPayment: 'Source is Mountain; produces {R}.', legalPreconditions: 'Mountain is untapped on battlefield.', completionCondition: 'Mountain is tapped.', showMeAnchor: 'own-battlefield', storyText: TUTORIAL_STORY_TEXT.P1_04_tap_mountain, bolasLine: TUTORIAL_BOLAS_LINES.P1_04_tap_mountain }),
+  makeDuelStep({ id: 'P1_05_add_r', act: 'Act 1 / Luis Turn 1 — Main 1', title: 'Add Red Mana', sourceCard: 'Mountain', sourceEffect: 'manual mana pool tracking', requiredAction: 'Record {R} in Luis mana pool.', exactUiAction: 'Open Player Counters & Statuses → Mana Pool → + beside R.', manaPayment: 'Luis mana pool becomes R1.', legalPreconditions: 'Mountain is tapped as the visible red source.', completionCondition: 'Luis mana pool has R1.', showMeAnchor: 'mana-pool-panel', storyText: TUTORIAL_STORY_TEXT.P1_05_add_r, bolasLine: TUTORIAL_BOLAS_LINES.P1_05_add_r }),
+  makeDuelStep({ id: 'P1_06_open_bolt', act: 'Act 1 / Luis Turn 1 — Main 1', title: 'Open Bolt to Cast', sourceCard: 'Lightning Bolt', requiredAction: 'Open Lightning Bolt from hand.', exactUiAction: 'Tap Lightning Bolt in hand.', manaPayment: '{R} available from Mountain.', legalPreconditions: 'Lightning Bolt in hand; {R} recorded.', completionCondition: 'Lightning Bolt detail opens from hand.', showMeAnchor: 'hand-area', storyText: TUTORIAL_STORY_TEXT.P1_06_open_bolt, bolasLine: TUTORIAL_BOLAS_LINES.P1_06_open_bolt }),
+  makeDuelStep({ id: 'P1_07_bolt_cast_target', act: 'Act 1 / Luis Turn 1 — Main 1', title: 'Choose Cast + Target', sourceCard: 'Lightning Bolt', requiredAction: 'Choose Cast + Target.', exactUiAction: 'In Lightning Bolt detail, tap Cast + Target.', manaPayment: 'Spend the recorded {R} when Bolt resolves.', legalPreconditions: 'Targeting mode must be used because Bolt targets.', completionCondition: 'Targeting mode active for Lightning Bolt.', showMeAnchor: 'card-detail', storyText: TUTORIAL_STORY_TEXT.P1_07_bolt_cast_target, bolasLine: TUTORIAL_BOLAS_LINES.P1_07_bolt_cast_target }),
+  makeDuelStep({ id: 'P1_08_target_bolas', act: 'Act 1 / Luis Turn 1 — Main 1', title: 'Target Nicol Bolas', sourceCard: 'Lightning Bolt', requiredAction: 'Choose Nicol Bolas as Lightning Bolt’s target.', exactUiAction: 'Tap Nicol Bolas/opponent player panel → Done.', manaPayment: '{R} paid from Mountain.', legalPreconditions: 'Nicol Bolas is a legal player target; Done is disabled with 0 targets.', completionCondition: 'Lightning Bolt is on stack targeting Nicol Bolas.', showMeAnchor: 'opponent-player-target', storyText: TUTORIAL_STORY_TEXT.P1_08_target_bolas, bolasLine: TUTORIAL_BOLAS_LINES.P1_08_target_bolas }),
+  makeDuelStep({ id: 'P1_09_inspect_stack', act: 'Act 1 / Luis Turn 1 — Main 1', title: 'Inspect Stack', sourceCard: 'Lightning Bolt', requiredAction: 'Open the stack.', exactUiAction: 'Tap Stack.', legalPreconditions: 'Lightning Bolt is on stack targeting Nicol Bolas.', completionCondition: 'Stack panel opened with Lightning Bolt visible.', showMeAnchor: 'stack-button', storyText: TUTORIAL_STORY_TEXT.P1_09_inspect_stack, bolasLine: TUTORIAL_BOLAS_LINES.P1_09_inspect_stack }),
+  makeDuelStep({ id: 'P1_10_resolve_bolt', act: 'Act 1 / Luis Turn 1 — Main 1', title: 'Resolve Bolt for Real Damage', sourceCard: 'Lightning Bolt', sourceEffect: '3 damage to any target', requiredAction: 'Resolve Lightning Bolt and apply damage.', exactUiAction: 'Resolve top stack item.', manaPayment: 'Clear/spend Luis {R}.', legalPreconditions: 'Bolas has no lands yet and cannot cast Negate; Bolt targets Nicol Bolas.', completionCondition: 'Stack empty; Lightning Bolt in Luis graveyard; Bolas life is 17.', showMeAnchor: 'stack-panel', expectedLifeTotals: { bolasBefore: 20, bolasAfter: 17 }, expectedDamage: 'Lightning Bolt deals 3 damage to Nicol Bolas.', storyText: TUTORIAL_STORY_TEXT.P1_10_resolve_bolt, bolasLine: TUTORIAL_BOLAS_LINES.P1_10_resolve_bolt }),
+  makeDuelStep({ id: 'P1_11_pass', act: 'Act 1 / Luis Turn 1 — End', title: 'Let the Turn Fall Away', requiredAction: 'Use AutoPass until end of turn, then pass priority.', exactUiAction: 'Open AutoPass, choose Until End of Turn, then tap Pass when it is your priority.', legalPreconditions: 'Main phase with stack empty after Bolt resolved and Luis has priority.', completionCondition: 'AutoPass until end of turn selected or Luis passes priority with stack empty.', showMeAnchor: 'autopass-button', storyText: TUTORIAL_STORY_TEXT.P1_11_pass, bolasLine: TUTORIAL_BOLAS_LINES.P1_11_pass }),
+  makeDuelStep({ id: 'B1_01_bolas_island', act: 'Act 2 / Bolas Turn 1', title: 'Bolas Plays Island', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', sourceCard: 'Island', requiredAction: 'Inspect Bolas’s land play in the Game Log.', exactUiAction: 'Open the Game Log.', legalPreconditions: 'Bolas Turn 1 Main 1; Island is on Bolas’s battlefield.', completionCondition: 'Game Log opened and contains “Nicol Bolas played Island.”', showMeAnchor: 'game-log-button', storyText: TUTORIAL_STORY_TEXT.B1_01_bolas_island, bolasLine: TUTORIAL_BOLAS_LINES.B1_01_bolas_island }),
+  makeDuelStep({ id: 'B1_02_bolas_pass', act: 'Act 2 / Bolas Turn 1', title: 'Bolas Passes', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', requiredAction: 'Open the Game Log and confirm Bolas passed the turn.', exactUiAction: 'Open the Game Log.', legalPreconditions: 'Bolas controls Island and the scripted opponent has passed the turn.', completionCondition: 'Game Log opened and contains “Nicol Bolas passed the turn.”', showMeAnchor: 'game-log-button', storyText: TUTORIAL_STORY_TEXT.B1_02_bolas_pass, bolasLine: TUTORIAL_BOLAS_LINES.B1_02_bolas_pass }),
+  makeDuelStep({ id: 'P2_02_reach_draw', act: 'Act 3 / Luis Turn 2', title: 'Let the Turn Reach Draw', phase: 'upkeep', sourceCard: 'Beginning phase', requiredAction: 'Advance from Upkeep to the Draw step.', exactUiAction: 'Tap Pass or use AutoPass. Bolas will pass back automatically for this tutorial, then the game will reach Draw.', legalPreconditions: 'Luis Turn 2 is in Upkeep; Slip Out the Back remains on top of Luis’s library.', completionCondition: 'Current game phase is Draw after Luis passes priority and Nicol Bolas passes back automatically.', showMeAnchor: 'autopass-button', storyText: TUTORIAL_STORY_TEXT.P2_02_reach_draw, bolasLine: TUTORIAL_BOLAS_LINES.P2_02_reach_draw }),
+  makeDuelStep({ id: 'P2_02_draw_slip', act: 'Act 3 / Luis Turn 2', title: 'Draw Slip Out', phase: 'draw', sourceCard: 'Draw step', requiredAction: 'Draw one card: Slip Out the Back.', exactUiAction: 'Tap the blue Draw button.', legalPreconditions: 'Luis is in Draw and the top library card is Slip Out the Back.', completionCondition: 'Slip Out the Back moves from Luis’s library to Luis’s hand after the Draw action.', showMeAnchor: 'draw-button', storyText: TUTORIAL_STORY_TEXT.P2_02_draw_slip, bolasLine: TUTORIAL_BOLAS_LINES.P2_02_draw_slip }),
+  makeDuelStep({ id: 'P2_03_main1', act: 'Act 3 / Luis Turn 2', title: 'Let the Turn Reach Main 1', requiredAction: 'Advance from Draw to Main 1.', exactUiAction: 'Use Pass or AutoPass. Bolas will pass back automatically for this tutorial, then the game will reach Main 1.', legalPreconditions: 'Luis Turn 2 is in Draw with the stack empty and Luis has priority.', completionCondition: 'Current game phase is Main 1 after Luis passes priority and Nicol Bolas passes back automatically.', showMeAnchor: 'autopass-button', storyText: TUTORIAL_STORY_TEXT.P2_03_main1, bolasLine: TUTORIAL_BOLAS_LINES.P2_03_main1 }),
+  makeDuelStep({ id: 'P2_04_play_island', act: 'Act 3 / Luis Turn 2', title: 'Play Island', sourceCard: 'Island', requiredAction: 'Play Island from hand.', exactUiAction: 'Tap Island → Play Land.', legalPreconditions: 'Island in hand; no land played this turn.', completionCondition: 'Island moves hand → battlefield.', showMeAnchor: 'hand-area', storyText: TUTORIAL_STORY_TEXT.P2_04_play_island, bolasLine: TUTORIAL_BOLAS_LINES.P2_04_play_island }),
+  makeDuelStep({ id: 'P2_05_tap_island', act: 'Act 3 / Luis Turn 2', title: 'Tap Island', sourceCard: 'Island', sourceEffect: '{T}: add {U}', requiredAction: 'Tap Island for {U}.', exactUiAction: 'Tap Island → Tap.', legalPreconditions: 'Island is untapped on battlefield.', completionCondition: 'Island tapped.', showMeAnchor: 'own-battlefield', storyText: TUTORIAL_STORY_TEXT.P2_05_tap_island, bolasLine: TUTORIAL_BOLAS_LINES.P2_05_tap_island }),
+  makeDuelStep({ id: 'P2_06_add_u', act: 'Act 3 / Luis Turn 2', title: 'Add Blue Mana', sourceCard: 'Island', requiredAction: 'Add {U} to mana pool.', exactUiAction: 'Open Player Counters & Statuses → Mana Pool → + beside U.', manaPayment: 'Luis mana pool U1.', legalPreconditions: 'Island is tapped as the visible blue source.', completionCondition: 'Luis mana pool has U1.', showMeAnchor: 'mana-pool-panel', storyText: TUTORIAL_STORY_TEXT.P2_06_add_u, bolasLine: TUTORIAL_BOLAS_LINES.P2_06_add_u }),
+  makeDuelStep({ id: 'P2_07_open_delver', act: 'Act 3 / Luis Turn 2', title: 'Open Delver', sourceCard: 'Delver of Secrets', requiredAction: 'Open Delver of Secrets from hand.', exactUiAction: 'Tap Delver in hand.', manaPayment: '{U} available.', legalPreconditions: 'Delver in hand.', completionCondition: 'Delver detail opened from hand.', showMeAnchor: 'hand-area', storyText: TUTORIAL_STORY_TEXT.P2_07_open_delver, bolasLine: TUTORIAL_BOLAS_LINES.P2_07_open_delver }),
+  makeDuelStep({ id: 'P2_08_cast_delver', act: 'Act 3 / Luis Turn 2', title: 'Cast Delver', sourceCard: 'Delver of Secrets', requiredAction: 'Cast Delver of Secrets.', exactUiAction: 'Tap Cast Spell, not Cast + Target.', manaPayment: '{U} from Island.', legalPreconditions: 'Delver costs {U} and has no target.', completionCondition: 'Delver is on stack.', showMeAnchor: 'card-detail', storyText: TUTORIAL_STORY_TEXT.P2_08_cast_delver, bolasLine: TUTORIAL_BOLAS_LINES.P2_08_cast_delver }),
+  makeDuelStep({ id: 'P2_09_resolve_delver', act: 'Act 3 / Luis Turn 2', title: 'Resolve Delver', sourceCard: 'Delver of Secrets', requiredAction: 'Resolve Delver from stack.', exactUiAction: 'Open Stack → Resolve top item.', manaPayment: 'Clear/spend {U}.', legalPreconditions: 'Delver is a creature spell on stack.', completionCondition: 'Delver on battlefield and stack empty.', showMeAnchor: 'stack-panel', storyText: TUTORIAL_STORY_TEXT.P2_09_resolve_delver, bolasLine: TUTORIAL_BOLAS_LINES.P2_09_resolve_delver }),
+  makeDuelStep({ id: 'P2_10_pass', act: 'Act 3 / Luis Turn 2', title: 'Pass Turn', requiredAction: 'Use AutoPass until end of turn.', exactUiAction: 'Open AutoPass and choose Until End of Turn. The tutorial will pass through the remaining steps and hand the turn to Nicol Bolas.', legalPreconditions: 'Stack empty after Delver resolves and Luis has priority.', completionCondition: 'AutoPass until end of turn selected and the turn advances to Nicol Bolas.', showMeAnchor: 'autopass-button', storyText: TUTORIAL_STORY_TEXT.P2_10_pass, bolasLine: TUTORIAL_BOLAS_LINES.P2_10_pass }),
+  makeDuelStep({ id: 'B2_01_bolas_draw_mountain', act: 'Act 4 / Bolas Turn 2', title: 'Bolas Draws', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', phase: 'draw', sourceCard: 'Draw step', requiredAction: 'Inspect Bolas turn note.', exactUiAction: 'Open the Game Log.', legalPreconditions: 'Bolas untaps Island and draws Mountain.', completionCondition: 'Game Log opened.', showMeAnchor: 'game-log-button', storyText: TUTORIAL_STORY_TEXT.B2_01_bolas_draw_mountain, bolasLine: TUTORIAL_BOLAS_LINES.B2_01_bolas_draw_mountain }),
+  makeDuelStep({ id: 'B2_02_bolas_swamp', act: 'Act 4 / Bolas Turn 2', title: 'Bolas Plays Swamp', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', sourceCard: 'Swamp', requiredAction: 'Inspect Bolas battlefield.', exactUiAction: 'Open/inspect Bolas battlefield.', legalPreconditions: 'Swamp in Bolas opening hand; visible Bolas battlefield is Island + Swamp.', completionCondition: 'Bolas battlefield inspected.', showMeAnchor: 'opponent-battlefield', storyText: TUTORIAL_STORY_TEXT.B2_02_bolas_swamp, bolasLine: TUTORIAL_BOLAS_LINES.B2_02_bolas_swamp }),
+  makeDuelStep({ id: 'B2_03_bolas_cast_knight', act: 'Act 4 / Bolas Turn 2', title: 'Bolas Casts Knight', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', sourceCard: 'Knight of Malice', requiredAction: 'Inspect Knight of Malice on stack.', exactUiAction: 'Open Stack and inspect Knight.', manaPayment: 'Bolas taps Swamp for {B} and Island for {1}.', legalPreconditions: 'Knight in Bolas hand; Island and Swamp untapped.', completionCondition: 'Stack opened / Knight inspected.', showMeAnchor: 'stack-button', storyText: TUTORIAL_STORY_TEXT.B2_03_bolas_cast_knight, bolasLine: TUTORIAL_BOLAS_LINES.B2_03_bolas_cast_knight }),
+  makeDuelStep({ id: 'B2_04_resolve_knight', act: 'Act 4 / Bolas Turn 2', title: 'Resolve Knight', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', sourceCard: 'Knight of Malice', requiredAction: 'Resolve Knight of Malice.', exactUiAction: 'Resolve top stack item.', legalPreconditions: 'Knight is on stack.', completionCondition: 'Knight on Bolas battlefield and stack empty.', showMeAnchor: 'stack-panel', storyText: TUTORIAL_STORY_TEXT.B2_04_resolve_knight, bolasLine: TUTORIAL_BOLAS_LINES.B2_04_resolve_knight }),
+  makeDuelStep({ id: 'B2_05_bolas_pass', act: 'Act 4 / Bolas Turn 2', title: 'Bolas Passes', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', requiredAction: 'Tap Pass.', exactUiAction: 'Tap Pass.', legalPreconditions: 'Stack empty.', completionCondition: 'Pass tapped.', showMeAnchor: 'pass-button', storyText: TUTORIAL_STORY_TEXT.B2_05_bolas_pass, bolasLine: TUTORIAL_BOLAS_LINES.B2_05_bolas_pass }),
+  makeDuelStep({ id: 'P3_01_untap', act: 'Act 5 / Luis Turn 3', title: 'Untap Snapshot', phase: 'untap', requiredAction: 'Confirm Luis has reached Untap.', exactUiAction: 'Inspect your battlefield and confirm your permanents are untapped.', legalPreconditions: 'Luis Turn 3 has reached Untap.', completionCondition: 'Own battlefield inspected during Untap.', showMeAnchor: 'own-battlefield', storyText: TUTORIAL_STORY_TEXT.P3_01_untap, bolasLine: TUTORIAL_BOLAS_LINES.P3_01_untap }),
+  makeDuelStep({ id: 'P3_02_upkeep', act: 'Act 5 / Luis Turn 3', title: 'Let Upkeep Arrive', phase: 'upkeep', requiredAction: 'Advance to Upkeep.', exactUiAction: 'Use Pass or AutoPass to continue until Upkeep.', legalPreconditions: 'Delver trigger happens at upkeep.', completionCondition: 'Current game phase is Upkeep after a Pass or AutoPass advance.', showMeAnchor: 'autopass-button', storyText: TUTORIAL_STORY_TEXT.P3_02_upkeep, bolasLine: TUTORIAL_BOLAS_LINES.P3_02_upkeep }),
+  makeDuelStep({ id: 'P3_03_delver_reveal_ponder', act: 'Act 5 / Luis Turn 3', title: 'Reveal Ponder', phase: 'upkeep', sourceCard: 'Delver of Secrets', sourceEffect: 'upkeep reveal trigger', requiredAction: 'Reveal top card for Delver.', exactUiAction: 'Open Library Tools → Reveal top 1.', legalPreconditions: 'Top card is Ponder, a sorcery.', completionCondition: 'Ponder revealed from top library.', showMeAnchor: 'library-menu-button', storyText: TUTORIAL_STORY_TEXT.P3_03_delver_reveal_ponder, bolasLine: TUTORIAL_BOLAS_LINES.P3_03_delver_reveal_ponder }),
+  makeDuelStep({ id: 'P3_04_transform_delver', act: 'Act 5 / Luis Turn 3', title: 'Transform Delver', phase: 'upkeep', sourceCard: 'Delver of Secrets', requiredAction: 'Transform Delver into Insectile Aberration.', exactUiAction: 'Open Delver detail → Transform / switch face.', legalPreconditions: 'Ponder was revealed for Delver trigger.', completionCondition: 'Delver face is Insectile Aberration.', showMeAnchor: 'card-detail', storyText: TUTORIAL_STORY_TEXT.P3_04_transform_delver, bolasLine: TUTORIAL_BOLAS_LINES.P3_04_transform_delver }),
+  makeDuelStep({ id: 'P3_05_draw_ponder', act: 'Act 5 / Luis Turn 3', title: 'Draw Ponder', phase: 'draw', requiredAction: 'Advance to Draw, then draw Ponder.', exactUiAction: 'Use Pass or AutoPass to continue until Draw, then tap the blue Draw button.', legalPreconditions: 'Ponder remains on top after Delver reveal.', completionCondition: 'Ponder moves library → hand.', showMeAnchor: 'library-menu-button', storyText: TUTORIAL_STORY_TEXT.P3_05_draw_ponder, bolasLine: TUTORIAL_BOLAS_LINES.P3_05_draw_ponder }),
+  makeDuelStep({ id: 'P3_06_main1', act: 'Act 5 / Luis Turn 3', title: 'Let the Turn Reach Main 1', requiredAction: 'Advance to Main 1.', exactUiAction: 'Use Pass or AutoPass to continue until Main 1.', legalPreconditions: 'Draw step complete and stack empty.', completionCondition: 'Current game phase is Main 1 after a Pass or AutoPass advance.', showMeAnchor: 'autopass-button', storyText: TUTORIAL_STORY_TEXT.P3_06_main1, bolasLine: TUTORIAL_BOLAS_LINES.P3_06_main1 }),
+  makeDuelStep({ id: 'P3_07_play_mountain', act: 'Act 5 / Luis Turn 3', title: 'Play Second Mountain', sourceCard: 'Mountain', requiredAction: 'Play second Mountain.', exactUiAction: 'Tap Mountain → Play Land.', legalPreconditions: 'Second Mountain in hand; keep Island untapped for Slip Out next turn.', completionCondition: 'Second Mountain on battlefield.', showMeAnchor: 'hand-area', storyText: TUTORIAL_STORY_TEXT.P3_07_play_mountain, bolasLine: TUTORIAL_BOLAS_LINES.P3_07_play_mountain }),
+  makeDuelStep({ id: 'P3_08_pass', act: 'Act 5 / Luis Turn 3', title: 'Pass Without Ponder', requiredAction: 'Pass.', exactUiAction: 'Tap Pass.', legalPreconditions: 'Island remains untapped; Ponder stays in hand.', completionCondition: 'Pass tapped.', showMeAnchor: 'pass-button', storyText: TUTORIAL_STORY_TEXT.P3_08_pass, bolasLine: TUTORIAL_BOLAS_LINES.P3_08_pass }),
+  makeDuelStep({ id: 'B3_01_bolas_swamp', act: 'Act 6 / Bolas Turn 3', title: 'Bolas Plays Second Swamp', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', sourceCard: 'Swamp', requiredAction: 'Inspect Bolas land play.', exactUiAction: 'Open the Game Log.', legalPreconditions: 'Bolas untaps Island and Swamp, then plays second Swamp.', completionCondition: 'Game Log opened.', showMeAnchor: 'game-log-button', storyText: TUTORIAL_STORY_TEXT.B3_01_bolas_swamp, bolasLine: TUTORIAL_BOLAS_LINES.B3_01_bolas_swamp }),
+  makeDuelStep({ id: 'B3_02_bolas_doom_blade', act: 'Act 6 / Bolas Turn 3', title: 'Bolas Casts Doom Blade', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', sourceCard: 'Doom Blade', requiredAction: 'Inspect Doom Blade on stack.', exactUiAction: 'Open stack and inspect Doom Blade.', manaPayment: 'Bolas taps Swamp for {B} and Island for {1}.', legalPreconditions: 'Doom Blade in Bolas hand; Insectile Aberration is a legal nonblack creature target.', completionCondition: 'Doom Blade inspected.', showMeAnchor: 'stack-button', storyText: TUTORIAL_STORY_TEXT.B3_02_bolas_doom_blade, bolasLine: TUTORIAL_BOLAS_LINES.B3_02_bolas_doom_blade }),
+  makeDuelStep({ id: 'B3_03_tap_island_slip', act: 'Act 6 / Bolas Turn 3', title: 'Tap Island for Slip Out', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', sourceCard: 'Island', requiredAction: 'Tap Island for {U}.', exactUiAction: 'Tap Luis’s untapped Island.', manaPayment: 'Island produces {U}.', legalPreconditions: 'Luis kept Island untapped.', completionCondition: 'Island tapped.', showMeAnchor: 'own-battlefield', storyText: TUTORIAL_STORY_TEXT.B3_03_tap_island_slip, bolasLine: TUTORIAL_BOLAS_LINES.B3_03_tap_island_slip }),
+  makeDuelStep({ id: 'B3_04_add_u_slip', act: 'Act 6 / Bolas Turn 3', title: 'Add Blue for Slip Out', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', sourceCard: 'Island', requiredAction: 'Add {U}.', exactUiAction: 'Player Counters & Statuses → Mana Pool → +U.', manaPayment: 'Luis mana pool U1.', legalPreconditions: 'Island tapped.', completionCondition: 'Luis mana pool U1.', showMeAnchor: 'mana-pool-panel', storyText: TUTORIAL_STORY_TEXT.B3_04_add_u_slip, bolasLine: TUTORIAL_BOLAS_LINES.B3_04_add_u_slip }),
+  makeDuelStep({ id: 'B3_05_cast_slip', act: 'Act 6 / Bolas Turn 3', title: 'Cast Slip Out', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', sourceCard: 'Slip Out the Back', requiredAction: 'Cast Slip Out targeting Insectile.', exactUiAction: 'Tap Slip Out → Cast + Target → select Insectile → Done.', manaPayment: '{U} from Island.', legalPreconditions: 'Slip Out in hand; Doom Blade is on stack targeting Insectile.', completionCondition: 'Slip Out on stack targeting Insectile.', showMeAnchor: 'hand-area', storyText: TUTORIAL_STORY_TEXT.B3_05_cast_slip, bolasLine: TUTORIAL_BOLAS_LINES.B3_05_cast_slip }),
+  makeDuelStep({ id: 'B3_06_resolve_slip', act: 'Act 6 / Bolas Turn 3', title: 'Resolve Slip Out', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', sourceCard: 'Slip Out the Back', requiredAction: 'Resolve Slip Out.', exactUiAction: 'Resolve top stack item.', legalPreconditions: 'Slip Out is above Doom Blade on stack.', completionCondition: 'Slip leaves stack.', showMeAnchor: 'stack-panel', storyText: TUTORIAL_STORY_TEXT.B3_06_resolve_slip, bolasLine: TUTORIAL_BOLAS_LINES.B3_06_resolve_slip }),
+  makeDuelStep({ id: 'B3_07_add_counter', act: 'Act 6 / Bolas Turn 3', title: 'Add +1/+1 Counter', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', sourceCard: 'Slip Out the Back', requiredAction: 'Add +1/+1 counter to Insectile.', exactUiAction: 'Open Insectile detail → add +1/+1 counter.', legalPreconditions: 'Slip Out resolved on Insectile.', completionCondition: 'Insectile has +1/+1 counter.', showMeAnchor: 'card-detail', storyText: TUTORIAL_STORY_TEXT.B3_07_add_counter, bolasLine: TUTORIAL_BOLAS_LINES.B3_07_add_counter }),
+  makeDuelStep({ id: 'B3_08_phase_insectile', act: 'Act 6 / Bolas Turn 3', title: 'Phase Out Insectile', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', sourceCard: 'Slip Out the Back', requiredAction: 'Phase out Insectile.', exactUiAction: 'Open Insectile detail → Phase Out.', legalPreconditions: 'Slip Out resolved on Insectile.', completionCondition: 'Insectile phased out.', showMeAnchor: 'card-detail', storyText: TUTORIAL_STORY_TEXT.B3_08_phase_insectile, bolasLine: TUTORIAL_BOLAS_LINES.B3_08_phase_insectile }),
+  makeDuelStep({ id: 'B3_09_fizzle_doom_blade', act: 'Act 6 / Bolas Turn 3', title: 'Fizzle Doom Blade', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', sourceCard: 'Doom Blade', requiredAction: 'Counter/fizzle Doom Blade.', exactUiAction: 'Open stack → Counter/Fizzle Doom Blade.', legalPreconditions: 'Doom Blade target is phased out and illegal.', completionCondition: 'Doom Blade leaves stack.', showMeAnchor: 'stack-panel', storyText: TUTORIAL_STORY_TEXT.B3_09_fizzle_doom_blade, bolasLine: TUTORIAL_BOLAS_LINES.B3_09_fizzle_doom_blade }),
+  makeDuelStep({ id: 'B3_10_add_phase_reminder', act: 'Act 6 / Bolas Turn 3', title: 'Add Phasing Reminder', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', sourceCard: 'Slip Out the Back', requiredAction: 'Add reminder “Phased out — returns at your next untap.”', exactUiAction: 'Open Insectile → Add Reminder.', legalPreconditions: 'Insectile is phased out.', completionCondition: 'Reminder added.', showMeAnchor: 'card-detail', storyText: TUTORIAL_STORY_TEXT.B3_10_add_phase_reminder, bolasLine: TUTORIAL_BOLAS_LINES.B3_10_add_phase_reminder }),
+  makeDuelStep({ id: 'B3_11_bolas_pass', act: 'Act 6 / Bolas Turn 3', title: 'Bolas Passes', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', requiredAction: 'Tap Pass.', exactUiAction: 'Tap Pass.', legalPreconditions: 'Stack empty after Doom Blade fizzles.', completionCondition: 'Pass tapped.', showMeAnchor: 'pass-button', storyText: TUTORIAL_STORY_TEXT.B3_11_bolas_pass, bolasLine: TUTORIAL_BOLAS_LINES.B3_11_bolas_pass }),
+  makeDuelStep({ id: 'P4_01_untap_phase_in', act: 'Act 7 / Luis Turn 4', title: 'Untap and Phase In', phase: 'untap', sourceCard: 'Phasing rules', requiredAction: 'Move to Untap and phase Insectile back in.', exactUiAction: 'Manual shortcut: use phase controls to set Untap, then open Insectile and toggle Phase Out off if needed.', legalPreconditions: 'Phased-out permanents phase in during their controller’s untap.', completionCondition: 'Insectile is phased in.', showMeAnchor: 'phase-controls', storyText: TUTORIAL_STORY_TEXT.P4_01_untap_phase_in, bolasLine: TUTORIAL_BOLAS_LINES.P4_01_untap_phase_in }),
+  makeDuelStep({ id: 'P4_02_draw_mountain', act: 'Act 7 / Luis Turn 4', title: 'Draw Mountain', phase: 'draw', requiredAction: 'Advance to Draw, then draw.', exactUiAction: 'Use Pass or AutoPass to continue until Draw, then tap the blue Draw button.', legalPreconditions: 'Expected draw is Mountain.', completionCondition: 'Draw action.', showMeAnchor: 'library-menu-button', storyText: TUTORIAL_STORY_TEXT.P4_02_draw_mountain, bolasLine: TUTORIAL_BOLAS_LINES.P4_02_draw_mountain }),
+  makeDuelStep({ id: 'P4_03_main1', act: 'Act 7 / Luis Turn 4', title: 'Let the Turn Reach Main 1', requiredAction: 'Advance to Main 1.', exactUiAction: 'Use Pass or AutoPass to continue until Main 1.', legalPreconditions: 'Draw complete and stack empty.', completionCondition: 'Current game phase is Main 1 after a Pass or AutoPass advance.', showMeAnchor: 'autopass-button', storyText: TUTORIAL_STORY_TEXT.P4_03_main1, bolasLine: TUTORIAL_BOLAS_LINES.P4_03_main1 }),
+  makeDuelStep({ id: 'P4_04_play_third_mountain', act: 'Act 7 / Luis Turn 4', title: 'Play Third Mountain', sourceCard: 'Mountain', requiredAction: 'Play third Mountain.', exactUiAction: 'Tap Mountain → Play Land.', legalPreconditions: 'Mountain in hand.', completionCondition: 'Third Mountain on battlefield.', showMeAnchor: 'hand-area', storyText: TUTORIAL_STORY_TEXT.P4_04_play_third_mountain, bolasLine: TUTORIAL_BOLAS_LINES.P4_04_play_third_mountain }),
+  makeDuelStep({ id: 'P4_05_cast_ponder', act: 'Act 7 / Luis Turn 4', title: 'Cast Ponder', sourceCard: 'Ponder', requiredAction: 'Tap Island, add U, cast Ponder, resolve Ponder.', exactUiAction: 'Tap Island → +U → open Ponder → Cast Spell → Resolve.', manaPayment: '{U}: Island.', legalPreconditions: 'Ponder in hand; Island available.', completionCondition: 'Ponder resolved.', showMeAnchor: 'hand-area', storyText: TUTORIAL_STORY_TEXT.P4_05_cast_ponder, bolasLine: TUTORIAL_BOLAS_LINES.P4_05_cast_ponder }),
+  makeDuelStep({ id: 'P4_06_reorder_ponder', act: 'Act 7 / Luis Turn 4', title: 'Reorder Top Cards', sourceCard: 'Ponder', requiredAction: 'Reorder your top cards.', exactUiAction: 'Open Library Tools → Reorder Top.', legalPreconditions: 'Ponder resolved and allows top-card manipulation.', completionCondition: 'Top cards reordered.', showMeAnchor: 'library-menu-button', storyText: TUTORIAL_STORY_TEXT.P4_06_reorder_ponder, bolasLine: TUTORIAL_BOLAS_LINES.P4_06_reorder_ponder }),
+  makeDuelStep({ id: 'P4_07_draw_ponder', act: 'Act 7 / Luis Turn 4', title: 'Draw from Ponder', sourceCard: 'Ponder', requiredAction: 'Draw one card from Ponder.', exactUiAction: 'Use Draw.', legalPreconditions: 'Ponder reorder completed.', completionCondition: 'Draw action.', showMeAnchor: 'library-menu-button', storyText: TUTORIAL_STORY_TEXT.P4_07_draw_ponder, bolasLine: TUTORIAL_BOLAS_LINES.P4_07_draw_ponder }),
+  makeDuelStep({ id: 'P4_08_begin_combat', act: 'Act 7 / Luis Turn 4', title: 'Let Combat Begin', phase: 'combat_begin', requiredAction: 'Advance to Begin Combat.', exactUiAction: 'Use Pass or AutoPass to continue until Begin Combat.', legalPreconditions: 'Main 1 complete and stack empty.', completionCondition: 'Current game phase is Begin Combat after a Pass or AutoPass advance.', showMeAnchor: 'autopass-button', storyText: TUTORIAL_STORY_TEXT.P4_08_begin_combat, bolasLine: TUTORIAL_BOLAS_LINES.P4_08_begin_combat }),
+  makeDuelStep({ id: 'P4_09_attackers_step', act: 'Act 7 / Luis Turn 4', title: 'Let Attackers Arrive', phase: 'combat_attackers', requiredAction: 'Advance to Attackers.', exactUiAction: 'Use Pass or AutoPass to continue until Attackers.', legalPreconditions: 'Beginning of Combat complete and stack empty.', completionCondition: 'Current game phase is Attackers after a Pass or AutoPass advance.', showMeAnchor: 'autopass-button', storyText: TUTORIAL_STORY_TEXT.P4_09_attackers_step, bolasLine: TUTORIAL_BOLAS_LINES.P4_09_attackers_step }),
+  makeDuelStep({ id: 'P4_10_attack_bolas', act: 'Act 7 / Luis Turn 4', title: 'Attack Bolas with Insectile', phase: 'combat_attackers', sourceCard: 'Insectile Aberration', requiredAction: 'Declare Insectile attacking Nicol Bolas.', exactUiAction: 'Tap Insectile → Attack → choose Nicol Bolas.', legalPreconditions: 'Insectile has been controlled since previous turn, is phased in, has flying, and Knight cannot block flying.', completionCondition: 'Insectile marked attacking Bolas.', showMeAnchor: 'own-battlefield', storyText: TUTORIAL_STORY_TEXT.P4_10_attack_bolas, bolasLine: TUTORIAL_BOLAS_LINES.P4_10_attack_bolas }),
+  makeDuelStep({ id: 'P4_11_combat_summary', act: 'Act 7 / Luis Turn 4', title: 'Inspect Combat Summary', phase: 'combat_attackers', sourceCard: 'Combat assignment', requiredAction: 'Open Combat Summary.', exactUiAction: 'Open Combat Summary.', legalPreconditions: 'Insectile attacking Bolas; no blockers.', completionCondition: 'Combat Summary opened.', showMeAnchor: 'combat-summary', storyText: TUTORIAL_STORY_TEXT.P4_11_combat_summary, bolasLine: TUTORIAL_BOLAS_LINES.P4_11_combat_summary }),
+  makeDuelStep({ id: 'P4_12_regular_damage', act: 'Act 7 / Luis Turn 4', title: 'Regular Combat Damage', phase: 'combat_damage', sourceCard: 'Combat rules', requiredAction: 'Set Regular Combat Damage.', exactUiAction: 'Set damage step to Regular Combat Damage.', legalPreconditions: 'No first/double strike combatants in this combat.', completionCondition: 'Regular combat damage active.', showMeAnchor: 'combat-summary', storyText: TUTORIAL_STORY_TEXT.P4_12_regular_damage, bolasLine: TUTORIAL_BOLAS_LINES.P4_12_regular_damage }),
+  makeDuelStep({ id: 'P4_13_apply_insectile_damage', act: 'Act 7 / Luis Turn 4', title: 'Apply Combat Damage', phase: 'combat_damage', sourceCard: 'Insectile Aberration', requiredAction: 'Apply Insectile combat damage to Nicol Bolas.', exactUiAction: 'Use the guided damage application / adjust Bolas life to 13.', legalPreconditions: 'Insectile is 4 power because of +1/+1 counter; unblocked.', completionCondition: 'Bolas life is 13.', showMeAnchor: 'opponent-player-target', expectedLifeTotals: { bolasBefore: 17, bolasAfter: 13 }, expectedDamage: 'Insectile Aberration deals 4 combat damage to Nicol Bolas.', storyText: TUTORIAL_STORY_TEXT.P4_13_apply_insectile_damage, bolasLine: TUTORIAL_BOLAS_LINES.P4_13_apply_insectile_damage }),
+  makeDuelStep({ id: 'P4_14_end_combat', act: 'Act 7 / Luis Turn 4', title: 'Let Combat End', phase: 'combat_end', requiredAction: 'Advance to End Combat.', exactUiAction: 'Use Pass or AutoPass to continue until End Combat.', legalPreconditions: 'Combat damage applied, stack empty, and damage step priority is available.', completionCondition: 'Current game phase is End Combat after a Pass or AutoPass advance.', showMeAnchor: 'autopass-button', storyText: TUTORIAL_STORY_TEXT.P4_14_end_combat, bolasLine: TUTORIAL_BOLAS_LINES.P4_14_end_combat }),
+  makeDuelStep({ id: 'P4_15_pass', act: 'Act 7 / Luis Turn 4', title: 'Pass Turn', requiredAction: 'Pass.', exactUiAction: 'Tap Pass.', legalPreconditions: 'Stack empty.', completionCondition: 'Pass tapped.', showMeAnchor: 'pass-button', storyText: TUTORIAL_STORY_TEXT.P4_15_pass, bolasLine: TUTORIAL_BOLAS_LINES.P4_15_pass }),
+  makeDuelStep({ id: 'B4_01_bolas_untaps', act: 'Act 8 / Bolas Turn 4', title: 'Bolas Untaps', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', phase: 'untap', sourceCard: 'Chapter snapshot', requiredAction: 'Inspect legal snapshot log.', exactUiAction: 'Open the Game Log.', legalPreconditions: 'Snapshot logs Luis played Forest, cast Llanowar Elves, and both players passed to Bolas combat.', completionCondition: 'Log opened.', showMeAnchor: 'game-log-button', storyText: TUTORIAL_STORY_TEXT.B4_01_bolas_untaps, bolasLine: TUTORIAL_BOLAS_LINES.B4_01_bolas_untaps }),
+  makeDuelStep({ id: 'B4_02_bolas_combat', act: 'Act 8 / Bolas Turn 4', title: 'Bolas Moves to Combat', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', phase: 'combat_begin', requiredAction: 'Open Combat Summary.', exactUiAction: 'Open Combat Summary.', legalPreconditions: 'Bolas moves through beginning of combat to attackers.', completionCondition: 'Combat Summary opened.', showMeAnchor: 'combat-summary', storyText: TUTORIAL_STORY_TEXT.B4_02_bolas_combat, bolasLine: TUTORIAL_BOLAS_LINES.B4_02_bolas_combat }),
+  makeDuelStep({ id: 'B4_03_knight_attacks', act: 'Act 8 / Bolas Turn 4', title: 'Knight Attacks Luis', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', phase: 'combat_attackers', sourceCard: 'Knight of Malice', requiredAction: 'Inspect Knight attacking Luis.', exactUiAction: 'Inspect Combat Summary.', legalPreconditions: 'Knight has been controlled since a prior turn and can attack.', completionCondition: 'Combat Summary shows Knight attacking Luis.', showMeAnchor: 'combat-summary', storyText: TUTORIAL_STORY_TEXT.B4_03_knight_attacks, bolasLine: TUTORIAL_BOLAS_LINES.B4_03_knight_attacks }),
+  makeDuelStep({ id: 'B4_04_block_with_llanowar', act: 'Act 8 / Bolas Turn 4', title: 'Block with Llanowar', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', phase: 'combat_blockers', sourceCard: 'Llanowar Elves', requiredAction: 'Declare Llanowar blocking Knight of Malice.', exactUiAction: 'Tap Llanowar Elves → Block → choose attacking Knight.', legalPreconditions: 'Luis is defending player; Llanowar is untapped and can block.', completionCondition: 'Llanowar blocks Knight.', showMeAnchor: 'own-battlefield', storyText: TUTORIAL_STORY_TEXT.B4_04_block_with_llanowar, bolasLine: TUTORIAL_BOLAS_LINES.B4_04_block_with_llanowar }),
+  makeDuelStep({ id: 'B4_05_first_strike_damage', act: 'Act 8 / Bolas Turn 4', title: 'First Strike Damage', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', phase: 'combat_damage', sourceCard: 'Knight of Malice', requiredAction: 'Set First Strike Damage.', exactUiAction: 'Set damage step to First Strike Damage.', legalPreconditions: 'Knight of Malice has first strike.', completionCondition: 'First Strike Damage active.', showMeAnchor: 'combat-summary', storyText: TUTORIAL_STORY_TEXT.B4_05_first_strike_damage, bolasLine: TUTORIAL_BOLAS_LINES.B4_05_first_strike_damage }),
+  makeDuelStep({ id: 'B4_06_mark_llanowar_damage', act: 'Act 8 / Bolas Turn 4', title: 'Mark Lethal Damage', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', phase: 'combat_damage', sourceCard: 'Knight of Malice', requiredAction: 'Add 2 temporary damage to Llanowar Elves.', exactUiAction: 'Open Llanowar → add 2 temporary damage.', legalPreconditions: 'Knight deals first-strike damage before Llanowar can deal regular damage.', completionCondition: 'Llanowar has 2 damage marked.', showMeAnchor: 'card-detail', expectedDamage: 'Knight of Malice deals 2 first-strike damage to Llanowar Elves.', storyText: TUTORIAL_STORY_TEXT.B4_06_mark_llanowar_damage, bolasLine: TUTORIAL_BOLAS_LINES.B4_06_mark_llanowar_damage }),
+  makeDuelStep({ id: 'B4_07_llanowar_graveyard', act: 'Act 8 / Bolas Turn 4', title: 'Move Llanowar to Graveyard', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', phase: 'combat_damage', sourceCard: 'State-based actions', requiredAction: 'Move Llanowar Elves to graveyard.', exactUiAction: 'Open Llanowar → Move to Graveyard.', legalPreconditions: 'Llanowar is 1/1 with 2 damage marked; lethal damage destroys it.', completionCondition: 'Llanowar zone battlefield → graveyard.', showMeAnchor: 'card-detail', expectedDamage: 'Llanowar Elves is destroyed by lethal damage.', storyText: TUTORIAL_STORY_TEXT.B4_07_llanowar_graveyard, bolasLine: TUTORIAL_BOLAS_LINES.B4_07_llanowar_graveyard }),
+  makeDuelStep({ id: 'B4_08_regular_damage', act: 'Act 8 / Bolas Turn 4', title: 'Regular Damage', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', phase: 'combat_damage', sourceCard: 'Combat rules', requiredAction: 'Set Regular Damage.', exactUiAction: 'Set Regular Damage.', legalPreconditions: 'Llanowar is gone and deals no regular damage.', completionCondition: 'Regular Damage active.', showMeAnchor: 'combat-summary', storyText: TUTORIAL_STORY_TEXT.B4_08_regular_damage, bolasLine: TUTORIAL_BOLAS_LINES.B4_08_regular_damage }),
+  makeDuelStep({ id: 'B4_09_bolas_pass', act: 'Act 8 / Bolas Turn 4', title: 'Bolas Passes', turnOwner: 'Nicol Bolas', activePlayer: 'Nicol Bolas', requiredAction: 'Tap Pass.', exactUiAction: 'Tap Pass.', legalPreconditions: 'Combat complete and stack empty.', completionCondition: 'Pass tapped.', showMeAnchor: 'pass-button', storyText: TUTORIAL_STORY_TEXT.B4_09_bolas_pass, bolasLine: TUTORIAL_BOLAS_LINES.B4_09_bolas_pass }),
+  ...TUTORIAL_TOOL_SOURCES.map(([id, act, title, sourceCard, exactUiAction, manaPayment, completionCondition, showMeAnchor]) => makeDuelStep({ id, act, title, sourceCard, requiredAction: title, exactUiAction, manaPayment, legalPreconditions: `${sourceCard} is in the specified zone, visible mana/payment exists, and the log records the chapter snapshot before the tool is used.`, completionCondition, showMeAnchor, storyText: TUTORIAL_STORY_TEXT[id], bolasLine: TUTORIAL_BOLAS_LINES[id] })),
+  makeDuelStep({ id: 'F1_tap_mountain_bolt', act: 'Act 10 / Final Stack Lesson', title: 'Tap Mountain for Final Bolt', sourceCard: 'Mountain', requiredAction: 'Tap one Mountain for {R}.', exactUiAction: 'Tap an untapped Mountain.', manaPayment: 'Mountain produces {R}.', legalPreconditions: 'Bolas life is exactly 3; Luis controls three untapped Mountains; stack empty.', completionCondition: 'One Mountain tapped.', showMeAnchor: 'own-battlefield', expectedLifeTotals: { bolasBefore: 3 }, storyText: TUTORIAL_STORY_TEXT.F1_tap_mountain_bolt, bolasLine: TUTORIAL_BOLAS_LINES.F1_tap_mountain_bolt }),
+  makeDuelStep({ id: 'F2_add_r', act: 'Act 10 / Final Stack Lesson', title: 'Add Red for Bolt', sourceCard: 'Mountain', requiredAction: 'Add {R}.', exactUiAction: 'Player Counters & Statuses → Mana Pool → +R.', manaPayment: 'Luis mana pool R1.', legalPreconditions: 'One Mountain tapped for red.', completionCondition: 'Mana pool R1.', showMeAnchor: 'mana-pool-panel', storyText: TUTORIAL_STORY_TEXT.F2_add_r, bolasLine: TUTORIAL_BOLAS_LINES.F2_add_r }),
+  makeDuelStep({ id: 'F3_cast_bolt_bolas', act: 'Act 10 / Final Stack Lesson', title: 'Cast Final Bolt', sourceCard: 'Lightning Bolt', requiredAction: 'Cast Lightning Bolt targeting Nicol Bolas.', exactUiAction: 'Open Lightning Bolt → Cast + Target → select Nicol Bolas → Done.', manaPayment: '{R} from Mountain.', legalPreconditions: 'Lightning Bolt in Luis hand; Nicol Bolas is a legal player target at 3 life.', completionCondition: 'Lightning Bolt on stack targeting Bolas.', showMeAnchor: 'hand-area', storyText: TUTORIAL_STORY_TEXT.F3_cast_bolt_bolas, bolasLine: TUTORIAL_BOLAS_LINES.F3_cast_bolt_bolas }),
+  makeDuelStep({ id: 'F4_bolas_negate_real_mana', act: 'Act 10 / Final Stack Lesson', title: 'Bolas Casts Negate with Real Mana', turnOwner: 'Nicol Bolas', activePlayer: 'Luis', sourceCard: 'Negate', requiredAction: 'Inspect Negate on stack.', exactUiAction: 'Open stack and inspect Negate.', manaPayment: 'Bolas taps Island for {U} and Swamp for {1}.', legalPreconditions: 'Negate in Bolas hand; Island and Swamp untapped; Lightning Bolt is a noncreature spell on stack.', completionCondition: 'Negate inspected on stack.', showMeAnchor: 'stack-button', storyText: TUTORIAL_STORY_TEXT.F4_bolas_negate_real_mana, bolasLine: TUTORIAL_BOLAS_LINES.F4_bolas_negate_real_mana }),
+  makeDuelStep({ id: 'F5_tap_two_mountains', act: 'Act 10 / Final Stack Lesson', title: 'Tap Two Mountains for Reverberate', sourceCard: 'Mountain', requiredAction: 'Tap two Mountains.', exactUiAction: 'Tap the remaining two untapped Mountains.', manaPayment: 'Two Mountains produce {R}{R}.', legalPreconditions: 'Luis has two untapped Mountains remaining.', completionCondition: 'Two more Mountains tapped.', showMeAnchor: 'own-battlefield', storyText: TUTORIAL_STORY_TEXT.F5_tap_two_mountains, bolasLine: TUTORIAL_BOLAS_LINES.F5_tap_two_mountains }),
+  makeDuelStep({ id: 'F6_add_rr', act: 'Act 10 / Final Stack Lesson', title: 'Add RR', sourceCard: 'Mountain', requiredAction: 'Add {R}{R}.', exactUiAction: 'Press +R twice in mana pool.', manaPayment: 'Luis mana pool has RR for Reverberate.', legalPreconditions: 'Two Mountains tapped for red.', completionCondition: 'Mana pool has RR for Reverberate.', showMeAnchor: 'mana-pool-panel', storyText: TUTORIAL_STORY_TEXT.F6_add_rr, bolasLine: TUTORIAL_BOLAS_LINES.F6_add_rr }),
+  makeDuelStep({ id: 'F7_reverberate_bolt', act: 'Act 10 / Final Stack Lesson', title: 'Cast Reverberate Targeting Bolt', sourceCard: 'Reverberate', requiredAction: 'Cast Reverberate targeting Lightning Bolt.', exactUiAction: 'Open Reverberate → Cast + Target → target Lightning Bolt on stack → Done.', manaPayment: '{R}{R} from two Mountains.', legalPreconditions: 'Reverberate in Luis hand; Lightning Bolt instant spell is on stack.', completionCondition: 'Reverberate on stack targeting Lightning Bolt.', showMeAnchor: 'hand-area', storyText: TUTORIAL_STORY_TEXT.F7_reverberate_bolt, bolasLine: TUTORIAL_BOLAS_LINES.F7_reverberate_bolt }),
+  makeDuelStep({ id: 'F8_resolve_reverberate', act: 'Act 10 / Final Stack Lesson', title: 'Resolve Reverberate', sourceCard: 'Reverberate', requiredAction: 'Resolve Reverberate.', exactUiAction: 'Resolve top stack item.', legalPreconditions: 'Reverberate is on top of stack targeting Lightning Bolt.', completionCondition: 'Lightning Bolt copy exists on stack targeting Nicol Bolas.', showMeAnchor: 'stack-panel', storyText: TUTORIAL_STORY_TEXT.F8_resolve_reverberate, bolasLine: TUTORIAL_BOLAS_LINES.F8_resolve_reverberate }),
+  makeDuelStep({ id: 'F9_resolve_bolt_copy_lethal', act: 'Act 10 / Final Stack Lesson', title: 'Resolve Bolt Copy for Lethal', sourceCard: 'Lightning Bolt copy', requiredAction: 'Resolve Lightning Bolt copy.', exactUiAction: 'Resolve top Lightning Bolt copy.', legalPreconditions: 'Bolas life is 3 and copy targets Nicol Bolas.', completionCondition: 'Bolas life <= 0; log says Nicol Bolas is defeated.', showMeAnchor: 'stack-panel', expectedLifeTotals: { bolasBefore: 3, bolasAfter: 0 }, expectedDamage: 'Lightning Bolt copy deals 3 damage to Nicol Bolas.', storyText: TUTORIAL_STORY_TEXT.F9_resolve_bolt_copy_lethal, bolasLine: TUTORIAL_BOLAS_LINES.F9_resolve_bolt_copy_lethal }),
+  makeDuelStep({ id: 'F10_resolve_negate_original', act: 'Act 10 / Final Stack Lesson', title: 'Resolve Negate and Original Bolt', sourceCard: 'Negate', requiredAction: 'Resolve remaining stack.', exactUiAction: 'Resolve Negate; it counters original Lightning Bolt.', legalPreconditions: 'Copy has already dealt lethal; Negate still targets original Lightning Bolt.', completionCondition: 'Stack empty; original Bolt in graveyard; Negate in Bolas graveyard.', showMeAnchor: 'stack-panel', storyText: TUTORIAL_STORY_TEXT.F10_resolve_negate_original, bolasLine: TUTORIAL_BOLAS_LINES.F10_resolve_negate_original }),
+  makeDuelStep({ id: 'F11_victory_complete', act: 'Act 10 / Final Stack Lesson', title: 'Victory: Nicol Bolas Defeated', sourceCard: 'Lightning Bolt copy', requiredAction: 'Inspect final log and finish tutorial.', exactUiAction: 'Open the Game Log, then Finish Tutorial.', legalPreconditions: 'Bolas life <= 0; stack empty; log includes “Nicol Bolas is defeated.”', completionCondition: 'Victory/tutorial-complete screen appears only after Bolas life <= 0.', showMeAnchor: 'game-log-button', completion: 'finish', storyText: TUTORIAL_STORY_TEXT.F11_victory_complete, bolasLine: TUTORIAL_BOLAS_LINES.F11_victory_complete })
+];
+
+const TUTORIAL_SCRIPT_STEPS = withTutorialRules(TUTORIAL_DUEL_STEPS);
+validateTutorialScriptRules(TUTORIAL_SCRIPT_STEPS);
+
+const QUICK_START_ITEMS = [
+  'Create a game and send the room code/link to your friend.',
+  'Import your deck.',
+  'Draw your opening hand.',
+  'Tap cards to open their action menu.',
+  'Use Play Land, Cast Spell, Cast + Target, and Move Zone manually.',
+  'Use the stack panel to resolve/counter/fizzle spells.',
+  'Use the book icon for library tools.',
+  'Use the dice/random tools for tokens, counters, mana, and extra trackers.',
+  'Use chat/log to explain actions when playing asynchronously.',
+  'The app is a shared manual board, not a full rules engine.'
+];
+
+const QuickStartGuideModal = ({ open, onClose }) => {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-[120] flex items-end justify-center bg-black/75 p-3 sm:items-center sm:p-4" onClick={onClose}>
+      <div className="w-full max-w-lg rounded-t-2xl border border-slate-600 bg-slate-900 shadow-2xl sm:rounded-2xl" onClick={(event) => event.stopPropagation()}>
+        <div className="flex items-start justify-between gap-3 border-b border-slate-700 p-4">
+          <div>
+            <h2 className="flex items-center gap-2 text-xl font-black text-white"><BookOpen className="text-sky-300" size={20} /> Quick Start</h2>
+            <p className="mt-1 text-sm text-slate-400">A practical checklist for async manual-board games.</p>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-white" aria-label="Close Quick Start Guide">
+            <X size={18} />
+          </button>
+        </div>
+        <ol className="max-h-[70vh] list-decimal space-y-2 overflow-y-auto px-8 py-4 text-sm leading-relaxed text-slate-200">
+          {QUICK_START_ITEMS.map((item) => <li key={item}>{item}</li>)}
+        </ol>
+        <div className="border-t border-slate-700 p-4">
+          <button type="button" onClick={onClose} className="min-h-11 w-full rounded-xl bg-sky-600 px-4 py-2 font-black text-white hover:bg-sky-500">Got it</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const TUTORIAL_LOBBY_SCENES = [
+  { id: 'name', completion: 'NAME_CONFIRMED', title: 'L0 — Name Yourself', scene: 'The lobby darkens like a summoning circle.', dialogue: 'Before a duel can wound you, it must know what to call you.', objective: 'Tap your name field and confirm the name you will use in the duel.', hint: 'Do it now: focus or edit Your Name. The name must not be empty.', anchor: 'lobby-name-input', reaction: 'Good. Now the room knows what to blame.' },
+  { id: 'laws', completion: 'GAME_MODE_SELECTED', title: 'L1 — Choose the Laws', scene: 'Two rule-stones burn: Regular and Commander.', dialogue: 'Twenty life is a duel. Forty life is a declaration of stubbornness.', objective: 'Choose Regular or Commander.', hint: 'Touch one of the mode buttons. Regular starts at 20 life; Commander starts at 40 and adds command-zone tools.', anchor: 'lobby-game-mode', reaction: 'A law chosen is a cage accepted.' },
+  { id: 'title', completion: 'GAME_TITLE_TOUCHED', title: 'L2 — Title the Duel', scene: 'A blank banner waits above the table.', dialogue: 'A battle with a title is easier to find when your memory has failed you.', objective: 'Tap the Game Title field.', hint: 'The title is optional, but touch the field so you know where to name rooms later.', anchor: 'lobby-game-title', reaction: 'Even an unnamed disaster should know where its banner hangs.' },
+  { id: 'create', completion: 'CREATE_GAME_PRACTICED', title: 'L3 — Create a Room', scene: 'The room folds itself toward existence, then waits.', dialogue: 'A battle is not found. It is authored.', objective: 'Tap Create Game.', hint: 'This is tutorial-safe practice: tapping Create Game here will not create a normal room.', anchor: 'lobby-create-game', reaction: 'Good. You found the forge without making unnecessary paperwork.' },
+  { id: 'join', completion: 'JOIN_GAME_PRACTICED', title: 'L4 — Join Door', scene: 'A door with a blade waits for a code.', dialogue: 'Enter to fight. Try not to look eager.', objective: 'Tap Join Game.', hint: 'This practice tap will not join a real game or require a code.', anchor: 'lobby-join-game', reaction: 'Correct door. Incorrect confidence.' },
+  { id: 'watch', completion: 'WATCH_GAME_PRACTICED', title: 'L5 — Watcher Door', scene: 'A door with an eye blinks from the lobby.', dialogue: 'Watching is safer, which is how you know it teaches less.', objective: 'Tap Watch Game.', hint: 'This practice tap will not navigate into a real game.', anchor: 'lobby-watch-game', reaction: 'Good. Spectatorship: cowardice with note-taking.' },
+  { id: 'room_code', completion: 'ROOM_CODE_INSPECTED', title: 'L6 — Room Code', scene: 'A six-character sigil burns into the air.', dialogue: 'This code is the doorway. Send it to the friend you wish to inconvenience.', objective: 'Touch the room code example.', hint: 'Room codes let friends join as players or watch as spectators.', anchor: 'lobby-room-code-example', reaction: 'A sigil noticed is a door weaponized.' },
+  { id: 'my_games', completion: 'MY_GAMES_INSPECTED', title: 'L7 — My Games', scene: 'Recent rooms whisper from the bottom of the lobby.', dialogue: 'Abandoned games breed in the dark. Find them before they unionize.', objective: 'Inspect My Games.', hint: 'Tap or scroll to the My Games panel to find rooms you hosted, joined, or watched.', anchor: 'lobby-my-games', reaction: 'Yes. Your past mistakes have an index.' },
+  { id: 'cleanup', completion: 'CLEANUP_BUTTON_INSPECTED', title: 'L8 — Clean Old Rooms', scene: 'Old rooms rattle their bones.', dialogue: 'Sweep them away before they unionize.', objective: 'Tap Clean up old games.', hint: 'This tutorial-safe tap will not delete anything.', anchor: 'lobby-cleanup-games', reaction: 'Good. Use this later when old host-owned rooms pile up.' },
+  { id: 'begin', completion: 'START_TUTORIAL_CONFIRMED', title: 'L9 — Begin Bolas Duel', scene: 'The lobby cracks open. A second seat fills itself.', dialogue: 'Enough doors. Sit. Draw. Learn.', objective: 'Tap Start Tutorial Battle.', hint: 'This action creates or opens the scripted Nicol Bolas tutorial duel.', anchor: 'lobby-tutorial-start', final: true }
+];
+
+const TUTORIAL_FALLBACK_STEP = {
+  id: 'intro',
+  chapter: 'Tutorial',
+  title: 'Tutorial step unavailable',
+  dialogue: 'Tutorial step unavailable. Skip or restart tutorial.',
+  objective: 'Tutorial step unavailable. Skip or restart tutorial.',
+  hint: 'Tutorial step unavailable. Skip or restart tutorial.',
+  anchor: null,
+  completion: 'manual'
+};
+const normalizeTutorialStep = (step, fallbackId = 'intro') => {
+  const safeStep = step && typeof step === 'object' ? step : {};
+  return {
+    ...TUTORIAL_FALLBACK_STEP,
+    ...safeStep,
+    id: typeof safeStep.id === 'string' && safeStep.id ? safeStep.id : fallbackId,
+    chapter: typeof safeStep.chapter === 'string' && safeStep.chapter ? safeStep.chapter : TUTORIAL_FALLBACK_STEP.chapter,
+    title: typeof safeStep.title === 'string' && safeStep.title ? safeStep.title : TUTORIAL_FALLBACK_STEP.title,
+    scene: typeof safeStep.scene === 'string' && safeStep.scene ? safeStep.scene : TUTORIAL_FALLBACK_STEP.scene,
+    dialogue: typeof safeStep.dialogue === 'string' && safeStep.dialogue ? safeStep.dialogue : TUTORIAL_FALLBACK_STEP.dialogue,
+    reaction: typeof safeStep.reaction === 'string' ? safeStep.reaction : '',
+    objective: typeof safeStep.objective === 'string' && safeStep.objective ? safeStep.objective : TUTORIAL_FALLBACK_STEP.objective,
+    hint: typeof safeStep.hint === 'string' && safeStep.hint ? safeStep.hint : TUTORIAL_FALLBACK_STEP.hint,
+    anchor: typeof safeStep.anchor === 'string' || Array.isArray(safeStep.anchor) ? safeStep.anchor : null,
+    completion: ['manual', 'detect', 'detect-or-manual', 'finish'].includes(safeStep.completion) ? safeStep.completion : 'manual'
+  };
+};
+const TUTORIAL_STEP_IDS = TUTORIAL_SCRIPT_STEPS.map((step) => step?.id).filter(Boolean);
+const getTutorialStepById = (stepId) => {
+  const requestedId = typeof stepId === 'string' && stepId ? stepId : 'intro';
+  const foundStep = TUTORIAL_SCRIPT_STEPS.find((step) => step?.id === requestedId) || TUTORIAL_SCRIPT_STEPS.find((step) => step?.id === 'intro') || TUTORIAL_SCRIPT_STEPS[0];
+  return normalizeTutorialStep(foundStep, requestedId);
+};
+const getTutorialStepIndex = (stepId) => {
+  const index = TUTORIAL_STEP_IDS.indexOf(stepId);
+  return Math.min(Math.max(index >= 0 ? index : 0, 0), Math.max(TUTORIAL_STEP_IDS.length - 1, 0));
+};
+const getNextTutorialStepId = (stepId) => TUTORIAL_SCRIPT_STEPS[Math.min(getTutorialStepIndex(stepId) + 1, TUTORIAL_SCRIPT_STEPS.length - 1)]?.id || 'intro';
+const getPreviousTutorialStepId = (stepId) => TUTORIAL_SCRIPT_STEPS[Math.max(getTutorialStepIndex(stepId) - 1, 0)]?.id || 'intro';
+const capTutorialCompletedStepIds = (stepIds = []) => [...new Set((Array.isArray(stepIds) ? stepIds : []).filter(Boolean))].slice(-80);
+const getTutorialAnchorClass = (activeAnchor, anchor, pulseAnchor = null) => {
+  if (!activeAnchor || !anchor) return '';
+  const anchors = Array.isArray(anchor) ? anchor : [anchor];
+  const isActive = anchors.includes(activeAnchor) || (activeAnchor === 'battlefields' && (anchors.includes('own-battlefield') || anchors.includes('opponent-battlefield')));
+  const isPulsing = Boolean(pulseAnchor && (anchors.includes(pulseAnchor) || (pulseAnchor === 'battlefields' && (anchors.includes('own-battlefield') || anchors.includes('opponent-battlefield')))));
+  return isActive
+    ? ` ring-2 ring-amber-300/80 shadow-[0_0_18px_rgba(252,211,77,0.45)] transition-shadow ${isPulsing ? ' tutorial-target-pulse' : ''}`
+    : '';
 };
 
 const getGameMode = (game) => game?.gameMode || GAME_MODES.REGULAR;
@@ -286,6 +891,20 @@ const PHASES = [
   { id: 'cleanup', label: 'Cleanup' }
 ];
 
+const TUTORIAL_NATURAL_PHASE_ADVANCE_STEPS = {
+  P2_02_reach_draw: { fromPhase: 'upkeep', targetPhase: 'draw', completionDetail: 'PASS_PRIORITY:draw', scriptedBolasPass: true },
+  P2_03_main1: { fromPhase: 'draw', targetPhase: 'main1', completionDetail: 'PASS_PRIORITY:main1', scriptedBolasPass: true },
+  P3_02_upkeep: { fromPhase: 'untap', targetPhase: 'upkeep', completionDetail: 'PASS_PRIORITY:upkeep' },
+  P3_05_draw_ponder: { fromPhase: 'upkeep', targetPhase: 'draw', completionDetail: null },
+  P3_06_main1: { fromPhase: 'draw', targetPhase: 'main1', completionDetail: 'PASS_PRIORITY:main1' },
+  P4_02_draw_mountain: { fromPhase: 'upkeep', targetPhase: 'draw', completionDetail: null },
+  P4_03_main1: { fromPhase: 'draw', targetPhase: 'main1', completionDetail: 'PASS_PRIORITY:main1' },
+  P4_08_begin_combat: { fromPhase: 'main1', targetPhase: 'combat_begin', completionDetail: 'PASS_PRIORITY:combat_begin' },
+  P4_09_attackers_step: { fromPhase: 'combat_begin', targetPhase: 'combat_attackers', completionDetail: 'PASS_PRIORITY:combat_attackers' },
+  P4_14_end_combat: { fromPhase: 'combat_damage', targetPhase: 'combat_end', completionDetail: 'PASS_PRIORITY:combat_end' }
+};
+const TUTORIAL_NATURAL_PHASE_ADVANCE_STEP_IDS = Object.keys(TUTORIAL_NATURAL_PHASE_ADVANCE_STEPS);
+
 const COMBAT_DAMAGE_STEPS = {
   FIRST_STRIKE: 'firstStrike',
   REGULAR: 'regular'
@@ -304,7 +923,316 @@ const ZONES = {
   COMMAND: 'command'
 };
 
+const getScryfallNamedImageUrl = (cardName = '', version = 'normal', face = null) => {
+  const lookupName = String(cardName || 'Tutorial Card').replace(/\s*\/\/.*$/, '').trim();
+  if (!lookupName) return null;
+  const faceParam = face ? `&face=${encodeURIComponent(face)}` : '';
+  return `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(lookupName)}&format=image&version=${version}${faceParam}`;
+};
 
+const buildScryfallNamedImageUris = (cardName = '', face = null) => ({
+  small: getScryfallNamedImageUrl(cardName, 'small', face),
+  normal: getScryfallNamedImageUrl(cardName, 'normal', face),
+  large: getScryfallNamedImageUrl(cardName, 'large', face)
+});
+
+const TUTORIAL_DELVER_CARD = {
+  name: 'Delver of Secrets // Insectile Aberration',
+  mana_cost: '{U}',
+  type_line: 'Creature — Human Wizard // Creature — Human Insect',
+  oracle_text: 'At the beginning of your upkeep, look at the top card of your library. You may reveal that card. If an instant or sorcery card is revealed this way, transform Delver of Secrets.',
+  layout: 'transform',
+  colors: ['U'],
+  color_identity: ['U'],
+  power: '1',
+  toughness: '1',
+  card_faces: [
+    {
+      name: 'Delver of Secrets',
+      mana_cost: '{U}',
+      type_line: 'Creature — Human Wizard',
+      oracle_text: 'At the beginning of your upkeep, look at the top card of your library. You may reveal that card. If an instant or sorcery card is revealed this way, transform Delver of Secrets.',
+      colors: ['U'],
+      power: '1',
+      toughness: '1',
+      image_uris: buildScryfallNamedImageUris('Delver of Secrets', 'front'),
+      image_uri: getScryfallNamedImageUrl('Delver of Secrets', 'normal', 'front'),
+      imageUrl: getScryfallNamedImageUrl('Delver of Secrets', 'normal', 'front')
+    },
+    {
+      name: 'Insectile Aberration',
+      type_line: 'Creature — Human Insect',
+      oracle_text: 'Flying',
+      colors: ['U'],
+      color_indicator: ['U'],
+      power: '3',
+      toughness: '2',
+      image_uris: buildScryfallNamedImageUris('Delver of Secrets', 'back'),
+      image_uri: getScryfallNamedImageUrl('Delver of Secrets', 'normal', 'back'),
+      imageUrl: getScryfallNamedImageUrl('Delver of Secrets', 'normal', 'back')
+    }
+  ],
+  image_uris: buildScryfallNamedImageUris('Delver of Secrets', 'front'),
+  image_uri: getScryfallNamedImageUrl('Delver of Secrets', 'normal', 'front'),
+  imageUrl: getScryfallNamedImageUrl('Delver of Secrets', 'normal', 'front'),
+  activeFaceIndex: 0
+};
+
+const TUTORIAL_STARTER_CARD_SEED = [
+  { name: 'Mountain', type_line: 'Basic Land — Mountain', oracle_text: '({T}: Add {R}.)', color_identity: ['R'] },
+  { name: 'Lightning Bolt', mana_cost: '{R}', type_line: 'Instant', oracle_text: 'Lightning Bolt deals 3 damage to any target.', colors: ['R'], color_identity: ['R'] },
+  { name: 'Reverberate', mana_cost: '{R}{R}', type_line: 'Instant', oracle_text: 'Copy target instant or sorcery spell. You may choose new targets for the copy.', colors: ['R'], color_identity: ['R'] },
+  TUTORIAL_DELVER_CARD,
+  { name: 'Island', type_line: 'Basic Land — Island', oracle_text: '({T}: Add {U}.)', color_identity: ['U'] },
+  { name: 'Llanowar Elves', mana_cost: '{G}', type_line: 'Creature — Elf Druid', oracle_text: '{T}: Add {G}.', colors: ['G'], color_identity: ['G'], power: '1', toughness: '1' },
+  { name: 'Dragon Fodder', mana_cost: '{1}{R}', type_line: 'Sorcery', oracle_text: 'Create two 1/1 red Goblin creature tokens.', colors: ['R'], color_identity: ['R'] },
+  { name: 'Forest', type_line: 'Basic Land — Forest', oracle_text: '({T}: Add {G}.)', color_identity: ['G'] },
+  { name: 'Ponder', mana_cost: '{U}', type_line: 'Sorcery', oracle_text: 'Look at the top three cards of your library, then put them back in any order. You may shuffle. Draw a card.', colors: ['U'], color_identity: ['U'] },
+  { name: 'Giant Growth', mana_cost: '{G}', type_line: 'Instant', oracle_text: 'Target creature gets +3/+3 until end of turn.', colors: ['G'], color_identity: ['G'] },
+  { name: 'Slip Out the Back', mana_cost: '{U}', type_line: 'Instant', oracle_text: 'Put a +1/+1 counter on target creature. It phases out.', colors: ['U'], color_identity: ['U'] },
+  { name: 'Young Pyromancer', mana_cost: '{1}{R}', type_line: 'Creature — Human Shaman', oracle_text: 'Whenever you cast an instant or sorcery spell, create a 1/1 red Elemental creature token.', colors: ['R'], color_identity: ['R'], power: '2', toughness: '1' },
+  { name: 'Rancor', mana_cost: '{G}', type_line: 'Enchantment — Aura', oracle_text: 'Enchant creature. Enchanted creature gets +2/+0 and has trample.', colors: ['G'], color_identity: ['G'] },
+  { name: 'Curse of the Pierced Heart', mana_cost: '{1}{R}', type_line: 'Enchantment — Aura Curse', oracle_text: 'Enchant player. At the beginning of enchanted player’s upkeep, Curse of the Pierced Heart deals 1 damage to that player.', colors: ['R'], color_identity: ['R'] },
+  { name: 'Act of Treason', mana_cost: '{2}{R}', type_line: 'Sorcery', oracle_text: 'Gain control of target creature until end of turn. Untap that creature. It gains haste until end of turn.', colors: ['R'], color_identity: ['R'] },
+  { name: 'Clone', mana_cost: '{3}{U}', type_line: 'Creature — Shapeshifter', oracle_text: 'You may have Clone enter as a copy of any creature on the battlefield.', colors: ['U'], color_identity: ['U'], power: '0', toughness: '0' },
+  { name: 'Portent', mana_cost: '{U}', type_line: 'Sorcery', oracle_text: 'Look at the top three cards of target player’s library, then put them back in any order. That player shuffles. Draw a card at the beginning of the next turn’s upkeep.', colors: ['U'], color_identity: ['U'] },
+  { name: 'Nicol Bolas, Planeswalker', mana_cost: '{4}{U}{B}{B}{R}', type_line: 'Legendary Planeswalker — Bolas', oracle_text: '+3: Destroy target noncreature permanent. −2: Gain control of target creature. −9: Nicol Bolas, Planeswalker deals 7 damage to target player. That player discards seven cards, then sacrifices seven permanents.', colors: ['U', 'B', 'R'], color_identity: ['U', 'B', 'R'], loyalty: '5' },
+  { name: 'Negate', mana_cost: '{1}{U}', type_line: 'Instant', oracle_text: 'Counter target noncreature spell.', colors: ['U'], color_identity: ['U'] },
+  { name: 'Doom Blade', mana_cost: '{1}{B}', type_line: 'Instant', oracle_text: 'Destroy target nonblack creature.', colors: ['B'], color_identity: ['B'] },
+  { name: 'Zombie Token', type_line: 'Token Creature — Zombie', oracle_text: '', colors: ['B'], color_identity: ['B'], power: '2', toughness: '2' },
+  { name: 'Swamp', type_line: 'Basic Land — Swamp', oracle_text: '({T}: Add {B}.)', color_identity: ['B'] },
+  { name: 'Plains', type_line: 'Basic Land — Plains', oracle_text: '({T}: Add {W}.)', color_identity: ['W'] },
+  { name: 'Knight of Malice', mana_cost: '{1}{B}', type_line: 'Creature — Human Knight', oracle_text: 'First strike, hexproof from white. Knight of Malice gets +1/+0 as long as any player controls a white permanent.', colors: ['B'], color_identity: ['B'], power: '2', toughness: '2' },
+  { name: 'Vraska’s Fall', mana_cost: '{2}{B}', type_line: 'Instant', oracle_text: 'Each opponent sacrifices a creature or planeswalker and gets a poison counter.', colors: ['B'], color_identity: ['B'] },
+  { name: 'Cancel', mana_cost: '{1}{U}{U}', type_line: 'Instant', oracle_text: 'Counter target spell.', colors: ['U'], color_identity: ['U'] },
+  { name: 'Bonecrusher Giant', mana_cost: '{2}{R}', type_line: 'Creature — Giant', oracle_text: 'Stomp deals 2 damage to any target. Damage can’t be prevented this turn.', colors: ['R'], color_identity: ['R'], power: '4', toughness: '3' },
+  { name: 'Gitaxian Probe', mana_cost: '{U/P}', type_line: 'Sorcery', oracle_text: 'Look at target player’s hand. Draw a card.', colors: ['U'], color_identity: ['U'] },
+  { name: 'Open-Book Hex', mana_cost: '{U}', type_line: 'Sorcery', oracle_text: 'Target opponent reveals their hand.', colors: ['U'], color_identity: ['U'] },
+  { name: 'Mirror-Cell Experiment', mana_cost: '{2}', type_line: 'Sorcery', oracle_text: 'Create a 0/1 colorless Reflection artifact creature token.', colors: [], color_identity: [] },
+  { name: 'Opt', mana_cost: '{U}', type_line: 'Instant', oracle_text: 'Scry 1. Draw a card.', colors: ['U'], color_identity: ['U'] },
+  { name: 'Consider', mana_cost: '{U}', type_line: 'Instant', oracle_text: 'Surveil 1. Draw a card.', colors: ['U'], color_identity: ['U'] },
+  { name: 'Praetor’s Grasp', mana_cost: '{1}{B}{B}', type_line: 'Sorcery', oracle_text: 'Search target opponent’s library for a card and exile it face down.', colors: ['B'], color_identity: ['B'] },
+  { name: 'Thought Scour', mana_cost: '{U}', type_line: 'Instant', oracle_text: 'Target player mills two cards. Draw a card.', colors: ['U'], color_identity: ['U'] },
+  { name: 'Light Up the Stage', mana_cost: '{2}{R}', type_line: 'Sorcery', oracle_text: 'Exile the top two cards of your library. Until the end of your next turn, you may play those cards.', colors: ['R'], color_identity: ['R'] },
+  { name: 'Throne of the High City', type_line: 'Land', oracle_text: '{T}: Add {C}. {4}, {T}, Sacrifice Throne of the High City: You become the monarch.', color_identity: [] },
+  { name: 'The Celestus', mana_cost: '{3}', type_line: 'Legendary Artifact', oracle_text: 'If it is neither day nor night, it becomes day as The Celestus enters the battlefield.', colors: [], color_identity: [] },
+  { name: 'Birthday Escape', mana_cost: '{U}', type_line: 'Sorcery', oracle_text: 'Draw a card. The Ring tempts you.', colors: ['U'], color_identity: ['U'] },
+  { name: 'Attune with Aether', mana_cost: '{G}', type_line: 'Sorcery', oracle_text: 'Search your library for a basic land card, reveal it, put it into your hand, then shuffle. You get {E}{E}.', colors: ['G'], color_identity: ['G'] },
+  { name: 'Nadaar, Selfless Paladin', mana_cost: '{2}{W}', type_line: 'Legendary Creature — Dragon Knight', oracle_text: 'Vigilance. When Nadaar enters the battlefield, venture into the dungeon.', colors: ['W'], color_identity: ['W'], power: '3', toughness: '3' },
+  { name: 'Ezuri, Claw of Progress', mana_cost: '{2}{G}{U}', type_line: 'Legendary Creature — Phyrexian Elf Warrior', oracle_text: 'Whenever a creature with power 2 or less enters the battlefield under your control, you get an experience counter.', colors: ['G', 'U'], color_identity: ['G', 'U'], power: '3', toughness: '3' },
+  { name: 'Chandra, Torch of Defiance', mana_cost: '{2}{R}{R}', type_line: 'Legendary Planeswalker — Chandra', oracle_text: '−7: You get an emblem with “Whenever you cast a spell, this emblem deals 5 damage to any target.”', colors: ['R'], color_identity: ['R'], loyalty: '4' },
+  { name: 'Tendershoot Dryad', mana_cost: '{4}{G}', type_line: 'Creature — Dryad', oracle_text: 'Ascend. At the beginning of each upkeep, create a 1/1 green Saproling creature token.', colors: ['G'], color_identity: ['G'], power: '2', toughness: '2' }
+];
+
+const normalizeTutorialCardNameForLookup = (cardName = '') => String(cardName || 'Tutorial Card')
+  .replace(/\s*\/\/.*$/, '')
+  .replace(/\s+/g, ' ')
+  .trim();
+
+const normalizeTutorialCatalogKey = (cardName = '') => normalizeTutorialCardNameForLookup(cardName).toLowerCase();
+
+const getTutorialSeedByName = (cardName) => {
+  const safeName = String(cardName || 'Tutorial Card');
+  return TUTORIAL_STARTER_CARD_SEED.find((card) => card.name === safeName || card.card_faces?.some((face) => face?.name === safeName)) || { name: safeName, type_line: 'Card', oracle_text: '', layout: 'normal', isTutorialFallback: true };
+};
+
+const getTutorialDuelDeckEntries = (playerId, bolasId) => [
+  ...TUTORIAL_OPENING_HAND_LUIS.map((name, index) => ({ name, ownerId: playerId, controllerId: playerId, zone: ZONES.HAND, idPrefix: 'tutorial-luis-hand', orderIndex: index })),
+  ...TUTORIAL_LIBRARY_LUIS.map((name, index) => ({ name, ownerId: playerId, controllerId: playerId, zone: ZONES.LIBRARY, idPrefix: 'tutorial-luis-library', orderIndex: index })),
+  ...TUTORIAL_OPENING_HAND_BOLAS.map((name, index) => ({ name, ownerId: bolasId, controllerId: bolasId, zone: ZONES.HAND, idPrefix: 'tutorial-bolas-hand', orderIndex: index })),
+  ...TUTORIAL_LIBRARY_BOLAS.map((name, index) => ({ name, ownerId: bolasId, controllerId: bolasId, zone: ZONES.LIBRARY, idPrefix: 'tutorial-bolas-library', orderIndex: index }))
+];
+
+const TUTORIAL_NON_SCRYFALL_CARD_NAMES = new Set(['Open-Book Hex', 'Mirror-Cell Experiment', 'Zombie Token', 'Dragon Token']);
+
+const getTutorialDuelCardNames = () => [...new Set([
+  ...TUTORIAL_OPENING_HAND_LUIS,
+  ...TUTORIAL_LIBRARY_LUIS,
+  ...TUTORIAL_OPENING_HAND_BOLAS,
+  ...TUTORIAL_LIBRARY_BOLAS,
+  ...TUTORIAL_STARTER_CARD_SEED.map((card) => card.name)
+].map(normalizeTutorialCardNameForLookup).filter(Boolean))];
+
+const buildScryfallImageUrisFromId = (id, side = 'front') => {
+  if (typeof id !== 'string' || !id) return null;
+  const prefix = `${side}/${id[0]}/${id[1]}/${id}.jpg`;
+  return {
+    small: `https://cards.scryfall.io/small/${prefix}`,
+    normal: `https://cards.scryfall.io/normal/${prefix}`,
+    large: `https://cards.scryfall.io/large/${prefix}`
+  };
+};
+
+const STATIC_TUTORIAL_CARD_IMAGE_URIS_BY_NAME = {
+  Mountain: buildScryfallImageUrisFromId('2fe601b0-0398-47f0-9e4f-9f841ad79b9b'),
+  Island: buildScryfallImageUrisFromId('000f1f50-08e5-4d83-8159-98f06a0e2279'),
+  Forest: buildScryfallImageUrisFromId('0000419b-0bba-4488-8f7a-6194544ce91e'),
+  'Lightning Bolt': buildScryfallImageUrisFromId('77c6fa74-5543-42ac-9ead-0e890b188e99'),
+  Ponder: buildScryfallImageUrisFromId('ba6b6fc5-5077-4812-b8e9-906783dbaf67'),
+  'Slip Out the Back': buildScryfallImageUrisFromId('8725f4c4-fad7-460e-b86c-ff81674f0980')
+};
+
+const getStaticTutorialImageUris = (cardName = '') => {
+  const lookupName = normalizeTutorialCardNameForLookup(cardName);
+  return STATIC_TUTORIAL_CARD_IMAGE_URIS_BY_NAME[lookupName] || null;
+};
+
+const addStaticTutorialImageUris = (card = {}) => {
+  const lookupName = normalizeTutorialCardNameForLookup(card.name);
+  if (!lookupName || TUTORIAL_NON_SCRYFALL_CARD_NAMES.has(lookupName)) return card;
+
+  if (Array.isArray(card.card_faces)) {
+    const cardFaces = card.card_faces.map((face) => {
+      if (!face || typeof face !== 'object') return face;
+      const faceImageUris = face.image_uris || getStaticTutorialImageUris(face.name);
+      return {
+        ...face,
+        ...(faceImageUris ? { image_uris: faceImageUris, image_uri: face.image_uri || faceImageUris.normal } : {})
+      };
+    });
+    const activeIndex = Number.isInteger(card.activeFaceIndex) ? card.activeFaceIndex : 0;
+    const activeFace = cardFaces[Math.min(Math.max(activeIndex, 0), Math.max(cardFaces.length - 1, 0))];
+    const activeImageUris = activeFace?.image_uris || card.image_uris;
+    return {
+      ...card,
+      card_faces: cardFaces,
+      ...(activeImageUris ? { image_uris: activeImageUris, image_uri: card.image_uri || activeFace?.image_uri || activeImageUris.normal } : {})
+    };
+  }
+
+  if (card.image_uri || card.image_uris) return card;
+  const imageUris = getStaticTutorialImageUris(lookupName) || {
+    small: getScryfallNamedImageUrl(lookupName, 'small'),
+    normal: getScryfallNamedImageUrl(lookupName, 'normal'),
+    large: getScryfallNamedImageUrl(lookupName, 'large')
+  };
+  return { ...card, image_uris: imageUris, image_uri: imageUris.normal };
+};
+
+const addTutorialCatalogCard = (catalog, card = {}) => {
+  const compactCard = sanitizeScryfallCardForGame({ layout: 'normal', ...addStaticTutorialImageUris(card) }, card);
+  [compactCard.name, card.name, ...(Array.isArray(compactCard.card_faces) ? compactCard.card_faces.map((face) => face?.name) : [])]
+    .map(normalizeTutorialCatalogKey)
+    .filter(Boolean)
+    .forEach((key) => {
+      if (!catalog.has(key)) catalog.set(key, compactCard);
+    });
+};
+
+const buildStaticTutorialCardCatalog = () => {
+  const catalog = new Map();
+  TUTORIAL_STARTER_CARD_SEED.forEach((card) => addTutorialCatalogCard(catalog, card));
+  getTutorialDuelCardNames().forEach((name) => {
+    if (catalog.has(normalizeTutorialCatalogKey(name))) return;
+    console.warn(`[Tutorial hydration] missing card: ${name}`);
+    addTutorialCatalogCard(catalog, getTutorialSeedByName(name));
+  });
+  return catalog;
+};
+
+const seedTutorialCardCatalogCache = () => {
+  if (tutorialCardCatalogCache.size > 0) return tutorialCardCatalogCache;
+  buildStaticTutorialCardCatalog().forEach((card, key) => tutorialCardCatalogCache.set(key, card));
+  return tutorialCardCatalogCache;
+};
+
+const fetchTutorialCardCatalog = async () => seedTutorialCardCatalogCache();
+
+const getTutorialCatalogCard = (catalog, lookupName) => {
+  const catalogCard = catalog.get(normalizeTutorialCatalogKey(lookupName));
+  if (catalogCard) {
+    console.debug(`[Tutorial hydration] loaded static catalog card: ${lookupName}`);
+    return catalogCard;
+  }
+  console.warn(`[Tutorial hydration] missing card: ${lookupName}`);
+  const fallbackCard = sanitizeScryfallCardForGame({ layout: 'normal', ...addStaticTutorialImageUris(getTutorialSeedByName(lookupName)) });
+  console.warn(`[Tutorial hydration] used fallback for: ${lookupName}`);
+  return fallbackCard;
+};
+
+const buildTutorialCardsFromDecklist = (deckEntries = [], catalog = tutorialCardCatalogCache) => {
+  if (!Array.isArray(deckEntries) || deckEntries.length === 0) throw new Error('Tutorial decklist is empty.');
+  return deckEntries.map((entry) => {
+    const lookupName = normalizeTutorialCardNameForLookup(entry.name);
+    const hydratedCard = getTutorialCatalogCard(catalog, lookupName);
+    return sanitizeScryfallCardForGame(hydratedCard, {
+      id: `${entry.idPrefix}-${lookupName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${entry.orderIndex}`,
+      scryfallId: hydratedCard.scryfallId || hydratedCard.id,
+      instanceId: generateCardId(),
+      ownerId: entry.ownerId,
+      controllerId: entry.controllerId,
+      zone: entry.zone,
+      tapped: false,
+      counters: {},
+      tempDamage: 0,
+      faceDown: false,
+      x: 5 + (entry.orderIndex * 5),
+      y: 5
+    });
+  });
+};
+
+const hydrateTutorialDuelCards = async (playerId, bolasId) => {
+  const catalog = await fetchTutorialCardCatalog();
+  const cards = buildTutorialCardsFromDecklist(getTutorialDuelDeckEntries(playerId, bolasId), catalog);
+  if (cards.length === 0) throw new Error(TUTORIAL_CARD_IMAGES_ERROR);
+  return cards;
+};
+
+
+const hydrateTutorialCardPreviewData = (card = {}) => {
+  const lookupName = normalizeTutorialCardNameForLookup(card.name || getCardDisplayName(card, card?.name || ''));
+  const cachedCard = tutorialCardCatalogCache.get(normalizeTutorialCatalogKey(lookupName));
+  const seed = cachedCard || TUTORIAL_STARTER_CARD_SEED.find((candidate) => candidate.name === card.name || candidate.card_faces?.some((face) => face?.name === card.name || card.card_faces?.some((cardFace) => cardFace?.name === face?.name)));
+  if (!seed) return card;
+  const staticSeed = addStaticTutorialImageUris(seed);
+  const hydrated = sanitizeScryfallCardForGame({
+    ...staticSeed,
+    ...card,
+    image_uris: staticSeed.image_uris || card.image_uris,
+    image_uri: staticSeed.image_uri || card.image_uri,
+    card_faces: staticSeed.card_faces || seed.card_faces || card.card_faces
+  }, card);
+  const activeFaceIndex = Number.isInteger(card.activeFaceIndex) ? card.activeFaceIndex : hydrated.activeFaceIndex;
+  const hydratedPreview = {
+    ...card,
+    ...hydrated,
+    instanceId: card.instanceId,
+    ownerId: card.ownerId,
+    controllerId: card.controllerId,
+    zone: card.zone
+  };
+  if (Number.isInteger(activeFaceIndex)) hydratedPreview.activeFaceIndex = activeFaceIndex;
+  return hydratedPreview;
+};
+
+
+const findUndefinedPaths = (value, basePath = 'updates') => {
+  const paths = [];
+  const seen = new WeakSet();
+  const visit = (current, path) => {
+    if (current === undefined) {
+      paths.push(path);
+      return;
+    }
+    if (!current || typeof current !== 'object') return;
+    if (seen.has(current)) return;
+    seen.add(current);
+    if (Array.isArray(current)) {
+      current.forEach((item, index) => visit(item, `${path}[${index}]`));
+      return;
+    }
+    Object.entries(current).forEach(([key, item]) => visit(item, path ? `${path}.${key}` : key));
+  };
+  visit(value, basePath);
+  return paths;
+};
+
+const tutorialCardHasRealImageData = (card = {}) => {
+  const hasImage = Boolean(card.image_uri || card.image_uris?.normal || card.image_uris?.large || card.image_uris?.small);
+  if (!Array.isArray(card.card_faces) || card.card_faces.length === 0) return hasImage;
+  return card.card_faces.every((face) => face?.image_uri || face?.image_uris?.normal || face?.image_uris?.large || face?.image_uris?.small);
+};
 
 const getPhaseLabel = (phaseId) => PHASES.find((phase) => phase.id === phaseId)?.label || phaseId || 'Unknown step';
 
@@ -571,7 +1499,7 @@ const isPublicZone = (zone) => PUBLIC_ZONES.has(zone);
 const getUsableCardFaces = (card) => {
   if (!Array.isArray(card?.card_faces)) return [];
   const faces = card.card_faces.filter((face) => face && typeof face === 'object' && (
-    face.name || face.type_line || face.oracle_text || face.image_uris?.normal || face.image_uris?.large || face.mana_cost
+    face.name || face.type_line || face.oracle_text || face.image_uri || face.image_uris?.normal || face.image_uris?.large || face.mana_cost
   ));
   return faces.length >= 2 ? faces : [];
 };
@@ -598,6 +1526,17 @@ const getCardFaceAt = (card, index) => {
 };
 
 const getCardDisplayName = (card, fallback = 'Unknown') => getActiveCardFace(card)?.name || card?.name || fallback;
+const normalizeTutorialHandName = (name = '') => String(name || '').replace(/\s*\/\/.*$/, '').trim();
+const TUTORIAL_SCRIPTED_OPENING_HAND_NAMES = TUTORIAL_OPENING_HAND_LUIS.map(normalizeTutorialHandName);
+const getTutorialHandSignature = (cards = [], playerId = null) => (Array.isArray(cards) ? cards : [])
+  .filter((card) => card?.zone === ZONES.HAND && (!playerId || card.controllerId === playerId || card.ownerId === playerId))
+  .map((card) => normalizeTutorialHandName(getCardDisplayName(card, card?.name || '')))
+  .sort()
+  .join('||');
+const TUTORIAL_SCRIPTED_OPENING_HAND_SIGNATURE = [...TUTORIAL_SCRIPTED_OPENING_HAND_NAMES].sort().join('||');
+const hasExactTutorialOpeningHand = (cards = [], playerId = null) => getTutorialHandSignature(cards, playerId) === TUTORIAL_SCRIPTED_OPENING_HAND_SIGNATURE;
+const getLatestUndoEntry = (undoStack = []) => (Array.isArray(undoStack) && undoStack.length > 0 ? undoStack[undoStack.length - 1] : null);
+const isMulliganUndoEntry = (entry = null) => String(entry?.actionType || entry?.type || '').toUpperCase() === 'MULLIGAN';
 const getCardTypeLine = (card, fallback = '') => getActiveCardFace(card)?.type_line || card?.type_line || fallback;
 const getCardManaCost = (card, fallback = '') => getActiveCardFace(card)?.mana_cost || card?.mana_cost || fallback;
 const getCardOracleText = (card, fallback = '') => getActiveCardFace(card)?.oracle_text || card?.oracle_text || card?.rulesText || fallback;
@@ -608,9 +1547,25 @@ const getBestImageUriFromImageUris = (imageUris) => {
   return imageUris.normal || imageUris.large || imageUris.png || imageUris.small || null;
 };
 const getCardImageUri = (card) => {
-  const faceImageUri = getBestImageUriFromImageUris(getActiveCardFace(card)?.image_uris);
+  const activeFace = getActiveCardFace(card);
+  const faceImageUri = getBestImageUriFromImageUris(activeFace?.image_uris) || activeFace?.image_uri || activeFace?.imageUrl || activeFace?.image_url;
   if (faceImageUri) return faceImageUri;
-  return getBestImageUriFromImageUris(card?.image_uris) || card?.image_uri || null;
+  return getBestImageUriFromImageUris(card?.image_uris) || card?.image_uri || card?.imageUrl || card?.image_url || null;
+};
+
+
+const TUTORIAL_MISSING_IMAGE_DEBUGGED_KEYS = new Set();
+const logMissingTutorialCardImageInDev = (card = {}, expectedImageField = 'card.image_uris.normal or card.image_uri') => {
+  if (!import.meta.env?.DEV) return;
+  const cardName = getCardDisplayName(card, card?.name || 'Unknown');
+  const debugKey = `${card?.instanceId || cardName}:${card?.activeFaceIndex ?? 0}`;
+  if (TUTORIAL_MISSING_IMAGE_DEBUGGED_KEYS.has(debugKey)) return;
+  TUTORIAL_MISSING_IMAGE_DEBUGGED_KEYS.add(debugKey);
+  console.debug('[Tutorial image missing]', {
+    cardName,
+    keysPresent: Object.keys(card || {}).sort(),
+    expectedImageField
+  });
 };
 
 const isDebugActionsEnabled = () => {
@@ -1269,7 +2224,9 @@ const COMPACT_CARD_FACE_FIELDS = [
   'toughness',
   'loyalty',
   'defense',
-  'image_uri'
+  'image_uri',
+  'imageUrl',
+  'image_url'
 ];
 const COMPACT_CARD_FIELDS = [
   'id',
@@ -1287,6 +2244,8 @@ const COMPACT_CARD_FIELDS = [
   'loyalty',
   'defense',
   'image_uri',
+  'imageUrl',
+  'image_url',
   'set',
   'set_name',
   'collector_number',
@@ -1351,7 +2310,8 @@ const sanitizeScryfallCardFaceForGame = (face = {}) => {
   const compactFace = copyDefinedFields(face, COMPACT_CARD_FACE_FIELDS);
   const imageUris = sanitizeImageUris(face.image_uris);
   if (imageUris) compactFace.image_uris = imageUris;
-  if (!compactFace.image_uri) compactFace.image_uri = getBestImageUriFromImageUris(imageUris);
+  if (!compactFace.image_uri) compactFace.image_uri = getBestImageUriFromImageUris(imageUris) || compactFace.imageUrl || compactFace.image_url;
+  if (!compactFace.imageUrl && compactFace.image_uri) compactFace.imageUrl = compactFace.image_uri;
   Object.keys(compactFace).forEach((key) => compactFace[key] === undefined && delete compactFace[key]);
   return compactFace;
 };
@@ -1378,6 +2338,7 @@ const sanitizeScryfallCardForGame = (data = {}, extraFields = {}) => {
     compactCard.activeFaceIndex = Number.isInteger(extraFields.activeFaceIndex) ? extraFields.activeFaceIndex : (Number.isInteger(data.activeFaceIndex) ? data.activeFaceIndex : 0);
   }
   if (!compactCard.image_uri) compactCard.image_uri = getCardImageUri({ ...compactCard, activeFaceIndex: compactCard.activeFaceIndex || 0 }) || getCardImageUri(data);
+  if (!compactCard.imageUrl && compactCard.image_uri) compactCard.imageUrl = compactCard.image_uri;
   Object.keys(compactCard).forEach((key) => compactCard[key] === undefined && delete compactCard[key]);
   return compactCard;
 };
@@ -1757,6 +2718,7 @@ const UNDO_FIELDS_BY_ACTION_TYPE = {
   BATCH_SCRY_LIBRARY: CARDS_ONLY_UNDO_STATE_FIELDS,
   BATCH_SURVEIL_LIBRARY: CARDS_ONLY_UNDO_STATE_FIELDS,
   BATCH_REVEAL_LIBRARY: REVEALS_ONLY_UNDO_STATE_FIELDS,
+  MULLIGAN: ['cards', 'reveals'],
   PLAY_LAND: CARDS_ONLY_UNDO_STATE_FIELDS,
   CAST_SPELL: ['cards', ...STACK_ONLY_UNDO_STATE_FIELDS],
   MOVE_ZONE: ({ updates } = {}) => appendUndoFieldIfUpdated(CARDS_ONLY_UNDO_STATE_FIELDS, updates, 'combat'),
@@ -1991,6 +2953,57 @@ const buildCopiedStackItem = (item = {}) => {
   return copiedItem;
 };
 
+const applyTutorialResolutionEffect = ({ currentGame, topItem, actionType, currentStack, updatedCards, currentPlayers, userId, buildLogEntry }) => {
+  if (!currentGame?.isTutorial || actionType !== 'RESOLVE_STACK_TOP' || !topItem) return { players: currentPlayers, stack: currentStack, cards: updatedCards, extraLogEntries: [], cardsChanged: false };
+  const itemName = String(topItem.name || '').replace(/\s*\(copy\)$/i, '');
+  const extraLogEntries = [];
+  let nextPlayers = currentPlayers.map((player) => ({ ...player }));
+  let nextCards = updatedCards;
+  let cardsChanged = false;
+  const addLog = (message, extra = {}) => extraLogEntries.push(buildLogEntry(message, extra));
+  const findPlayerIndex = (pattern) => nextPlayers.findIndex((player) => pattern.test(player?.name || ''));
+  const bolasIndex = findPlayerIndex(/Nicol Bolas/i);
+  const luisIndex = nextPlayers.findIndex((player) => player?.id === userId);
+  const damagePlayer = (playerIndex, amount, sourceLabel) => {
+    if (playerIndex < 0) return;
+    const before = Number(nextPlayers[playerIndex].life ?? 0);
+    const after = before - amount;
+    nextPlayers[playerIndex] = { ...nextPlayers[playerIndex], life: after };
+    addLog(`${sourceLabel} deals ${amount} damage to ${nextPlayers[playerIndex].name}. ${nextPlayers[playerIndex].name} goes to ${after}.`, { damage: amount, lifeBefore: before, lifeAfter: after, targetPlayerId: nextPlayers[playerIndex].id });
+    if (/Nicol Bolas/i.test(nextPlayers[playerIndex].name || '') && after <= 0) addLog('Nicol Bolas is defeated.', { defeatedPlayerId: nextPlayers[playerIndex].id });
+  };
+  if (itemName === 'Lightning Bolt') {
+    const sourceLabel = topItem.isCopy ? 'Lightning Bolt copy' : 'Lightning Bolt';
+    const targetsBolas = (topItem.targetPlayerIds || []).some((targetId) => nextPlayers[targetId]?.name || targetId) || /Nicol Bolas/i.test(JSON.stringify(topItem.targets || []));
+    damagePlayer(targetsBolas || bolasIndex >= 0 ? bolasIndex : luisIndex, 3, sourceLabel);
+  }
+  if (itemName === 'Reverberate') {
+    const originalBolt = [...currentStack].reverse().find((item) => String(item?.name || '').replace(/\s*\(copy\)$/i, '') === 'Lightning Bolt' && !item?.isCopy);
+    if (originalBolt) {
+      currentStack.push({ ...buildCopiedStackItem(originalBolt), targetPlayerIds: originalBolt.targetPlayerIds || [], targets: originalBolt.targets || [] });
+      addLog('Reverberate resolves and creates a Lightning Bolt copy targeting Nicol Bolas.', { copiedFromName: 'Lightning Bolt' });
+    }
+  }
+  if (itemName === 'Negate') {
+    const originalIndex = currentStack.findLastIndex?.((item) => String(item?.name || '') === 'Lightning Bolt') ?? currentStack.map((item) => String(item?.name || '')).lastIndexOf('Lightning Bolt');
+    if (originalIndex >= 0) {
+      const [countered] = currentStack.splice(originalIndex, 1);
+      const cardIndex = nextCards.findIndex((card) => card.instanceId === countered.sourceId);
+      if (cardIndex >= 0) {
+        nextCards = [...nextCards];
+        nextCards[cardIndex] = { ...nextCards[cardIndex], zone: ZONES.GRAVEYARD, tapped: false };
+        cardsChanged = true;
+      }
+      addLog('Negate counters the original Lightning Bolt.', { cardName: 'Lightning Bolt' });
+    }
+  }
+  if (itemName === 'Slip Out the Back') {
+    addLog('Slip Out the Back resolves: Insectile Aberration gets a +1/+1 counter and phases out.', { cardName: 'Slip Out the Back' });
+  }
+  if (itemName === 'Doom Blade') addLog('Doom Blade fizzles because its target is phased out.', { cardName: 'Doom Blade' });
+  return { players: nextPlayers, stack: currentStack, cards: nextCards, extraLogEntries, cardsChanged };
+};
+
 const buildGameLogEntry = ({ currentGame, playerId, playerName, type, category, message, timestamp = Date.now(), ...extra }) => ({
   timestamp,
   playerId: playerId || null,
@@ -2113,24 +3126,43 @@ const shuffleArray = (array) => {
   return array;
 };
 
-const copyToClipboard = (text) => {
-  // Robust fallback for copy
+const copyToClipboard = (text, { onCopied, onCopyFailed } = {}) => {
+  const notifyCopied = () => onCopied?.(`Copied: ${text}`);
+  const notifyCopyFailed = () => onCopyFailed?.(`Copy failed. Code: ${text}`);
+
   if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(text).then(() => alert(`Copied: ${text}`)).catch(() => prompt("Copy this code:", text));
-  } else {
-    // Fallback for older browsers / iframe restrictions
-    const textArea = document.createElement("textarea");
-    textArea.value = text;
-    document.body.appendChild(textArea);
-    textArea.select();
-    try {
-      document.execCommand('copy');
-      alert(`Copied: ${text}`);
-    } catch {
-      prompt("Copy this code:", text);
-    }
-    document.body.removeChild(textArea);
+    return navigator.clipboard.writeText(text)
+      .then(() => {
+        notifyCopied();
+        return true;
+      })
+      .catch(() => {
+        notifyCopyFailed();
+        return false;
+      });
   }
+
+  // Fallback for older browsers / iframe restrictions.
+  const textArea = document.createElement("textarea");
+  textArea.value = text;
+  textArea.setAttribute('readonly', '');
+  textArea.style.position = 'fixed';
+  textArea.style.top = '-9999px';
+  document.body.appendChild(textArea);
+  textArea.select();
+  let copied = false;
+  try {
+    copied = document.execCommand('copy');
+  } catch {
+    copied = false;
+  }
+  document.body.removeChild(textArea);
+  if (copied) {
+    notifyCopied();
+  } else {
+    notifyCopyFailed();
+  }
+  return Promise.resolve(copied);
 };
 
 const isMobileOrTouchDevice = () => {
@@ -2632,6 +3664,74 @@ const getCombatDamageStepLabel = (step) => COMBAT_DAMAGE_STEP_LABELS[normalizeCo
 const isPlainObject = (value) => Boolean(value && typeof value === 'object' && !Array.isArray(value));
 const getCombatDamageStep = (combatState = {}) => normalizeCombatDamageStep(isPlainObject(combatState) ? combatState.combatDamageStep : null);
 const getEmptyCombatState = () => ({ attackers: {}, blockers: {}, combatDamageStep: null });
+
+const createTutorialRunId = () => `tutorial-run-${Date.now()}-${generateCardId()}`;
+
+const buildFreshTutorialState = (playerId, runId = createTutorialRunId()) => ({
+  scriptVersion: TUTORIAL_SCRIPT_VERSION,
+  runId,
+  stepId: 'intro',
+  completedStepIds: [],
+  playerId,
+  opponentName: 'Nicol Bolas',
+  opponentIsScripted: true,
+  finished: false,
+  inactive: false
+});
+
+const buildFreshTutorialPlayers = ({ playerId, playerName = 'Planeswalker', bolasId, existingPlayers = [] }) => {
+  const startingLife = getStartingLifeForMode(GAME_MODES.REGULAR);
+  const existingHuman = (existingPlayers || []).find((player) => player?.id === playerId && !player?.isScriptedOpponent) || {};
+  const existingBolas = (existingPlayers || []).find((player) => player?.id === bolasId)
+    || (existingPlayers || []).find((player) => player?.isScriptedOpponent || /Nicol Bolas/i.test(player?.name || ''))
+    || {};
+  const basePlayer = (player, fallbackName, turnOrder, extras = {}) => ({
+    ...player,
+    ...extras,
+    id: player.id || extras.id,
+    name: player.name || fallbackName,
+    life: startingLife,
+    turnOrder,
+    counters: { poison: 0, energy: 0, experience: 0 },
+    manaPool: clearManaPool(),
+    statuses: { monarch: false, initiative: false, citysBlessing: false, ringBearerLevel: 0, custom: [] },
+    emblems: [],
+    deckExtras: getEmptyDeckExtras(),
+    handRevealed: false,
+    lastSeenChatAt: player.lastSeenChatAt || Date.now()
+  });
+  return [
+    basePlayer(existingHuman, playerName || 'Planeswalker', 0, { id: playerId, isScriptedOpponent: false }),
+    basePlayer(existingBolas, 'Nicol Bolas', 1, { id: bolasId, name: 'Nicol Bolas', isScriptedOpponent: true })
+  ];
+};
+
+const buildFreshTutorialResetFields = ({ playerId, playerName, bolasId, existingPlayers = [], cards = [] }) => ({
+  tutorial: buildFreshTutorialState(playerId),
+  cards,
+  players: buildFreshTutorialPlayers({ playerId, playerName, bolasId, existingPlayers }),
+  phase: 'main1',
+  dayNight: null,
+  activePlayerIndex: 0,
+  priorityIndex: 0,
+  priorityPlayerId: playerId,
+  turnPlayerId: playerId,
+  turnNumber: 1,
+  consecutivePasses: 0,
+  stack: [],
+  targets: [],
+  reveals: [],
+  autopass: {},
+  undoStack: [],
+  combat: getEmptyCombatState(),
+  log: [],
+  tutorialOverlayError: null,
+  tutorialActionFailure: null,
+  tutorialScriptedActions: {},
+  tutorialSetupMarkers: {},
+  tutorialCompletionMarkers: {},
+  tutorialNotification: null
+});
 const normalizeCombatAssignmentMap = (assignments) => (isPlainObject(assignments) ? assignments : {});
 const normalizeCombatState = (combatState = getEmptyCombatState()) => {
   const safeCombatState = isPlainObject(combatState) ? combatState : {};
@@ -3098,6 +4198,107 @@ const advancePassPriorityState = (currentGame, logEntry, onTurnStart, layoutOpti
   return updatedGame;
 };
 
+const maybeApplyTutorialBolasPassAfterUserPass = ({
+  actionType,
+  currentGame,
+  passedGame,
+  naturalPhaseAdvance,
+  actingPlayerId,
+  bolasPlayer,
+  onTurnStart,
+  layoutOptions
+}) => {
+  if (!naturalPhaseAdvance || naturalPhaseAdvance.scriptedBolasPass === false) return passedGame;
+  if (!['PASS', 'PASS_PRIORITY'].includes(actionType)) return passedGame;
+  if (currentGame?.isTutorial !== true) return passedGame;
+  if (!bolasPlayer?.id || !actingPlayerId) return passedGame;
+
+  const latestLogEntries = currentGame.log || [];
+  const latestLog = latestLogEntries[latestLogEntries.length - 1] || null;
+  const previousLog = latestLogEntries[latestLogEntries.length - 2] || null;
+  const alreadyLoggedScriptedBolasPassForPhaseAdvance = (
+    currentGame.phase === naturalPhaseAdvance.fromPhase &&
+    latestLog?.type === 'PASS_PRIORITY' &&
+    latestLog?.phase === naturalPhaseAdvance.fromPhase &&
+    latestLog?.playerId === bolasPlayer.id &&
+    /Nicol Bolas passed priority\./i.test(latestLog?.message || '') &&
+    previousLog?.type === 'PASS_PRIORITY' &&
+    previousLog?.phase === naturalPhaseAdvance.fromPhase &&
+    previousLog?.playerId === actingPlayerId
+  );
+
+  const shouldScriptBolasPhaseAdvancePass = (
+    currentGame.phase === naturalPhaseAdvance.fromPhase &&
+    currentGame.phase !== naturalPhaseAdvance.targetPhase &&
+    (currentGame.stack || []).length === 0 &&
+    currentGame.priorityPlayerId === actingPlayerId &&
+    !alreadyLoggedScriptedBolasPassForPhaseAdvance &&
+    passedGame.phase === naturalPhaseAdvance.fromPhase &&
+    passedGame.phase !== naturalPhaseAdvance.targetPhase &&
+    (passedGame.stack || []).length === 0 &&
+    passedGame.priorityPlayerId === bolasPlayer.id
+  );
+
+  if (!shouldScriptBolasPhaseAdvancePass) return passedGame;
+
+  const bolasPassLogEntry = buildGameLogEntry({
+    currentGame: passedGame,
+    playerId: bolasPlayer.id,
+    playerName: bolasPlayer.name || 'Nicol Bolas',
+    type: 'PASS_PRIORITY',
+    category: 'priority',
+    message: 'Nicol Bolas passed priority.'
+  });
+  const passedGameWithBolasPassLog = {
+    ...passedGame,
+    log: [...(passedGame.log || []), bolasPassLogEntry]
+  };
+  return advancePassPriorityState(passedGameWithBolasPassLog, bolasPassLogEntry, onTurnStart, layoutOptions);
+};
+
+const maybeApplyTutorialBolasPassForAutoPassUntilEnd = ({
+  currentGame,
+  actingPlayerId,
+  layoutOptions,
+  onTurnStart
+}) => {
+  if (currentGame?.isTutorial !== true) return currentGame;
+  if (currentGame?.tutorial?.stepId !== 'P2_10_pass') return currentGame;
+  if (!actingPlayerId) return currentGame;
+
+  const actingPlayerAutoPass = getPlayerAutoPassConfig(currentGame, actingPlayerId);
+  if (actingPlayerAutoPass.mode !== AUTO_PASS_MODE.END_OF_TURN) return currentGame;
+  if ((currentGame.stack || []).length > 0) return currentGame;
+
+  const players = currentGame.players || [];
+  const bolasPlayer = players.find((player) => player?.id !== actingPlayerId && /Nicol Bolas/i.test(player?.name || ''));
+  if (!bolasPlayer?.id || currentGame.priorityPlayerId !== bolasPlayer.id) return currentGame;
+
+  const windowKey = `tutorial:p2_10_pass:${currentGame.turnNumber}:${currentGame.activePlayerIndex}:${currentGame.phase}:${currentGame.priorityPlayerId}:${currentGame.consecutivePasses || 0}`;
+  const alreadyLoggedForWindow = (currentGame.log || []).some((entry) => (
+    entry?.type === 'PASS_PRIORITY'
+    && entry?.playerId === bolasPlayer.id
+    && entry?.meta?.tutorialAutoPassWindowKey === windowKey
+  ));
+  if (alreadyLoggedForWindow) return currentGame;
+
+  const bolasPassLogEntry = buildGameLogEntry({
+    currentGame,
+    playerId: bolasPlayer.id,
+    playerName: bolasPlayer.name || 'Nicol Bolas',
+    type: 'PASS_PRIORITY',
+    category: 'priority',
+    message: 'Nicol Bolas passed priority.',
+    meta: { tutorialAutoPassWindowKey: windowKey }
+  });
+
+  const nextGame = {
+    ...currentGame,
+    log: [...(currentGame.log || []), bolasPassLogEntry]
+  };
+  return advancePassPriorityState(nextGame, bolasPassLogEntry, onTurnStart, layoutOptions);
+};
+
 
 const runProxyAutoPassAdvances = (startingGame, actorId, actorName, onTurnStart) => {
   let workingGame = {
@@ -3110,6 +4311,19 @@ const runProxyAutoPassAdvances = (startingGame, actorId, actorName, onTurnStart)
 
   let advances = 0;
   while (advances < MAX_PROXY_AUTOPASS_ADVANCES) {
+    const layoutOptions = { getBattlefieldWidthForController: () => undefined };
+    const tutorialBolasAutoPassGame = maybeApplyTutorialBolasPassForAutoPassUntilEnd({
+      currentGame: workingGame,
+      actingPlayerId: actorId,
+      layoutOptions,
+      onTurnStart
+    });
+    if (tutorialBolasAutoPassGame !== workingGame) {
+      workingGame = tutorialBolasAutoPassGame;
+      advances += 1;
+      continue;
+    }
+
     const autoPassPlayerId = workingGame.priorityPlayerId;
     if (!autoPassPlayerId) break;
 
@@ -3160,6 +4374,7 @@ const Lobby = ({
   onCreate,
   onJoin,
   onWatch,
+  onStartTutorial,
   onDeleteGame,
   onLoadCleanupGames,
   onDeleteCleanupGames,
@@ -3176,7 +4391,10 @@ const Lobby = ({
   isError,
   errorMsg,
   currentUser,
-  isActionLoading
+  isActionLoading,
+  loadingAction,
+  lobbyActionDebug,
+  onLobbyActionDebugCheckpoint
 }) => {
   const [name, setName] = useState('');
   const [gameTitle, setGameTitle] = useState('');
@@ -3189,12 +4407,119 @@ const Lobby = ({
   const [deletingCleanupIds, setDeletingCleanupIds] = useState(() => new Set());
   const [failedCleanupMessages, setFailedCleanupMessages] = useState({});
   const [cleanupConfirmText, setCleanupConfirmText] = useState('');
+  const [lobbyTutorialOpen, setLobbyTutorialOpen] = useState(false);
+  const [lobbyTutorialIndex, setLobbyTutorialIndex] = useState(0);
+  const [lobbyTutorialMinimized, setLobbyTutorialMinimized] = useState(false);
+  const [lobbyTutorialDock, setLobbyTutorialDock] = useState('bottom');
+  const [lobbyTutorialReaction, setLobbyTutorialReaction] = useState('');
+  const [quickStartOpen, setQuickStartOpen] = useState(false);
+  const [tutorialStartWarningOpen, setTutorialStartWarningOpen] = useState(false);
+  const lobbyTutorialAdvanceTimerRef = useRef(null);
   const isInitLoading = !currentUser;
   const isGoogleConnected = currentUser?.isAnonymous === false;
   const effectiveName = name || suggestedName || '';
   const selectedCleanupGames = cleanupGames.filter((game) => selectedCleanupIds.has(game.id));
   const requiresDeleteText = selectedCleanupGames.length > 1;
   const canConfirmCleanup = selectedCleanupGames.length > 0 && (!requiresDeleteText || cleanupConfirmText === 'DELETE') && !isCleanupDeleting;
+  const lobbyTutorialScene = TUTORIAL_LOBBY_SCENES[Math.min(lobbyTutorialIndex, TUTORIAL_LOBBY_SCENES.length - 1)];
+  const isLobbyTutorialActive = lobbyTutorialOpen && lobbyTutorialScene;
+  const normalizedCode = code.trim().toUpperCase();
+  const isCreatingGame = loadingAction === 'createGame';
+  const isJoiningGame = loadingAction === 'joinGame';
+  const isWatchingGame = loadingAction === 'watchGame';
+  const isStartingTutorial = loadingAction === 'startTutorial';
+
+  useEffect(() => () => {
+    if (lobbyTutorialAdvanceTimerRef.current) window.clearTimeout(lobbyTutorialAdvanceTimerRef.current);
+  }, []);
+
+  useEffect(() => {
+    if (!isLobbyTutorialActive || !lobbyTutorialScene?.anchor || typeof document === 'undefined') return undefined;
+    const updateDock = () => {
+      const target = document.querySelector(`[data-tutorial-anchor="${lobbyTutorialScene.anchor}"]`);
+      if (!target) return;
+      const rect = target.getBoundingClientRect();
+      const viewportMid = window.innerHeight / 2;
+      setLobbyTutorialDock(rect.top > viewportMid ? 'top' : 'bottom');
+    };
+    const rafId = window.requestAnimationFrame(updateDock);
+    window.addEventListener('resize', updateDock);
+    window.addEventListener('scroll', updateDock, true);
+    return () => {
+      window.cancelAnimationFrame(rafId);
+      window.removeEventListener('resize', updateDock);
+      window.removeEventListener('scroll', updateDock, true);
+    };
+  }, [isLobbyTutorialActive, lobbyTutorialScene?.anchor]);
+
+  const focusLobbyTutorialTarget = () => {
+    if (!lobbyTutorialScene?.anchor || typeof document === 'undefined') return;
+    setLobbyTutorialMinimized(true);
+    const target = document.querySelector(`[data-tutorial-anchor="${lobbyTutorialScene.anchor}"]`);
+    target?.scrollIntoView?.({ behavior: 'smooth', block: 'center', inline: 'center' });
+    target?.classList?.add('tutorial-target-pulse');
+    setTimeout(() => target?.classList?.remove('tutorial-target-pulse'), 1600);
+  };
+
+  const advanceLobbyTutorial = ({ launchFinal = false } = {}) => {
+    if (lobbyTutorialAdvanceTimerRef.current) {
+      window.clearTimeout(lobbyTutorialAdvanceTimerRef.current);
+      lobbyTutorialAdvanceTimerRef.current = null;
+    }
+    if (lobbyTutorialScene?.final) {
+      if (!launchFinal) return;
+      setLobbyTutorialOpen(false);
+      onLobbyActionDebugCheckpoint?.('startTutorial', 'confirmed start');
+      onStartTutorial(effectiveName);
+      return;
+    }
+    setLobbyTutorialReaction('');
+    setLobbyTutorialIndex((current) => Math.min(current + 1, TUTORIAL_LOBBY_SCENES.length - 1));
+  };
+
+  const requestTutorialBattleStart = () => {
+    onLobbyActionDebugCheckpoint?.('startTutorial', 'warning modal opened');
+    setTutorialStartWarningOpen(true);
+  };
+
+  const confirmTutorialBattleStart = () => {
+    onLobbyActionDebugCheckpoint?.('startTutorial', 'confirmed start');
+    setTutorialStartWarningOpen(false);
+    setLobbyTutorialOpen(false);
+    onStartTutorial(effectiveName);
+  };
+
+  const completeLobbyTutorialStep = (stepId) => {
+    if (!isLobbyTutorialActive || lobbyTutorialScene.id !== stepId || lobbyTutorialAdvanceTimerRef.current) return false;
+    if (lobbyTutorialScene.final) {
+      requestTutorialBattleStart();
+      return true;
+    }
+    setLobbyTutorialReaction(lobbyTutorialScene.reaction || 'Good. Continue.');
+    lobbyTutorialAdvanceTimerRef.current = window.setTimeout(() => {
+      lobbyTutorialAdvanceTimerRef.current = null;
+      setLobbyTutorialReaction('');
+      setLobbyTutorialIndex((current) => Math.min(current + 1, TUTORIAL_LOBBY_SCENES.length - 1));
+    }, 900);
+    return true;
+  };
+
+  const startLobbyTutorial = () => {
+    if (lobbyTutorialAdvanceTimerRef.current) {
+      window.clearTimeout(lobbyTutorialAdvanceTimerRef.current);
+      lobbyTutorialAdvanceTimerRef.current = null;
+    }
+    setLobbyTutorialIndex(0);
+    setLobbyTutorialReaction('');
+    setLobbyTutorialMinimized(false);
+    setLobbyTutorialOpen(true);
+    window.setTimeout(() => {
+      const target = document.querySelector('[data-tutorial-anchor="lobby-name-input"]');
+      target?.scrollIntoView?.({ behavior: 'smooth', block: 'center', inline: 'center' });
+      target?.classList?.add('tutorial-target-pulse');
+      setTimeout(() => target?.classList?.remove('tutorial-target-pulse'), 1600);
+    }, 0);
+  };
 
   const openCleanup = async () => {
     setIsCleanupOpen(true);
@@ -3301,12 +4626,22 @@ const Lobby = ({
             )}
           </div>
 
+          <button
+            type="button"
+            onClick={() => setQuickStartOpen(true)}
+            className="flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border border-sky-500/40 bg-sky-950/40 px-3 py-2 text-sm font-black text-sky-100 hover:border-sky-300/70 hover:bg-sky-900/50"
+          >
+            <BookOpen size={16} /> Quick Start Guide
+          </button>
+
           <div>
             <label className="block text-sm font-medium text-slate-400 mb-1">Your Name</label>
             <input
+              data-tutorial-anchor="lobby-name-input"
               type="text"
               value={effectiveName}
-              onChange={(e) => setName(e.target.value)}
+              onFocus={() => { if (effectiveName.trim()) completeLobbyTutorialStep('name'); }}
+              onChange={(e) => { setName(e.target.value); if (e.target.value.trim()) completeLobbyTutorialStep('name'); }}
               className="w-full bg-slate-900 border border-slate-700 rounded p-3 text-white focus:ring-2 focus:ring-purple-500 outline-none"
               placeholder="Planeswalker Name"
             />
@@ -3316,15 +4651,25 @@ const Lobby = ({
             <div className="space-y-3">
               <div className="grid grid-cols-2 gap-3">
                 <button
-                  onClick={() => onCreate(effectiveName, gameTitle, gameMode)}
-                  disabled={!effectiveName.trim() || isInitLoading || isActionLoading}
+                  data-tutorial-anchor="lobby-create-game"
+                  onClick={() => {
+                    if (completeLobbyTutorialStep('create')) return;
+                    if (isLobbyTutorialActive) { focusLobbyTutorialTarget(); return; }
+                    onCreate(effectiveName, gameTitle, gameMode);
+                  }}
+                  disabled={!effectiveName.trim() || isInitLoading || isCreatingGame}
                   className="bg-purple-600 hover:bg-purple-700 disabled:opacity-50 disabled:cursor-wait text-white p-3 rounded-lg font-bold transition-colors flex justify-center items-center gap-2"
                 >
-                  {isActionLoading ? <Loader2 className="animate-spin" size={18}/> : 'Create Game'}
+                  {isCreatingGame ? <Loader2 className="animate-spin" size={18}/> : 'Create Game'}
                 </button>
                 <button
-                  onClick={() => setMode('join')}
-                  disabled={!effectiveName.trim() || isInitLoading || isActionLoading}
+                  data-tutorial-anchor="lobby-join-game"
+                  onClick={() => {
+                    if (completeLobbyTutorialStep('join')) return;
+                    if (isLobbyTutorialActive) { focusLobbyTutorialTarget(); return; }
+                    setMode('join');
+                  }}
+                  disabled={!effectiveName.trim() || isInitLoading || isJoiningGame}
                   className="bg-slate-700 hover:bg-slate-600 disabled:opacity-50 disabled:cursor-wait text-white p-3 rounded-lg font-bold transition-colors flex justify-center items-center gap-2"
                 >
                   {isInitLoading ? <Loader2 className="animate-spin" size={18}/> : 'Join Game'}
@@ -3335,7 +4680,9 @@ const Lobby = ({
                 <input
                   type="text"
                   value={gameTitle}
-                  onChange={(e) => setGameTitle(e.target.value)}
+                  data-tutorial-anchor="lobby-game-title"
+                  onFocus={() => completeLobbyTutorialStep('title')}
+                  onChange={(e) => { setGameTitle(e.target.value); completeLobbyTutorialStep('title'); }}
                   className="w-full bg-slate-900 border border-slate-700 rounded p-3 text-white focus:ring-2 focus:ring-purple-500 outline-none"
                   placeholder="e.g. 'Mono-Red vs Elves'"
                   maxLength={80}
@@ -3343,7 +4690,7 @@ const Lobby = ({
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-400 mb-1">Game Mode</label>
-                <div className="grid grid-cols-2 gap-2">
+                <div data-tutorial-anchor="lobby-game-mode" className="grid grid-cols-2 gap-2">
                   {[
                     { id: GAME_MODES.REGULAR, label: 'Regular', detail: '20 life' },
                     { id: GAME_MODES.COMMANDER, label: 'Commander', detail: '40 life' }
@@ -3351,7 +4698,7 @@ const Lobby = ({
                     <button
                       key={option.id}
                       type="button"
-                      onClick={() => setGameMode(option.id)}
+                      onClick={() => { setGameMode(option.id); completeLobbyTutorialStep('laws'); }}
                       className={`rounded-lg border p-3 text-left transition-colors ${gameMode === option.id ? 'border-purple-400 bg-purple-900/40 text-white' : 'border-slate-700 bg-slate-900 text-slate-300 hover:border-slate-500'}`}
                     >
                       <div className="text-sm font-bold">{option.label}</div>
@@ -3360,12 +4707,41 @@ const Lobby = ({
                   ))}
                 </div>
               </div>
+              <button type="button" data-tutorial-anchor="lobby-room-code-example" onClick={() => completeLobbyTutorialStep('room_code')} className="w-full rounded-lg border border-slate-700 bg-slate-900/70 p-2 text-left text-xs text-slate-400 hover:border-amber-400/60">Example room code: <span className="font-mono tracking-widest text-slate-200">A7X92B</span></button>
               <button
-                onClick={() => setMode('watch')}
-                disabled={!effectiveName.trim() || isInitLoading || isActionLoading}
+                data-tutorial-anchor="lobby-watch-game"
+                onClick={() => {
+                  if (completeLobbyTutorialStep('watch')) return;
+                  if (isLobbyTutorialActive) { focusLobbyTutorialTarget(); return; }
+                  setMode('watch');
+                }}
+                disabled={!effectiveName.trim() || isInitLoading || isWatchingGame}
                 className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-wait text-white p-3 rounded-lg font-bold transition-colors flex justify-center items-center gap-2"
               >
                 {isInitLoading ? <Loader2 className="animate-spin" size={18}/> : 'Watch Game'}
+              </button>
+              <button
+                type="button"
+                data-tutorial-anchor="lobby-tutorial-start"
+                onClick={() => {
+                  onLobbyActionDebugCheckpoint?.('startTutorial', 'clicked Tutorial Battle');
+                  if (isLobbyTutorialActive && lobbyTutorialScene?.final) {
+                    completeLobbyTutorialStep('begin');
+                    return;
+                  }
+                  if (isLobbyTutorialActive) { focusLobbyTutorialTarget(); return; }
+                  startLobbyTutorial();
+                }}
+                disabled={!effectiveName.trim() || isInitLoading || isStartingTutorial}
+                className="w-full rounded-lg border border-amber-500/40 bg-gradient-to-r from-amber-950/80 to-purple-950/70 p-3 text-left text-amber-50 transition-colors hover:border-amber-300/70 hover:from-amber-900/80 hover:to-purple-900/80 disabled:cursor-wait disabled:opacity-50"
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="font-extrabold">Tutorial Battle (Beta)</div>
+                    <div className="mt-0.5 text-xs font-medium text-amber-100/80">Experimental cinematic duel. You can skip it anytime and play normally.</div>
+                  </div>
+                  {isStartingTutorial ? <Loader2 className="shrink-0 animate-spin" size={18}/> : <ArrowRight className="shrink-0 text-amber-200" size={18}/>}
+                </div>
               </button>
             </div>
           )}
@@ -3386,17 +4762,17 @@ const Lobby = ({
               <div className="flex gap-3">
                 <button
                   onClick={() => setMode('menu')}
-                  disabled={isActionLoading}
+                  disabled={isJoiningGame}
                   className="flex-1 bg-slate-700 hover:bg-slate-600 text-white p-3 rounded-lg font-bold"
                 >
                   Back
                 </button>
                 <button
                   onClick={() => onJoin(effectiveName, code)}
-                  disabled={!code || isInitLoading || isActionLoading}
+                  disabled={!normalizedCode || isInitLoading || isJoiningGame}
                   className="flex-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white p-3 rounded-lg font-bold flex justify-center items-center gap-2"
                 >
-                  {isActionLoading ? <Loader2 className="animate-spin" size={18}/> : 'Enter'}
+                  {isJoiningGame ? <Loader2 className="animate-spin" size={18}/> : 'Enter'}
                 </button>
               </div>
             </div>
@@ -3418,21 +4794,31 @@ const Lobby = ({
               <div className="flex gap-3">
                 <button
                   onClick={() => setMode('menu')}
-                  disabled={isActionLoading}
+                  disabled={isWatchingGame}
                   className="flex-1 bg-slate-700 hover:bg-slate-600 text-white p-3 rounded-lg font-bold"
                 >
                   Back
                 </button>
                 <button
                   onClick={() => onWatch(effectiveName, code)}
-                  disabled={!code || isInitLoading || isActionLoading}
+                  disabled={!normalizedCode || isInitLoading || isWatchingGame}
                   className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white p-3 rounded-lg font-bold flex justify-center items-center gap-2"
                 >
-                  {isActionLoading ? <Loader2 className="animate-spin" size={18}/> : 'Watch'}
+                  {isWatchingGame ? <Loader2 className="animate-spin" size={18}/> : 'Watch'}
                 </button>
               </div>
             </div>
           )}
+
+          <div className="rounded-lg border border-sky-500/40 bg-sky-950/30 p-3 text-xs text-sky-100">
+            <div className="mb-2 font-black uppercase tracking-[0.2em] text-sky-200">Lobby action debug</div>
+            <div className="grid gap-1 font-mono">
+              <div><span className="text-sky-300">action:</span> {lobbyActionDebug?.action || 'none'}</div>
+              <div><span className="text-sky-300">checkpoint:</span> {lobbyActionDebug?.checkpoint || 'none'}</div>
+              <div><span className="text-sky-300">loading:</span> {isActionLoading ? 'yes' : 'no'}</div>
+              <div className="break-words"><span className="text-sky-300">last error:</span> {lobbyActionDebug?.errorMessage ? `${lobbyActionDebug.errorMessage}${lobbyActionDebug.errorCode ? ` (${lobbyActionDebug.errorCode})` : ''}` : 'none'}</div>
+            </div>
+          </div>
 
           <button
             onClick={isGoogleConnected ? undefined : onContinueWithGoogle}
@@ -3465,11 +4851,17 @@ const Lobby = ({
             {isGoogleConnected && <span className="text-emerald-300">(Google)</span>}
           </div>
 
-          <div className="border border-slate-700 rounded-lg p-3 space-y-2">
+          <div data-tutorial-anchor="lobby-my-games" onClick={() => completeLobbyTutorialStep('my_games')} className="border border-slate-700 rounded-lg p-3 space-y-2">
             <div className="flex items-center justify-between gap-2">
               <div className="text-sm font-semibold text-slate-300">My Games</div>
               <button
-                onClick={openCleanup}
+                data-tutorial-anchor="lobby-cleanup-games"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  if (completeLobbyTutorialStep('cleanup')) return;
+                  if (isLobbyTutorialActive) { focusLobbyTutorialTarget(); return; }
+                  openCleanup();
+                }}
                 disabled={isInitLoading || isActionLoading || isCleanupLoading}
                 className="text-[11px] bg-slate-900 hover:bg-slate-700 disabled:opacity-50 text-slate-300 border border-slate-700 rounded px-2 py-1 flex items-center gap-1"
               >
@@ -3538,6 +4930,60 @@ const Lobby = ({
               >
                 Confirm
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {lobbyTutorialOpen && lobbyTutorialScene && (
+        <div className={`pointer-events-none fixed inset-x-0 ${lobbyTutorialDock === 'top' ? 'top-16 sm:top-4' : 'bottom-4'} z-[100] px-3 sm:px-4`}>
+          <div className={`pointer-events-auto mx-auto overflow-hidden rounded-2xl border border-amber-400/40 bg-slate-950/95 shadow-2xl shadow-black/60 backdrop-blur ${lobbyTutorialMinimized ? 'max-w-sm' : 'max-w-md'}`}>
+            <div className="flex items-center justify-between gap-3 border-b border-amber-500/20 bg-gradient-to-r from-amber-950/80 to-purple-950/80 px-4 py-3">
+              <button type="button" onClick={lobbyTutorialMinimized ? () => setLobbyTutorialMinimized(false) : undefined} className="min-w-0 flex-1 text-left" aria-label={lobbyTutorialMinimized ? 'Expand lobby tutorial' : undefined}>
+                <div className="text-[10px] font-black uppercase tracking-[0.2em] text-amber-200">Lobby Tutorial · {lobbyTutorialIndex + 1}/{TUTORIAL_LOBBY_SCENES.length}</div>
+                <h2 className="mt-1 truncate text-sm font-black text-white">{lobbyTutorialScene.title}</h2>
+              </button>
+              <div className="flex items-center gap-2">
+                <button type="button" onClick={focusLobbyTutorialTarget} className="rounded-full border border-amber-300/40 px-3 py-1.5 text-xs font-black text-amber-100 hover:bg-white/10">Show me</button>
+                <button type="button" onClick={() => setLobbyTutorialMinimized((value) => !value)} className="rounded-full p-2 text-amber-100 hover:bg-white/10" aria-label={lobbyTutorialMinimized ? 'Expand lobby tutorial' : 'Minimize lobby tutorial'}>
+                  {lobbyTutorialMinimized ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                </button>
+                <button type="button" onClick={() => setLobbyTutorialOpen(false)} className="rounded-full p-2 text-slate-300 hover:bg-red-950/60 hover:text-red-100" aria-label="Exit lobby tutorial"><X size={16} /></button>
+              </div>
+            </div>
+            {!lobbyTutorialMinimized && (
+              <div className="space-y-3 p-4">
+                <p className="text-sm text-slate-300">{lobbyTutorialScene.scene}</p>
+                <p className="rounded-xl border border-purple-500/20 bg-purple-950/30 p-3 text-sm italic text-purple-100"><span className="font-black not-italic text-purple-200">Bolas:</span> “{lobbyTutorialScene.dialogue}”</p>
+                {lobbyTutorialReaction && <p className="rounded-xl border border-amber-500/30 bg-amber-950/30 p-3 text-sm font-bold text-amber-100">{lobbyTutorialReaction}</p>}
+                <div className="rounded-xl border border-slate-700 bg-slate-900/80 p-3 text-sm"><div className="text-[10px] font-black uppercase tracking-widest text-emerald-300">Objective</div><div className="mt-1 text-slate-100">{lobbyTutorialScene.objective}</div></div>
+                <div className="rounded-xl border border-slate-700 bg-slate-900/70 p-3 text-sm"><div className="text-[10px] font-black uppercase tracking-widest text-sky-300">Hint</div><div className="mt-1 text-slate-300">{lobbyTutorialScene.hint}</div></div>
+                <div className="flex flex-wrap justify-between gap-2 pt-1">
+                  <button type="button" onClick={() => { if (lobbyTutorialAdvanceTimerRef.current) { window.clearTimeout(lobbyTutorialAdvanceTimerRef.current); lobbyTutorialAdvanceTimerRef.current = null; } setLobbyTutorialReaction(''); setLobbyTutorialIndex((current) => Math.max(current - 1, 0)); }} disabled={lobbyTutorialIndex === 0} className="min-h-10 rounded-lg border border-slate-700 px-3 text-sm font-bold text-slate-300 disabled:opacity-40">Back</button>
+                  <div className="ml-auto flex gap-2">
+                    <button type="button" onClick={focusLobbyTutorialTarget} className="min-h-10 rounded-lg border border-amber-500/40 px-3 text-sm font-black text-amber-100">Show me</button>
+                    <button type="button" onClick={() => setLobbyTutorialOpen(false)} className="min-h-10 rounded-lg border border-slate-700 px-3 text-sm font-bold text-slate-300">Exit</button>
+                    <button type="button" onClick={() => advanceLobbyTutorial()} className="min-h-10 rounded-lg border border-slate-700 px-3 text-sm font-bold text-slate-400 hover:bg-slate-800">Skip Step</button>
+                    <button type="button" disabled className="min-h-10 rounded-lg bg-slate-700 px-4 text-sm font-black text-slate-300 opacity-70">Waiting…</button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+
+      <QuickStartGuideModal open={quickStartOpen} onClose={() => setQuickStartOpen(false)} />
+
+      {tutorialStartWarningOpen && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/75 p-4" onClick={() => setTutorialStartWarningOpen(false)}>
+          <div className="w-full max-w-md rounded-2xl border border-amber-400/50 bg-slate-950 p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+            <h2 className="flex items-center gap-2 text-lg font-black text-amber-100"><AlertTriangle size={20} /> Tutorial Battle (Beta)</h2>
+            <p className="mt-3 rounded-xl border border-amber-500/30 bg-amber-950/30 p-3 text-sm font-bold leading-relaxed text-amber-50">This cinematic tutorial is still experimental. You can skip it anytime and play normally.</p>
+            <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <button type="button" onClick={() => setTutorialStartWarningOpen(false)} className="min-h-11 rounded-xl border border-slate-600 px-4 py-2 font-bold text-slate-100 hover:bg-slate-800">Cancel</button>
+              <button type="button" onClick={confirmTutorialBattleStart} className="min-h-11 rounded-xl bg-amber-500 px-4 py-2 font-black text-slate-950 hover:bg-amber-400">Start beta battle</button>
             </div>
           </div>
         </div>
@@ -3808,7 +5254,7 @@ const TokenCardPreview = ({ token, size = 'small' }) => {
   );
 };
 
-const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isDraggable, targets = [], stack = [], isSelected = false, combatBadgeLabel = null, combatBadges = null, displayName = null, markedDamage = null, targetInfo = null, attachmentLabel = null, attachedCount = 0 }) => {
+const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isDraggable, targets = [], stack = [], isSelected = false, combatBadgeLabel = null, combatBadges = null, displayName = null, markedDamage = null, targetInfo = null, attachmentLabel = null, attachedCount = 0, isTutorialGame = false }) => {
   const isTapped = card.tapped;
   const isFaceDown = card.faceDown;
   const counters = card.counters || {};
@@ -3817,6 +5263,9 @@ const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isD
   const isPhasedOut = Boolean(card.phasedOut);
   const displayCardName = getCardDisplayName(card);
   const displayImageUri = getCardImageUri(card);
+  if (isTutorialGame && !isFaceDown && !displayImageUri) {
+    logMissingTutorialCardImageInDev(card);
+  }
   const displayManaCost = getCardManaCost(card);
   const displayPower = getCardPower(card);
   const displayToughness = getCardToughness(card);
@@ -3882,7 +5331,7 @@ const Card = ({ card, zone, onMove, onZoom, onPeek, style = {}, onMouseDown, isD
       onTouchStart={isDraggable ? onMouseDown : undefined}
     >
       <div className={`w-full h-full rounded-lg overflow-hidden border-2 shadow-md relative bg-slate-800 pointer-events-none ${borderStyle} ${zone === ZONES.BATTLEFIELD ? 'shadow-lg' : ''} ${isPhasedOut ? 'grayscale saturate-50' : ''}`}>
-        
+
 
         {isFaceDown ? (
           <div className="w-full h-full bg-slate-700 flex flex-col items-center justify-center p-1 border-4 border-slate-600">
@@ -4257,6 +5706,185 @@ class GameBoardErrorBoundary extends React.Component {
   }
 }
 
+const TutorialOverlay = ({ game, currentStep, activeAnchor = null, canGoBack, isMinimized, hasOpenPanel, onToggleMinimized, onResume, onNext, onBack, onSkip, onExit, onFocusTarget, onRestart, onExplore, errorMessage = '', debugInfo = null }) => {
+  const [dock, setDock] = useState('bottom');
+  const forcedCompact = Boolean(hasOpenPanel);
+  const safeCurrentStep = normalizeTutorialStep(currentStep, game?.tutorial?.stepId || 'intro');
+  const stepUnavailable = !currentStep || Boolean(errorMessage);
+
+  const tutorialAnchor = activeAnchor || safeCurrentStep?.anchor || null;
+
+  useEffect(() => {
+    if (!tutorialAnchor || typeof window === 'undefined') {
+      return undefined;
+    }
+
+    const updateDock = () => {
+      const anchor = Array.isArray(tutorialAnchor) ? tutorialAnchor[0] : tutorialAnchor;
+      if (!anchor) {
+        setDock('bottom');
+        return;
+      }
+      const element = document.querySelector(`[data-tutorial-anchor="${anchor}"]`);
+      if (!element) {
+        setDock('bottom');
+        return;
+      }
+      const rect = element.getBoundingClientRect();
+      const viewportMid = window.innerHeight / 2;
+      setDock(rect.top > viewportMid ? 'top' : 'bottom');
+    };
+
+    const rafId = window.requestAnimationFrame(updateDock);
+    window.addEventListener('resize', updateDock);
+    window.addEventListener('scroll', updateDock, true);
+    return () => {
+      window.cancelAnimationFrame(rafId);
+      window.removeEventListener('resize', updateDock);
+      window.removeEventListener('scroll', updateDock, true);
+    };
+  }, [tutorialAnchor]);
+
+  if (!game?.isTutorial || game?.tutorial?.inactive) return null;
+  const isFinishedStep = ['tutorial_complete', 'F11_victory_complete'].includes(safeCurrentStep.id);
+  const stepNumber = getTutorialStepIndex(safeCurrentStep.id) + 1;
+  const isActionStep = ['detect', 'detect-or-manual'].includes(safeCurrentStep.completion);
+
+  const collapsed = isMinimized || forcedCompact;
+  const effectiveDock = tutorialAnchor ? dock : 'bottom';
+  const positionClass = effectiveDock === 'top' ? 'top-16 sm:top-4' : 'bottom-20 sm:bottom-4';
+  return (
+    <div className={`pointer-events-none fixed inset-x-0 ${positionClass} z-[90] px-3 sm:px-4`}>
+      <div className={`pointer-events-auto mx-auto overflow-hidden rounded-2xl border border-amber-400/40 bg-slate-950/95 shadow-2xl shadow-black/60 backdrop-blur ${collapsed ? 'max-w-sm' : 'max-w-md'}`}>
+        <div className={`flex items-center justify-between gap-3 border-b border-amber-500/20 bg-gradient-to-r from-amber-950/80 to-purple-950/80 ${collapsed ? 'px-3 py-2' : 'px-4 py-3'}`}>
+          <button type="button" onClick={collapsed ? onResume : undefined} className="min-w-0 flex-1 text-left" aria-label={collapsed ? 'Resume tutorial' : undefined}>
+            <div className="text-[10px] font-black uppercase tracking-[0.2em] text-amber-200">Tutorial Battle (Beta) · {stepNumber}/{TUTORIAL_SCRIPT_STEPS.length}</div>
+            <div className="truncate text-sm font-extrabold text-white">{collapsed ? `Resume tutorial: ${safeCurrentStep.title}` : safeCurrentStep.chapter}</div>
+            {forcedCompact && <div className="mt-0.5 truncate text-[11px] font-bold text-amber-100/80">Card/menu open — tutorial is paused, not closed.</div>}
+          </button>
+          <div className="flex items-center gap-2">
+            {collapsed ? (
+              <button type="button" onClick={onResume} className="rounded-full bg-amber-400 px-3 py-1.5 text-xs font-black text-slate-950 shadow-lg hover:bg-amber-300" aria-label="Resume tutorial">
+                Resume
+              </button>
+            ) : (
+              <button type="button" onClick={onFocusTarget} disabled={!tutorialAnchor} className="rounded-full border border-amber-300/40 px-3 py-1.5 text-xs font-black text-amber-100 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40" aria-label="Show tutorial target">
+                Show me
+              </button>
+            )}
+            <button type="button" onClick={collapsed ? onResume : onToggleMinimized} className="rounded-full p-2 text-amber-100 hover:bg-white/10" aria-label={collapsed ? 'Resume tutorial' : 'Minimize tutorial'}>
+              {collapsed ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+            </button>
+            <button type="button" onClick={onExit} className="rounded-full p-2 text-slate-300 hover:bg-red-950/60 hover:text-red-100" aria-label="Exit tutorial">
+              <X size={16} />
+            </button>
+          </div>
+        </div>
+
+        {!collapsed && (
+          <div className="space-y-3 px-4 py-4">
+            <div>
+              <h2 className="text-lg font-black leading-tight text-amber-50">{safeCurrentStep.title}</h2>
+              {safeCurrentStep.reaction && <p className="mt-2 rounded-xl border border-amber-500/20 bg-amber-950/30 p-2 text-xs font-bold text-amber-100">{safeCurrentStep.reaction}</p>}
+              <p className="mt-2 text-sm leading-relaxed text-slate-300">{safeCurrentStep.scene}</p>
+              <p className="mt-2 rounded-xl border border-purple-500/20 bg-purple-950/30 p-3 text-sm italic leading-relaxed text-purple-100"><span className="font-black not-italic text-purple-200">Bolas:</span> “{safeCurrentStep.dialogue}”</p>
+            </div>
+            {stepUnavailable && (
+              <div className="rounded-xl border border-red-400/40 bg-red-950/30 p-3 text-sm font-bold text-red-100">
+                {errorMessage || 'Tutorial step unavailable. Skip or restart tutorial.'}
+              </div>
+            )}
+            <div className="grid gap-2 text-sm">
+              <div className="rounded-xl border border-slate-700 bg-slate-900/80 p-3">
+                <div className="text-[10px] font-black uppercase tracking-widest text-emerald-300">Objective</div>
+                <div className="mt-1 text-slate-100">{safeCurrentStep.objective}</div>
+              </div>
+              <div className="rounded-xl border border-slate-700 bg-slate-900/70 p-3">
+                <div className="text-[10px] font-black uppercase tracking-widest text-sky-300">Hint</div>
+                <div className="mt-1 text-slate-300">{safeCurrentStep.hint}</div>
+              </div>
+            </div>
+
+            {debugInfo && (
+              <div className="rounded-xl border border-cyan-500/30 bg-cyan-950/20 p-3 text-[11px] text-cyan-100">
+                <div className="font-black uppercase tracking-widest text-cyan-200">Tutorial timing</div>
+                <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-1">
+                  <span>Action</span><span className="text-right font-mono">{debugInfo.lastAction || '—'}</span>
+                  <span>Local advance</span><span className="text-right font-mono">{debugInfo.localAdvanceMs == null ? '—' : `${debugInfo.localAdvanceMs}ms`}</span>
+                  <span>Firestore write</span><span className="text-right font-mono">{debugInfo.firestoreWriteMs == null ? '—' : `${debugInfo.firestoreWriteMs}ms`}</span>
+                  <span>Local step</span><span className="truncate text-right font-mono">{debugInfo.localStep || '—'}</span>
+                  <span>Server step</span><span className="truncate text-right font-mono">{debugInfo.serverStep || '—'}</span>
+                  <span>Pending sync</span><span className="text-right font-mono">{debugInfo.pendingSync ? 'yes' : 'no'}</span>
+                  <span>Entered at</span><span className="truncate text-right font-mono">{debugInfo.stepEnteredAt || '—'}</span>
+                  <span>Activation</span><span className="text-right font-mono">{debugInfo.activationId || '—'}</span>
+                  <span>Completion mode</span><span className="truncate text-right font-mono">{debugInfo.completionMode || '—'}</span>
+                  <span>Required action</span><span className="truncate text-right font-mono">{debugInfo.requiredAction || '—'}</span>
+                </div>
+                <div className="mt-2 rounded-lg bg-slate-950/40 p-2 font-mono text-[10px] text-cyan-50">
+                  <div>Last completion: {debugInfo.lastCompletionEvent ? `${debugInfo.lastCompletionEvent.source}:${debugInfo.lastCompletionEvent.detail || debugInfo.lastCompletionEvent.stepId}` : '—'}</div>
+                  <div>Ignored: {debugInfo.ignoredCompletion ? `${debugInfo.ignoredCompletion.reason} (${debugInfo.ignoredCompletion.detail || debugInfo.ignoredCompletion.source})` : '—'}</div>
+                  <div className="break-words">Baseline: {debugInfo.baselineSummary ? JSON.stringify(debugInfo.baselineSummary) : '—'}</div>
+                </div>
+              </div>
+            )}
+            {isFinishedStep && game.tutorial?.finished ? (
+              <div className="rounded-xl border border-emerald-400/40 bg-emerald-950/30 p-3">
+                <div className="text-sm font-black text-emerald-100">Tutorial complete. Nicol Bolas has permitted your temporary survival.</div>
+                <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                  <button type="button" onClick={onExit} className="min-h-10 rounded-lg bg-slate-800 px-3 text-sm font-bold text-slate-100 hover:bg-slate-700">Return to lobby</button>
+                  <button type="button" onClick={onExplore} className="min-h-10 rounded-lg border border-emerald-500/40 px-3 text-sm font-bold text-emerald-100 hover:bg-emerald-950/40">Explore board</button>
+                  <button type="button" onClick={onRestart} className="min-h-10 rounded-lg border border-amber-500/40 px-3 text-sm font-black text-amber-100 hover:bg-amber-950/40">Reset tutorial battle</button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                <button type="button" onClick={onBack} disabled={!canGoBack} className="min-h-10 rounded-lg border border-slate-700 px-3 text-sm font-bold text-slate-300 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40">
+                  Back
+                </button>
+                <div className="ml-auto flex gap-2">
+                  <button type="button" onClick={onFocusTarget} disabled={!tutorialAnchor} className="min-h-10 rounded-lg border border-amber-500/40 px-3 text-sm font-black text-amber-100 hover:bg-amber-950/40 disabled:cursor-not-allowed disabled:opacity-40">
+                    Show me
+                  </button>
+                  <button type="button" onClick={onSkip} className="min-h-10 rounded-lg border border-slate-700 px-3 text-sm font-bold text-slate-300 hover:bg-slate-800">
+                    Skip step
+                  </button>
+                  {isActionStep ? (
+                    <button type="button" disabled className="min-h-10 rounded-lg bg-slate-700 px-4 text-sm font-black text-slate-300 opacity-70">
+                      Waiting…
+                    </button>
+                  ) : (
+                    <button type="button" onClick={onNext} className="min-h-10 rounded-lg bg-amber-500 px-4 text-sm font-black text-slate-950 hover:bg-amber-400">
+                      {isFinishedStep ? 'Finish' : 'Next'}
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+const TutorialResumePill = ({ show, currentStep, hasOpenPanel, onResume }) => {
+  if (!show) return null;
+  const title = currentStep?.title || 'current step';
+  return (
+    <div className="pointer-events-none fixed bottom-3 left-3 right-3 z-[95] flex justify-center sm:bottom-5 sm:left-auto sm:right-5 sm:justify-end">
+      <button
+        type="button"
+        onClick={onResume}
+        className="pointer-events-auto min-h-12 rounded-full border border-amber-200/70 bg-amber-400 px-5 py-2 text-sm font-black text-slate-950 shadow-2xl shadow-black/50 hover:bg-amber-300 focus:outline-none focus:ring-4 focus:ring-amber-200/50"
+        aria-label="Resume tutorial"
+      >
+        Resume tutorial{hasOpenPanel ? ' · panel open' : ''}
+        <span className="ml-2 hidden max-w-[12rem] truncate align-bottom text-xs font-bold text-slate-800/80 sm:inline-block">{title}</span>
+      </button>
+    </div>
+  );
+};
+
 const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const [firestoreGame, setFirestoreGame] = useState(null);
   const [optimisticGame, setOptimisticGame] = useState(null);
@@ -4301,8 +5929,10 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const myBattlefieldRef = useRef(null);
   const opponentBattlefieldRef = useRef(null);
   const libraryButtonRef = useRef(null);
+  const bottomToolbarRef = useRef(null);
   const battlefieldScrollRef = useRef(null);
   const opponentSectionRef = useRef(null);
+  const [tutorialPulseAnchor, setTutorialPulseAnchor] = useState(null);
   const [draggingCard, setDraggingCard] = useState(null);
   const [optimisticAutoBattlefieldIds, setOptimisticAutoBattlefieldIds] = useState(() => new Set());
   const [myBattlefieldSizePx, setMyBattlefieldSizePx] = useState({
@@ -4349,6 +5979,24 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const [timeControlsOpen, setTimeControlsOpen] = useState(false);
   const [undoConfirmOpen, setUndoConfirmOpen] = useState(false);
   const [repairGameSizeBusy, setRepairGameSizeBusy] = useState(false);
+  const [tutorialMinimized, setTutorialMinimized] = useState(false);
+  const [tutorialExitConfirmOpen, setTutorialExitConfirmOpen] = useState(false);
+  const [tutorialOverlayError, setTutorialOverlayError] = useState(null);
+  const [optimisticTutorialState, setOptimisticTutorialState] = useState(null);
+  const [tutorialSyncPending, setTutorialSyncPending] = useState(false);
+  const [tutorialDebugTiming, setTutorialDebugTiming] = useState({ lastAction: null, localAdvanceMs: null, firestoreWriteMs: null, lastCompletionEvent: null, ignoredCompletion: null });
+  const [tutorialActivationDebug, setTutorialActivationDebug] = useState(null);
+  const [quickStartOpen, setQuickStartOpen] = useState(false);
+  const [tutorialResetBusy, setTutorialResetBusy] = useState(false);
+  const optimisticTutorialRef = useRef(null);
+  const tutorialSyncWriteIdRef = useRef(0);
+  const tutorialStepActivationIdRef = useRef(0);
+  const tutorialStepActivationRef = useRef(null);
+  const tutorialAdvanceDelayTimerRef = useRef(null);
+  const g07ScriptedHandIgnoredRef = useRef(false);
+  const tutorialDrawSlipLastActionTypeRef = useRef(null);
+  const tutorialP210UsedAutoPassUntilEndRef = useRef(false);
+  const tutorialSetupAppliedRef = useRef({ stepId: null, signature: null });
 
   // Chat State
   const [chatOpen, setChatOpen] = useState(false);
@@ -4358,16 +6006,17 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
   // Use the viewAsId to determine which player is "Active" on this screen
   const userId = realUserId;
-  const isPlayer = (game?.players || []).some(p => p.id === userId);
+  const players = useMemo(() => (Array.isArray(game?.players) ? game.players : []), [game?.players]);
+  const isPlayer = players.some(p => p?.id === userId);
   const isHost = Boolean(game?.hostId && game.hostId === userId);
-  const isSpectator = !isPlayer && (game?.spectatorIds || []).includes(userId);
+  const isSpectator = !isPlayer && (Array.isArray(game?.spectatorIds) ? game.spectatorIds : []).includes(userId);
 
   useEffect(() => {
     if (!game || !isSpectator) return;
-    const players = game.players || [];
-    if (players.length === 0) return;
-    if (!viewAsId || !players.some(p => p.id === viewAsId)) {
-      setViewAsId(players[0].id);
+    const effectPlayers = Array.isArray(game.players) ? game.players : [];
+    if (effectPlayers.length === 0) return;
+    if (!viewAsId || !effectPlayers.some(p => p.id === viewAsId)) {
+      setViewAsId(effectPlayers[0].id);
     }
   }, [game, isSpectator, viewAsId]);
 
@@ -4378,12 +6027,1477 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   }, [isSpectator, boardUnlocked]);
 
   const viewAsPlayerId = isSpectator ? viewAsId : userId;
-  const viewAsPlayer = (game?.players || []).find(p => p.id === viewAsPlayerId);
+  const viewAsPlayer = players.find(p => p?.id === viewAsPlayerId);
+  const opponent = players.find(p => p?.id !== viewAsPlayerId);
   const canAct = !isSpectator;
   const showGameSizeDebug = isDebugActionsEnabled() || isPerfActionsEnabled();
   const gameDocumentSizeEstimate = useMemo(() => (showGameSizeDebug && game ? getGameDocumentSizeEstimate(game) : null), [showGameSizeDebug, game]);
   const undoSource = optimisticGame ? 'optimistic' : 'firestore';
   const undoPendingSync = Boolean(optimisticGame && pendingOptimisticActionId);
+
+  const serverTutorialState = firestoreGame?.tutorial || game?.tutorial || null;
+  const displayedTutorialState = optimisticTutorialState || serverTutorialState || null;
+  const isTutorialGame = Boolean(game?.isTutorial && !displayedTutorialState?.inactive);
+  const currentTutorialStep = isTutorialGame ? getTutorialStepById(displayedTutorialState?.stepId || 'intro') : null;
+  const currentTutorialAnchor = (() => {
+    if (targetingState && ['cast_spell_to_stack', 'final_spell', 'P1_08_target_bolas', 'F3_cast_bolt_bolas'].includes(currentTutorialStep?.id)) return 'opponent-player-target';
+    if (targetingState && currentTutorialStep?.id === 'target_system') return 'target-tools';
+    return currentTutorialStep?.anchor || null;
+  })();
+  const canGoBackTutorial = isTutorialGame && getTutorialStepIndex(currentTutorialStep?.id) > 0;
+  const tutorialDebugInfo = (isDebugActionsEnabled() || isPerfActionsEnabled()) && isTutorialGame ? {
+    ...tutorialDebugTiming,
+    ...(tutorialActivationDebug || {}),
+    localStep: optimisticTutorialState?.stepId || displayedTutorialState?.stepId || null,
+    serverStep: serverTutorialState?.stepId || null,
+    pendingSync: tutorialSyncPending
+  } : null;
+
+  const getTutorialStepBaseline = useCallback((stepId) => {
+    const cards = game?.cards || [];
+    const stack = game?.stack || [];
+    const ownHand = cards.filter((card) => card.controllerId === userId && card.zone === ZONES.HAND);
+    const ownLibrary = cards.filter((card) => card.ownerId === userId && card.zone === ZONES.LIBRARY);
+    const mountain = cards.find((card) => card.name === 'Mountain' && card.ownerId === userId);
+    const delver = cards.find((card) => card.name === 'Delver of Secrets' || card.card_faces?.some((face) => face?.name === 'Delver of Secrets' || face?.name === 'Insectile Aberration'));
+    const counterCard = cards.find((card) => card.counters && Object.values(card.counters).some((value) => Number(value) > 0)) || cards.find((card) => card.controllerId === userId && card.zone === ZONES.BATTLEFIELD);
+    return {
+      stepId,
+      selectedCardId: selectedCard?.instanceId || null,
+      stackDetailOpen: Boolean(stackDetailOpen),
+      chatOpen: Boolean(chatOpen),
+      recapOpen: Boolean(recapOpen),
+      libraryMenuOpen: Boolean(libraryMenuOpen),
+      libraryBatchOpen: Boolean(libraryBatchOpen),
+      tokenModalOpen: Boolean(tokenModal),
+      playerStatsOpen: Boolean(playerStatsOpen),
+      revealsOpen: Boolean(revealsOpen),
+      phase: game?.phase || null,
+      stackCount: stack.length,
+      combatKey: JSON.stringify(normalizeCombatState(game?.combat || {})),
+      handCount: ownHand.length,
+      libraryCount: ownLibrary.length,
+      mountainZone: mountain?.zone || null,
+      delverFace: Number.isInteger(delver?.activeFaceIndex) ? delver.activeFaceIndex : null,
+      counterCardId: counterCard?.instanceId || null,
+      counterTotal: counterCard?.counters ? Object.values(counterCard.counters).reduce((sum, value) => sum + (Number(value) || 0), 0) : 0
+    };
+  }, [chatOpen, game?.cards, game?.combat, game?.phase, game?.stack, libraryBatchOpen, libraryMenuOpen, playerStatsOpen, recapOpen, revealsOpen, selectedCard?.instanceId, stackDetailOpen, tokenModal, userId]);
+
+  const summarizeTutorialBaseline = (baseline = {}) => ({
+    selectedCardId: baseline.selectedCardId || null,
+    stackDetailOpen: Boolean(baseline.stackDetailOpen),
+    recapOpen: Boolean(baseline.recapOpen),
+    phase: baseline.phase || null,
+    stackCount: baseline.stackCount || 0,
+    handCount: baseline.handCount || 0,
+    libraryCount: baseline.libraryCount || 0,
+    mountainZone: baseline.mountainZone || null,
+    delverFace: baseline.delverFace ?? null,
+    counterTotal: baseline.counterTotal || 0
+  });
+
+  useEffect(() => {
+    if (!isTutorialGame || !currentTutorialStep?.id) {
+      tutorialStepActivationRef.current = null;
+      tutorialP210UsedAutoPassUntilEndRef.current = false;
+      setTutorialActivationDebug(null);
+      return undefined;
+    }
+    const existingActivation = tutorialStepActivationRef.current;
+    if (existingActivation?.stepId === currentTutorialStep.id) return undefined;
+    if (tutorialAdvanceDelayTimerRef.current) {
+      window.clearTimeout(tutorialAdvanceDelayTimerRef.current);
+      tutorialAdvanceDelayTimerRef.current = null;
+    }
+    const activation = {
+      id: ++tutorialStepActivationIdRef.current,
+      stepId: currentTutorialStep.id,
+      enteredAt: getActionPerfNow(),
+      wallEnteredAt: Date.now(),
+      baseline: getTutorialStepBaseline(currentTutorialStep.id),
+      completionMode: currentTutorialStep.completion || 'manual',
+      requiredAction: currentTutorialStep.rules?.requiredAction || currentTutorialStep.objective || ''
+    };
+    tutorialStepActivationRef.current = activation;
+    tutorialP210UsedAutoPassUntilEndRef.current = false;
+    setTutorialActivationDebug({
+      activationId: activation.id,
+      stepEnteredAt: new Date(activation.wallEnteredAt).toISOString(),
+      baselineSummary: summarizeTutorialBaseline(activation.baseline),
+      completionMode: activation.completionMode,
+      requiredAction: activation.requiredAction
+    });
+    return undefined;
+  }, [currentTutorialStep?.id, getTutorialStepBaseline, isTutorialGame]);
+
+  const focusTutorialTarget = useCallback(() => {
+    const anchor = Array.isArray(currentTutorialAnchor) ? currentTutorialAnchor[0] : currentTutorialAnchor;
+    if (!anchor || typeof document === 'undefined') return;
+    const targetAnchor = anchor === 'battlefields' ? 'own-battlefield' : anchor;
+    if (targetAnchor === 'stack-button' || targetAnchor === 'stack-panel') setStackDetailOpen(true);
+    if (targetAnchor === 'chat-button') setChatOpen(true);
+    if (targetAnchor === 'game-log-button' || targetAnchor === 'log-button') {
+      setRecapOpen(true);
+      maybeCompleteTutorialStep('game_log', { detail: 'recapOpen' });
+      maybeCompleteTutorialStep('manual_toolbox_note', { detail: 'recapOpen' });
+      maybeCompleteTutorialStep('async_oath', { detail: 'recapOpen' });
+      maybeCompleteTutorialStep('B1_01_bolas_island', { detail: 'recapOpen' });
+      maybeCompleteTutorialStep('B1_02_bolas_pass', { detail: 'recapOpen' });
+    }
+    if (targetAnchor === 'library-menu-button' || targetAnchor === 'mulligan-button') setLibraryMenuOpen(true);
+    if (targetAnchor === 'token-tools') { setLibraryMenuOpen(false); setTokenModal(getDefaultCustomToken()); }
+    if (targetAnchor === 'player-counters-button' || targetAnchor === 'player-counters-panel' || targetAnchor === 'mana-pool-panel' || targetAnchor === 'status-panel') setPlayerStatsOpen(true);
+    if (targetAnchor === 'reveal-tools') setRevealsOpen(true);
+    const target = document.querySelector(`[data-tutorial-anchor="${targetAnchor}"]`);
+
+    if (targetAnchor === 'library-menu-button' || targetAnchor === 'draw-button' || targetAnchor === 'mulligan-button') {
+      bottomToolbarRef.current?.scrollTo?.({ left: bottomToolbarRef.current.scrollWidth, behavior: 'smooth' });
+      target?.scrollIntoView?.({ behavior: 'smooth', block: 'center', inline: 'center' });
+    } else {
+      target?.scrollIntoView?.({ behavior: 'smooth', block: 'center', inline: 'center' });
+    }
+
+    if ((targetAnchor === 'library-menu-button' || targetAnchor === 'mulligan-button') && libraryButtonRef.current) {
+      setTimeout(() => libraryButtonRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'nearest', inline: 'center' }), 250);
+    }
+
+    setTutorialPulseAnchor(anchor);
+    window.setTimeout(() => setTutorialPulseAnchor((current) => current === anchor ? null : current), 2800);
+  }, [currentTutorialAnchor]);
+
+  useEffect(() => {
+    if (!optimisticTutorialState || !serverTutorialState) return;
+    const serverIndex = getTutorialStepIndex(serverTutorialState.stepId || 'intro');
+    const localIndex = getTutorialStepIndex(optimisticTutorialState.stepId || 'intro');
+    const serverCaughtUp = serverTutorialState.stepId === optimisticTutorialState.stepId
+      && Boolean(serverTutorialState.finished) === Boolean(optimisticTutorialState.finished)
+      && Boolean(serverTutorialState.inactive) === Boolean(optimisticTutorialState.inactive);
+    if (serverCaughtUp || serverIndex > localIndex) {
+      optimisticTutorialRef.current = null;
+      setOptimisticTutorialState(null);
+      setTutorialSyncPending(false);
+    }
+  }, [optimisticTutorialState, serverTutorialState]);
+
+  useEffect(() => () => {
+    if (tutorialAdvanceDelayTimerRef.current) {
+      window.clearTimeout(tutorialAdvanceDelayTimerRef.current);
+      tutorialAdvanceDelayTimerRef.current = null;
+    }
+  }, []);
+
+  const updateTutorialState = (updates = {}, { actionLabel = 'manual' } = {}) => {
+    if (!gameId || !game?.isTutorial) return Promise.resolve();
+    const localStartedAt = getActionPerfNow();
+    const baseTutorial = optimisticTutorialRef.current || displayedTutorialState || game.tutorial || {};
+    const nextTutorial = {
+      scriptVersion: baseTutorial.scriptVersion || TUTORIAL_SCRIPT_VERSION,
+      runId: updates.runId || baseTutorial.runId || createTutorialRunId(),
+      stepId: updates.stepId ?? baseTutorial.stepId ?? 'intro',
+      completedStepIds: capTutorialCompletedStepIds(updates.completedStepIds ?? baseTutorial.completedStepIds ?? []),
+      playerId: baseTutorial.playerId || userId,
+      opponentName: baseTutorial.opponentName || 'Nicol Bolas',
+      opponentIsScripted: baseTutorial.opponentIsScripted !== false,
+      finished: Boolean(updates.finished ?? baseTutorial.finished),
+      inactive: Boolean(updates.inactive ?? baseTutorial.inactive)
+    };
+    optimisticTutorialRef.current = nextTutorial;
+    setOptimisticTutorialState(nextTutorial);
+    setTutorialSyncPending(true);
+    setTutorialOverlayError(null);
+    setTutorialDebugTiming((current) => ({
+      ...current,
+      lastAction: actionLabel,
+      localAdvanceMs: Math.round((getActionPerfNow() - localStartedAt) * 10) / 10,
+      firestoreWriteMs: null
+    }));
+
+    const writeId = ++tutorialSyncWriteIdRef.current;
+    const writeStartedAt = getActionPerfNow();
+    const writePromise = updateDoc(doc(db, 'games_v3', gameId), {
+      tutorial: nextTutorial,
+      updatedAt: serverTimestamp()
+    }).then(() => {
+      const writeMs = Math.round((getActionPerfNow() - writeStartedAt) * 10) / 10;
+      setTutorialDebugTiming((current) => ({ ...current, firestoreWriteMs: writeMs }));
+      setTutorialOverlayError(null);
+      if (writeId === tutorialSyncWriteIdRef.current && serverTutorialState?.stepId === nextTutorial.stepId) {
+        setTutorialSyncPending(false);
+      }
+    }).catch((error) => {
+      console.error('Tutorial state update failed', error);
+      if (writeId === tutorialSyncWriteIdRef.current) setTutorialSyncPending(false);
+      setTutorialDebugTiming((current) => ({ ...current, firestoreWriteMs: Math.round((getActionPerfNow() - writeStartedAt) * 10) / 10 }));
+      setTutorialOverlayError('Tutorial sync warning: progress is local for now. You can keep playing.');
+      setNotification('Tutorial progress sync is delayed; you can keep playing.');
+      setTimeout(() => setNotification(null), 3000);
+    });
+    return writePromise;
+  };
+
+  const getTutorialAdvanceDebugPayload = (expectedStepId, reason) => ({
+    expectedStepId,
+    visibleStepId: currentTutorialStep?.id || displayedTutorialState?.stepId || null,
+    liveStepId: (optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.stepId || null,
+    optimisticStepId: optimisticTutorialRef.current?.stepId || optimisticTutorialState?.stepId || null,
+    serverStepId: serverTutorialState?.stepId || game?.tutorial?.stepId || null,
+    activationStepId: tutorialStepActivationRef.current?.stepId || null,
+    reason
+  });
+
+  const warnTutorialAdvanceRefused = (expectedStepId, reason, extra = {}) => {
+    if (import.meta.env.PROD) return;
+    console.warn('[Tutorial advance refused]', {
+      ...getTutorialAdvanceDebugPayload(expectedStepId, reason),
+      ...extra
+    });
+  };
+
+  const canFinishTutorialNow = () => {
+    const bolasLife = Number((game?.players || []).find((player) => /Nicol Bolas/i.test(player?.name || ''))?.life ?? 20);
+    const stackEmpty = (game?.stack || []).length === 0;
+    const defeatLogged = (game?.log || []).some((entry) => /Nicol Bolas is defeated/i.test(entry?.message || ''));
+    return { allowed: bolasLife <= 0 && stackEmpty && defeatLogged, bolasLife, stackEmpty, defeatLogged };
+  };
+
+  const forceAdvanceTutorialStep = (expectedStepId, actionLabel = 'force advance', { markCompleted = true, finish = false } = {}) => {
+    if (!isTutorialGame || !expectedStepId) {
+      warnTutorialAdvanceRefused(expectedStepId, 'not a tutorial game or missing expected step');
+      return Promise.resolve(false);
+    }
+    if (finish) {
+      const finishStatus = canFinishTutorialNow();
+      if (!finishStatus.allowed) {
+        setTutorialOverlayError('Finish is locked until Nicol Bolas is mechanically at 0 or less, the stack is empty, and the defeat is logged.');
+        warnTutorialAdvanceRefused(expectedStepId, 'finish locked by final victory checks', finishStatus);
+        return Promise.resolve(false);
+      }
+    }
+
+    const visibleStepId = currentTutorialStep?.id || displayedTutorialState?.stepId || game?.tutorial?.stepId || null;
+    if (visibleStepId !== expectedStepId) {
+      warnTutorialAdvanceRefused(expectedStepId, 'visible step did not match expected step');
+      return Promise.resolve(false);
+    }
+
+    if (tutorialAdvanceDelayTimerRef.current) {
+      window.clearTimeout(tutorialAdvanceDelayTimerRef.current);
+      tutorialAdvanceDelayTimerRef.current = null;
+    }
+
+    const baseTutorial = displayedTutorialState || optimisticTutorialRef.current || game?.tutorial || {};
+    const baseCompletedStepIds = capTutorialCompletedStepIds(baseTutorial.completedStepIds || []);
+    const completedStepIds = markCompleted
+      ? capTutorialCompletedStepIds([...baseCompletedStepIds, expectedStepId])
+      : baseCompletedStepIds;
+    return updateTutorialState({
+      stepId: finish ? expectedStepId : getNextTutorialStepId(expectedStepId),
+      completedStepIds,
+      finished: finish || Boolean(baseTutorial.finished),
+      inactive: finish ? false : Boolean(baseTutorial.inactive)
+    }, { actionLabel }).then(() => true);
+  };
+
+  const advanceTutorialStepFrom = (expectedStepId, { markCompleted = true, finish = false, actionLabel = 'advance', bypassMinimumDelay = false } = {}) => {
+    if (!isTutorialGame || !expectedStepId) {
+      warnTutorialAdvanceRefused(expectedStepId, 'not a tutorial game or missing expected step');
+      return Promise.resolve(false);
+    }
+    if (finish) {
+      const finishStatus = canFinishTutorialNow();
+      if (!finishStatus.allowed) {
+        setTutorialOverlayError('Finish is locked until Nicol Bolas is mechanically at 0 or less, the stack is empty, and the defeat is logged.');
+        warnTutorialAdvanceRefused(expectedStepId, 'finish locked by final victory checks', finishStatus);
+        return Promise.resolve(false);
+      }
+    }
+    const liveStepId = (optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.stepId || 'intro';
+    if (liveStepId !== expectedStepId) {
+      warnTutorialAdvanceRefused(expectedStepId, 'live step did not match expected step');
+      return Promise.resolve(false);
+    }
+    const performAdvance = () => {
+      const latestStepId = (optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.stepId || 'intro';
+      if (latestStepId !== expectedStepId) {
+        warnTutorialAdvanceRefused(expectedStepId, 'latest step changed before advance');
+        return false;
+      }
+      const baseCompletedStepIds = capTutorialCompletedStepIds((optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.completedStepIds || []);
+      const completedStepIds = markCompleted
+        ? capTutorialCompletedStepIds([...baseCompletedStepIds, expectedStepId])
+        : baseCompletedStepIds;
+      updateTutorialState({
+        stepId: finish ? expectedStepId : getNextTutorialStepId(expectedStepId),
+        completedStepIds,
+        finished: finish || Boolean((optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.finished),
+        inactive: finish ? false : Boolean((optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.inactive)
+      }, { actionLabel });
+      return true;
+    };
+    const activation = tutorialStepActivationRef.current;
+    const elapsedMs = activation?.stepId === expectedStepId ? getActionPerfNow() - activation.enteredAt : Infinity;
+    const minDisplayMs = 650;
+    if (!bypassMinimumDelay && elapsedMs < minDisplayMs) {
+      if (tutorialAdvanceDelayTimerRef.current) window.clearTimeout(tutorialAdvanceDelayTimerRef.current);
+      tutorialAdvanceDelayTimerRef.current = window.setTimeout(() => {
+        tutorialAdvanceDelayTimerRef.current = null;
+        performAdvance();
+      }, Math.max(0, minDisplayMs - elapsedMs));
+      return Promise.resolve(true);
+    }
+    return Promise.resolve(performAdvance());
+  };
+
+  const advanceTutorialStep = ({ markCompleted = true, finish = false, actionLabel = 'manual next', force = false } = {}) => {
+    if (!isTutorialGame || !currentTutorialStep) return Promise.resolve(false);
+    if (force) return forceAdvanceTutorialStep(currentTutorialStep.id, actionLabel, { markCompleted, finish });
+    return advanceTutorialStepFrom(currentTutorialStep.id, { markCompleted, finish, actionLabel });
+  };
+
+  const goBackTutorialStep = () => {
+    if (!canGoBackTutorial || !currentTutorialStep) return Promise.resolve(false);
+    return updateTutorialState({ stepId: getPreviousTutorialStepId(currentTutorialStep.id) }, { actionLabel: 'manual back' });
+  };
+
+  const resumeTutorialOverlay = () => {
+    setTutorialMinimized(false);
+    setTutorialExitConfirmOpen(false);
+  };
+
+  const requestExitTutorial = () => {
+    if (game?.isTutorial) {
+      setTutorialExitConfirmOpen(true);
+      return;
+    }
+    onExit?.();
+  };
+
+  const confirmExitTutorial = () => {
+    setTutorialExitConfirmOpen(false);
+    setTutorialMinimized(false);
+    if (game?.isTutorial) {
+      updateTutorialState({ inactive: true }, { actionLabel: 'exit tutorial' });
+      return;
+    }
+    onExit?.();
+  };
+
+  const resetTutorialBattle = async () => {
+    if (!gameId || !game?.isTutorial || !userId || tutorialResetBusy) return false;
+    setTutorialResetBusy(true);
+    try {
+      const existingBolasId = (game.players || []).find((player) => player?.isScriptedOpponent || /Nicol Bolas/i.test(player?.name || ''))?.id || `tutorial-bolas-${gameId}`;
+      const hydratedTutorialCards = await hydrateTutorialDuelCards(userId, existingBolasId);
+      const resetFields = buildFreshTutorialResetFields({
+        playerId: userId,
+        playerName: displayName || 'Planeswalker',
+        bolasId: existingBolasId,
+        existingPlayers: game.players || [],
+        cards: hydratedTutorialCards
+      });
+      const nextTutorial = resetFields.tutorial;
+      optimisticTutorialRef.current = nextTutorial;
+      setOptimisticTutorialState(nextTutorial);
+      setTutorialMinimized(false);
+      setTutorialOverlayError(null);
+      setSelectedCard(null);
+      setZoomedCard(null);
+      setViewZone(null);
+      setSearchLibraryOwner(null);
+      setLibraryMenuOpen(false);
+      setLibraryBatchOpen(false);
+      setTokenModal(null);
+      setPlayerStatsOpen(false);
+      setStackDetailOpen(false);
+      setUndoConfirmOpen(false);
+      tutorialSetupAppliedRef.current = { stepId: null, signature: null };
+      setOptimisticGame(null);
+      setTutorialDebugTiming({ lastAction: null, localAdvanceMs: null, firestoreWriteMs: null, lastCompletionEvent: null, ignoredCompletion: null });
+      setTutorialActivationDebug(null);
+      await updateDoc(doc(db, 'games_v3', gameId), {
+        ...resetFields,
+        updatedAt: serverTimestamp()
+      });
+      setNotification('Tutorial battle reset to a fresh opening state.');
+      setTimeout(() => setNotification(null), 2500);
+      return true;
+    } catch (error) {
+      console.error('Reset tutorial battle failed', error);
+      const message = error?.message?.includes(TUTORIAL_CARD_IMAGES_ERROR) ? TUTORIAL_CARD_IMAGES_ERROR : 'Reset failed. You can still exit tutorial and continue playing.';
+      setTutorialOverlayError(message);
+      setNotification(message);
+      setTimeout(() => setNotification(null), 3000);
+      return false;
+    } finally {
+      setTutorialResetBusy(false);
+    }
+  };
+  const continueExploringTutorial = () => {
+    if (!game?.isTutorial) return Promise.resolve(false);
+    return updateTutorialState({ inactive: true, finished: true }, { actionLabel: 'explore tutorial' });
+  };
+
+  const gameLogHasMessage = (message) => {
+    const currentTutorialRunId = game?.tutorial?.runId || null;
+    return (game?.log || []).some((entry) => {
+      if (currentTutorialRunId && entry?.tutorialRunId !== currentTutorialRunId) return false;
+      return String(entry?.message || entry?.desc || '').includes(message);
+    });
+  };
+  const tutorialBolasBattlefieldHasIsland = () => {
+    const bolasId = opponent?.id || (game?.players || []).find((player) => /Nicol Bolas/i.test(player?.name || ''))?.id || null;
+    return Boolean(bolasId && (game?.cards || []).some((card) => (card.name === 'Island' || card.card_faces?.some((face) => face?.name === 'Island')) && card.controllerId === bolasId && card.ownerId === bolasId && card.zone === ZONES.BATTLEFIELD));
+  };
+  const canCompleteGameLogTutorialStep = (stepId) => {
+    if (stepId === 'B1_01_bolas_island') return gameLogHasMessage('Nicol Bolas played Island') && tutorialBolasBattlefieldHasIsland();
+    if (stepId === 'B1_02_bolas_pass') return gameLogHasMessage('Nicol Bolas passed the turn');
+    return true;
+  };
+
+  const maybeCompleteTutorialStep = (stepId, { source = 'user-action', eventAt = getActionPerfNow(), detail = '' } = {}) => {
+    const liveStepId = (optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.stepId || 'intro';
+    const activation = tutorialStepActivationRef.current;
+    const completionEvent = { stepId, source, detail, at: Math.round(eventAt), activationId: activation?.id || null };
+    if (!isTutorialGame || liveStepId !== stepId) {
+      warnTutorialAdvanceRefused(stepId, !isTutorialGame ? 'not a tutorial game' : 'maybeCompleteTutorialStep live step did not match requested step', { completionEvent });
+      return Promise.resolve(false);
+    }
+    const ignore = (reason) => {
+      setTutorialDebugTiming((current) => ({ ...current, ignoredCompletion: { ...completionEvent, reason } }));
+      warnTutorialAdvanceRefused(stepId, reason, { completionEvent, activation });
+      return Promise.resolve(false);
+    };
+    if (!activation || activation.stepId !== stepId) return ignore('step not armed after activation');
+    if (eventAt < activation.enteredAt) return ignore('event before step activation');
+    if (source === 'state-transition') {
+      const baseline = activation.baseline || {};
+      if (detail === 'selectedCard' && baseline.selectedCardId) return ignore('card detail was already open at step activation');
+      if (detail === 'stackDetailOpen' && baseline.stackDetailOpen) return ignore('stack panel was already open at step activation');
+      if (detail === 'chatOpen' && baseline.chatOpen) return ignore('chat was already open at step activation');
+      if (detail === 'recapOpen' && baseline.recapOpen) return ignore('game log was already open at step activation');
+      if (detail === 'libraryMenuOpen' && baseline.libraryMenuOpen) return ignore('library tools were already open at step activation');
+      if (detail === 'libraryBatchOpen' && baseline.libraryBatchOpen) return ignore('batch library panel was already open at step activation');
+      if (detail === 'tokenModalOpen' && baseline.tokenModalOpen) return ignore('token tools were already open at step activation');
+      if (detail === 'playerStatsOpen' && baseline.playerStatsOpen) return ignore('player panel was already open at step activation');
+      if (detail === 'revealsOpen' && baseline.revealsOpen) return ignore('reveal panel was already open at step activation');
+    }
+    if (detail === 'recapOpen' && !canCompleteGameLogTutorialStep(stepId)) {
+      return ignore('game log opened before the expected tutorial log entry/state existed');
+    }
+    if (stepId === 'G07_undo_mulligan' && source !== 'undo-handler') {
+      return ignore('G07_undo_mulligan waits for actual Undo action; scripted hand match alone is ignored');
+    }
+    setTutorialDebugTiming((current) => ({ ...current, lastCompletionEvent: completionEvent, ignoredCompletion: null }));
+    return advanceTutorialStepFrom(stepId, { markCompleted: true, actionLabel: source === 'user-action' ? `step:${stepId}` : `step:${stepId}:${detail || source}` });
+  };
+
+
+  const maybeCompleteTutorialAction = (actionType, payload = {}) => {
+    const liveStepId = (optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.stepId || 'intro';
+    if (!isTutorialGame || !liveStepId) return Promise.resolve(false);
+    const stepId = liveStepId;
+    const eventAt = getActionPerfNow();
+    const activation = tutorialStepActivationRef.current;
+    const completionEvent = { stepId, source: 'game-action', detail: actionType, at: Math.round(eventAt), activationId: activation?.id || null };
+    const ignoreActionCompletion = (reason) => {
+      setTutorialDebugTiming((current) => ({ ...current, ignoredCompletion: { ...completionEvent, reason } }));
+      if (isDebugActionsEnabled() || isPerfActionsEnabled()) console.debug('[Tutorial action completion ignored]', { ...completionEvent, reason, activation, payload });
+      return Promise.resolve(false);
+    };
+    if (!activation || activation.stepId !== stepId) return ignoreActionCompletion('step not armed after activation');
+    if (eventAt < activation.enteredAt) return ignoreActionCompletion('action before step activation');
+    if (stepId === 'P1_11_pass' && actionType === 'PASS_PRIORITY') {
+      if ((game?.stack || []).length > 0) return ignoreActionCompletion('P1_11 requires an empty stack before passing toward end of turn');
+      if (game?.priorityPlayerId && game.priorityPlayerId !== userId) return ignoreActionCompletion('P1_11 requires Luis to have priority before tapping Pass');
+    }
+    const actionStepMap = {
+      DRAW_CARD: ['beginning_phase_draw', 'P2_02_draw_slip', 'P3_05_draw_ponder', 'P4_02_draw_mountain', 'P4_07_draw_ponder'],
+      PLAY_LAND: ['play_land', 'P1_01_play_mountain', 'P2_04_play_island', 'P3_07_play_mountain', 'P4_04_play_third_mountain'],
+      CAST_SPELL: ['cast_spell_to_stack', 'cast_delver', 'final_spell', 'P1_08_target_bolas', 'P2_08_cast_delver', 'B3_05_cast_slip', 'F3_cast_bolt_bolas', 'F7_reverberate_bolt'],
+      COPY_STACK_ITEM: ['copy_stack_item', 'final_in_response', 'F8_resolve_reverberate'],
+      RESOLVE_STACK_TOP: ['resolve_stack_item', 'counter_stack_item', 'cast_delver', 'final_in_response', 'P1_10_resolve_bolt', 'P2_09_resolve_delver', 'B2_04_resolve_knight', 'B3_06_resolve_slip', 'P4_05_cast_ponder', 'F8_resolve_reverberate', 'F9_resolve_bolt_copy_lethal', 'F10_resolve_negate_original'],
+      COUNTER_STACK_TOP: ['counter_stack_item', 'final_in_response', 'B3_09_fizzle_doom_blade', 'F10_resolve_negate_original'],
+      PASS_PRIORITY: ['pass_priority', 'final_trial', 'async_oath', 'P1_11_pass', ...TUTORIAL_NATURAL_PHASE_ADVANCE_STEP_IDS, 'B2_05_bolas_pass', 'P3_08_pass', 'B3_11_bolas_pass', 'P4_15_pass', 'B4_09_bolas_pass'],
+      MANUAL_SET_STEP: payload?.phaseId === 'combat_attackers' ? ['set_attackers_phase'] : (payload?.phaseId === 'untap' ? ['P4_01_untap_phase_in'] : []),
+      SET_COMBAT_DAMAGE_STEP: payload?.combatDamageStep === COMBAT_DAMAGE_STEPS.FIRST_STRIKE ? ['first_strike_step', 'B4_05_first_strike_damage'] : (payload?.combatDamageStep === COMBAT_DAMAGE_STEPS.REGULAR ? ['regular_damage_step', 'P4_12_regular_damage', 'B4_08_regular_damage'] : []),
+      SET_ATTACK_TARGET: ['declare_attacker_player', 'attack_planeswalker_battle_note', 'P4_10_attack_bolas'],
+      TOGGLE_BLOCK_TARGET: ['declare_blocker_note', 'B4_04_block_with_llanowar'],
+      TAP_TOGGLE: ['tap_mountain_red', 'tap_card', 'P1_04_tap_mountain', 'P2_05_tap_island', 'B3_03_tap_island_slip', 'F1_tap_mountain_bolt', 'F5_tap_two_mountains'],
+      TEMP_DAMAGE: ['damage_markers', 'B4_06_mark_llanowar_damage'],
+      MOD_COUNTER: ['add_counter', 'B3_07_add_counter'],
+      ADD_CARD_REMINDER: ['add_reminder', 'B3_10_add_phase_reminder'],
+      PHASE_TOGGLE: ['phase_card', 'B3_08_phase_insectile', 'P4_01_untap_phase_in'],
+      SWITCH_CARD_FACE: ['transform_card', 'face_down_reveal', 'P3_04_transform_delver'],
+      TOGGLE_FACE: ['face_down_reveal'],
+      REVEAL_CARD: ['reveal_top_delver', 'P3_03_delver_reveal_ponder'],
+      BATCH_REVEAL_LIBRARY: ['reveal_top_delver', 'batch_library_actions', 'opponent_library_tools'],
+      BATCH_DRAW_LIBRARY: ['batch_library_actions', 'opponent_library_tools'],
+      BATCH_MILL_LIBRARY: ['batch_library_actions', 'opponent_library_tools'],
+      BATCH_EXILE_LIBRARY: ['batch_library_actions', 'opponent_library_tools'],
+      BATCH_SCRY_LIBRARY: ['batch_library_actions', 'opponent_library_tools'],
+      BATCH_SURVEIL_LIBRARY: ['batch_library_actions', 'opponent_library_tools'],
+      REORDER_TOP_LIBRARY: ['opponent_library_tools'],
+      SHUFFLE_LIBRARY: ['opponent_library_tools'],
+      CREATE_TOKEN: ['create_token', 'deck_tokens_note', 'custom_token_note', 'tool_dragon_fodder', 'tool_goblin_template', 'tool_mirror_cell'],
+      TARGET: ['target_system'],
+      ATTACH_CARD: (payload?.targetPlayerId || payload?.targetType === 'player') ? ['attach_to_player_note'] : ['attach_to_permanent'],
+      CLONE_CARD: ['clone_control'],
+      CHANGE_CONTROL: [],
+      PRIVATE_PEEK_HAND: ['private_hand_peek', 'tool_gitaxian_probe'],
+      REVEAL_ALL_HAND: ['reveal_hand_note', 'tool_open_book_hex'],
+      TOGGLE_HAND_REVEAL: ['reveal_hand_note'],
+      PLAYER_COUNTER: ['player_counters', 'tool_vraskas_fall_poison', 'tool_attune_energy', 'tool_ezuri_experience'],
+      MANA_POOL_ADJUST: ['add_red_mana', 'mana_pool', 'P1_05_add_r', 'P2_06_add_u', 'B3_04_add_u_slip', 'F2_add_r', 'F6_add_rr'],
+      MANA_POOL_CLEAR: ['mana_pool'],
+      PLAYER_STATUS_TOGGLE: ['statuses', 'tool_throne_monarch', 'tool_citys_blessing'],
+      RING_TEMPTATION: ['statuses', 'tool_birthday_escape_ring'],
+      TOGGLE_PLAYER_STATUS: ['statuses'],
+      SET_DAY_NIGHT: ['statuses', 'tool_celestus_day'],
+      ADD_PLAYER_EMBLEM: ['emblems', 'tool_chandra_emblem'],
+      ADD_PLAYER_REMINDER: ['dungeons_note', 'tool_nadaar_dungeon'],
+      ROOM_CODE_COPIED: ['G01_room_code', 'intro', 'room_code', 'watch_cleanup_note'],
+      COMMANDER_TAX: ['commander_note'],
+      COMMANDER_DAMAGE: ['commander_note'],
+      SET_COMMANDER: ['commander_note']
+    };
+    const getTutorialActionCard = (cardId) => (game?.cards || []).find((card) => card.instanceId === cardId);
+    const targetNames = [
+      ...((payload?.targetIds || []).map((targetId) => getCardDisplayName(getTutorialActionCard(targetId), ''))),
+      ...((payload?.targetPlayerIds || []).map((targetPlayerId) => (game?.players || []).find((player) => player.id === targetPlayerId)?.name || ''))
+    ].filter(Boolean);
+    const stackItemForPayload = () => (game?.stack || []).find((item) => item?.id === payload?.stackItemId || item?.sourceId === payload?.stackItemId);
+    const tutorialActionMatchesStep = () => {
+      const naturalPhaseAdvance = TUTORIAL_NATURAL_PHASE_ADVANCE_STEPS[stepId];
+      if (naturalPhaseAdvance) {
+        return actionType === 'PASS_PRIORITY' && (game?.stack || []).length === 0 && game?.phase === naturalPhaseAdvance.fromPhase && (!game?.priorityPlayerId || game.priorityPlayerId === userId);
+      }
+      if (stepId === 'P2_02_draw_slip') {
+        tutorialDrawSlipLastActionTypeRef.current = actionType;
+        const handCards = (game?.cards || []).filter((card) => card.ownerId === userId && card.zone === ZONES.HAND);
+        const handCardNames = handCards.map((card) => getCardDisplayName(card, ''));
+        const hasSlipOutInHand = handCards.some((card) => getCardDisplayName(card, '') === 'Slip Out the Back');
+        console.log('[Tutorial Draw Slip Out completion]', {
+          activeStepId: stepId,
+          lastActionType: actionType,
+          handCardNames,
+          hasSlipOutInHand,
+          phase: game?.phase || null
+        });
+        return actionType === 'DRAW_CARD' && hasSlipOutInHand;
+      }
+      if (['tap_mountain_red', 'P1_04_tap_mountain', 'F1_tap_mountain_bolt', 'F5_tap_two_mountains'].includes(stepId)) {
+        const card = getTutorialActionCard(payload?.cardId);
+        return actionType === 'TAP_TOGGLE' && getCardDisplayName(card) === 'Mountain' && card?.zone === ZONES.BATTLEFIELD && !card?.tapped;
+      }
+      if (['add_red_mana', 'P1_05_add_r', 'F2_add_r', 'F6_add_rr'].includes(stepId)) return actionType === 'MANA_POOL_ADJUST' && payload?.color === 'R' && Number(payload?.amount) > 0;
+      if (['P2_06_add_u', 'B3_04_add_u_slip'].includes(stepId)) return actionType === 'MANA_POOL_ADJUST' && payload?.color === 'U' && Number(payload?.amount) > 0;
+      if (['cast_spell_to_stack', 'P1_08_target_bolas', 'F3_cast_bolt_bolas'].includes(stepId)) {
+        const card = getTutorialActionCard(payload?.cardId);
+        const targetsBolas = targetNames.some((name) => /Nicol Bolas/i.test(name)) || (payload?.targetPlayerIds || []).some((targetPlayerId) => targetPlayerId && targetPlayerId !== userId);
+        return actionType === 'CAST_SPELL' && getCardDisplayName(card) === 'Lightning Bolt' && targetsBolas;
+      }
+      if (stepId === 'copy_stack_item') {
+        const stackItem = stackItemForPayload();
+        return actionType === 'COPY_STACK_ITEM' && stackItem?.name === 'Lightning Bolt';
+      }
+      if (stepId === 'final_spell') {
+        const card = getTutorialActionCard(payload?.cardId);
+        const targetsBolas = targetNames.some((name) => /Nicol Bolas/i.test(name)) || (payload?.targetPlayerIds || []).some((targetPlayerId) => targetPlayerId && targetPlayerId !== userId);
+        return actionType === 'CAST_SPELL' && getCardDisplayName(card) === 'Lightning Bolt' && targetsBolas;
+      }
+      if (stepId === 'F7_reverberate_bolt') {
+        const card = getTutorialActionCard(payload?.cardId);
+        return actionType === 'CAST_SPELL' && getCardDisplayName(card) === 'Reverberate';
+      }
+      if (stepId === 'target_system') {
+        const source = getTutorialActionCard(payload?.sourceId);
+        const targetsLlanowar = (payload?.targetIds || []).some((targetId) => getCardDisplayName(getTutorialActionCard(targetId)) === 'Llanowar Elves');
+        return actionType === 'TARGET' && getCardDisplayName(source) === 'Giant Growth' && targetsLlanowar;
+      }
+      if (stepId === 'attach_to_permanent') {
+        const source = getTutorialActionCard(payload?.cardId);
+        const target = getTutorialActionCard(payload?.targetId);
+        return actionType === 'ATTACH_CARD' && getCardDisplayName(source) === 'Rancor' && getCardDisplayName(target) === 'Llanowar Elves';
+      }
+      if (stepId === 'attach_to_player_note') {
+        const source = getTutorialActionCard(payload?.cardId);
+        const targetPlayerId = payload?.targetPlayerId || payload?.targetId;
+        const targetPlayer = (game?.players || []).find((player) => player.id === targetPlayerId);
+        return actionType === 'ATTACH_CARD' && getCardDisplayName(source) === 'Curse of the Pierced Heart' && /Nicol Bolas/i.test(targetPlayer?.name || '');
+      }
+      if (stepId === 'clone_control') {
+        const card = getTutorialActionCard(payload?.cardId);
+        return actionType === 'CLONE_CARD' && getCardDisplayName(card) === 'Clone';
+      }
+      if (['declare_blocker_note', 'B4_04_block_with_llanowar'].includes(stepId)) {
+        const blocker = getTutorialActionCard(payload?.cardId);
+        const attacker = getTutorialActionCard(payload?.attackerId);
+        return actionType === 'TOGGLE_BLOCK_TARGET' && game?.phase === 'combat_blockers' && getCardDisplayName(blocker) === 'Llanowar Elves' && ['Dragon Token', 'Knight of Malice'].includes(getCardDisplayName(attacker));
+      }
+      return true;
+    };
+    if ((actionStepMap[actionType] || []).includes(stepId)) {
+      if (!tutorialActionMatchesStep()) return ignoreActionCompletion('action did not match exact tutorial step requirements');
+      setTutorialDebugTiming((current) => ({ ...current, lastCompletionEvent: completionEvent, ignoredCompletion: null }));
+      if (stepId === 'final_trial' && actionType === 'PASS_PRIORITY') {
+        const finishTutorial = () => {
+          const latestStepId = (optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.stepId || 'intro';
+          if (latestStepId !== stepId) return false;
+          const baseCompletedStepIds = capTutorialCompletedStepIds((optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.completedStepIds || []);
+          updateTutorialState({
+            stepId: 'tutorial_complete',
+            completedStepIds: capTutorialCompletedStepIds([...baseCompletedStepIds, stepId]),
+            finished: true,
+            inactive: false
+          }, { actionLabel: actionType });
+          return true;
+        };
+        const elapsedMs = getActionPerfNow() - activation.enteredAt;
+        if (elapsedMs < 650) {
+          if (tutorialAdvanceDelayTimerRef.current) window.clearTimeout(tutorialAdvanceDelayTimerRef.current);
+          tutorialAdvanceDelayTimerRef.current = window.setTimeout(() => {
+            tutorialAdvanceDelayTimerRef.current = null;
+            finishTutorial();
+          }, 650 - elapsedMs);
+          return Promise.resolve(true);
+        }
+        return Promise.resolve(finishTutorial());
+      }
+      return advanceTutorialStepFrom(stepId, { markCompleted: true, actionLabel: actionType });
+    }
+    return Promise.resolve(false);
+  };
+
+
+
+
+  useEffect(() => {
+    if (!isTutorialGame || !selectedCard) return;
+    const liveStepId = (optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.stepId || 'intro';
+    if (liveStepId === 'hand_area' && selectedCard.zone === ZONES.HAND && selectedCard.controllerId === viewAsPlayerId) {
+      maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'selectedCard' });
+    }
+    if (['G04_open_bolt', 'P1_06_open_bolt'].includes(liveStepId) && selectedCard.zone === ZONES.HAND && /Lightning Bolt/i.test(getCardDisplayName(selectedCard, ''))) {
+      maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'selectedCard' });
+    }
+    if (liveStepId === 'P2_07_open_delver' && selectedCard.zone === ZONES.HAND && /Delver of Secrets/i.test(getCardDisplayName(selectedCard, ''))) {
+      maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'selectedCard' });
+    }
+  }, [isTutorialGame, selectedCard?.instanceId, selectedCard?.zone, selectedCard?.controllerId, viewAsPlayerId]);
+
+  useEffect(() => {
+    if (!isTutorialGame || !userId) return;
+    const liveStepId = (optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.stepId || 'intro';
+    if (liveStepId !== 'G06_mulligan_7') return;
+
+    const activation = tutorialStepActivationRef.current;
+    if (!activation || activation.stepId !== 'G06_mulligan_7') return;
+
+    const latestUndoEntry = getLatestUndoEntry(game?.undoStack || []);
+    if (!isMulliganUndoEntry(latestUndoEntry)) return;
+    if (Number(latestUndoEntry.timestamp || 0) < Number(activation.wallEnteredAt || 0)) return;
+
+    const currentHandSignature = getTutorialHandSignature(game?.cards || [], userId);
+    if (currentHandSignature === TUTORIAL_SCRIPTED_OPENING_HAND_SIGNATURE) return;
+
+    maybeCompleteTutorialStep('G06_mulligan_7', { source: 'state-transition', detail: 'mulliganChangedHandWithUndoEntry' });
+  }, [isTutorialGame, userId, game?.cards, game?.undoStack, displayedTutorialState?.stepId, game?.tutorial?.stepId]);
+
+  useEffect(() => {
+    if (!isTutorialGame || !userId) return;
+    const liveStepId = (optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.stepId || 'intro';
+    if (liveStepId !== 'G07_undo_mulligan') {
+      g07ScriptedHandIgnoredRef.current = false;
+      return;
+    }
+    if (!hasExactTutorialOpeningHand(game?.cards || [], userId) || g07ScriptedHandIgnoredRef.current) return;
+
+    g07ScriptedHandIgnoredRef.current = true;
+    const ignoredCompletion = {
+      stepId: 'G07_undo_mulligan',
+      source: 'state-transition',
+      detail: 'tutorialHandRestored',
+      at: Math.round(getActionPerfNow()),
+      activationId: tutorialStepActivationRef.current?.id || null,
+      reason: 'G07 waiting for actual Undo action; scripted hand match alone is ignored.'
+    };
+    setTutorialDebugTiming((current) => ({ ...current, ignoredCompletion }));
+    if (isDebugActionsEnabled() || isPerfActionsEnabled()) {
+      console.debug('G07 waiting for actual Undo action; scripted hand match alone is ignored.');
+    }
+  }, [isTutorialGame, userId, game?.cards, displayedTutorialState?.stepId, game?.tutorial?.stepId]);
+
+  useEffect(() => {
+    if (!isTutorialGame || !userId) return;
+    const liveStepId = (optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.stepId || 'intro';
+    if (liveStepId !== 'P2_02_draw_slip') return;
+
+    const handCards = (game?.cards || []).filter((card) => card.ownerId === userId && card.zone === ZONES.HAND);
+    const handCardNames = handCards.map((card) => getCardDisplayName(card, ''));
+    const hasSlipOutInHand = handCards.some((card) => getCardDisplayName(card, '') === 'Slip Out the Back');
+    const lastActionType = tutorialDrawSlipLastActionTypeRef.current;
+
+    console.log('[Tutorial Draw Slip Out completion]', {
+      activeStepId: liveStepId,
+      lastActionType,
+      handCardNames,
+      hasSlipOutInHand,
+      phase: game?.phase || null
+    });
+
+    if (!hasSlipOutInHand) return;
+    if (lastActionType === 'DRAW_CARD' || lastActionType === null) {
+      maybeCompleteTutorialStep('P2_02_draw_slip', { source: 'state-transition', detail: hasSlipOutInHand && lastActionType === null ? 'resume-slip-already-in-hand' : 'draw-slip-in-hand' });
+    }
+  }, [isTutorialGame, userId, game?.cards, game?.phase, displayedTutorialState?.stepId, game?.tutorial?.stepId]);
+
+  useEffect(() => {
+    if (!isTutorialGame) return;
+    const liveStepId = (optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.stepId || 'intro';
+    if (stackDetailOpen && ['inspect_stack', 'bolas_negate', 'bolas_removal', 'final_bolas_response', 'P1_09_inspect_stack', 'B2_03_bolas_cast_knight', 'B3_02_bolas_doom_blade', 'F4_bolas_negate_real_mana'].includes(liveStepId)) maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'stackDetailOpen' });
+    if (recapOpen && ['game_log', 'async_oath', 'manual_toolbox_note', 'B1_01_bolas_island', 'B1_02_bolas_pass', 'B2_01_bolas_draw_mountain', 'B3_01_bolas_swamp', 'B4_01_bolas_untaps', 'F11_victory_complete'].includes(liveStepId)) maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'recapOpen' });
+    if (libraryMenuOpen && ['open_library_tools', 'opponent_library_tools', 'G05_open_library_tools', 'P3_03_delver_reveal_ponder', 'P4_06_reorder_ponder', 'tool_ponder_reorder', 'tool_opt_scry', 'tool_consider_surveil', 'tool_portent_bolas_library', 'tool_praetors_grasp', 'tool_thought_scour', 'tool_light_up_stage'].includes(liveStepId)) maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'libraryMenuOpen' });
+    if (libraryBatchOpen && liveStepId === 'batch_library_actions') maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'libraryBatchOpen' });
+    if (tokenModal && ['deck_tokens_note', 'custom_token_note', 'tool_dragon_fodder', 'tool_goblin_template', 'tool_mirror_cell'].includes(liveStepId)) maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'tokenModalOpen' });
+    if (playerStatsOpen && ['player_panel', 'dungeons_note', 'commander_note', 'tool_throne_monarch', 'tool_nadaar_dungeon', 'tool_celestus_day', 'tool_birthday_escape_ring', 'tool_vraskas_fall_poison', 'tool_attune_energy', 'tool_ezuri_experience', 'tool_chandra_emblem', 'tool_citys_blessing'].includes(liveStepId)) maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'playerStatsOpen' });
+    if (revealsOpen && ['reveal_hand_note', 'tool_open_book_hex', 'tool_gitaxian_probe'].includes(liveStepId)) maybeCompleteTutorialStep(liveStepId, { source: 'state-transition', detail: 'revealsOpen' });
+  }, [isTutorialGame, stackDetailOpen, chatOpen, recapOpen, libraryMenuOpen, libraryBatchOpen, Boolean(tokenModal), playerStatsOpen, revealsOpen, game?.log, game?.cards]);
+
+  useEffect(() => {
+    if (!isTutorialGame || !userId) return;
+    const activeStepId = (optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.stepId || 'intro';
+    if (activeStepId !== 'P2_10_pass') return;
+
+    const currentTurnPlayer = (game?.players || []).find((player) => player?.id === game?.turnPlayerId) || null;
+    const currentPlayerName = currentTurnPlayer?.name || null;
+    const turnPlayerId = game?.turnPlayerId || null;
+    const autoPassMode = getPlayerAutoPassConfig(game, userId).mode;
+    const usedAutoPassUntilEndThisStep = tutorialP210UsedAutoPassUntilEndRef.current === true;
+    const turnPassedToBolas = Boolean(currentTurnPlayer && /Nicol Bolas/i.test(currentPlayerName || ''));
+    const shouldComplete = usedAutoPassUntilEndThisStep && turnPassedToBolas;
+
+    console.log('[Tutorial step 28 completion]', {
+      activeStepId,
+      turnPlayerId,
+      currentPlayerName,
+      phase: game?.phase || null,
+      autoPassMode,
+      usedAutoPassUntilEndThisStep,
+      shouldComplete
+    });
+
+    if (!shouldComplete) return;
+    maybeCompleteTutorialStep('P2_10_pass', { source: 'state-transition', detail: 'autopassTurnHandedToBolas' });
+  }, [isTutorialGame, userId, game?.turnPlayerId, game?.phase, game?.players, game?.autopass, displayedTutorialState?.stepId, game?.tutorial?.stepId]);
+
+
+  const buildTutorialCardInstance = useCallback((cardName, ownerId, zone = ZONES.HAND, controllerId = ownerId) => {
+    const safeName = String(cardName || 'Tutorial Card');
+    const safeOwnerId = ownerId || userId || 'tutorial-player';
+    const cachedCard = tutorialCardCatalogCache.get(normalizeTutorialCatalogKey(safeName));
+    const seed = cachedCard || getTutorialSeedByName(safeName);
+    return sanitizeScryfallCardForGame({ layout: 'normal', ...addStaticTutorialImageUris(seed) }, {
+      id: `tutorial-${safeName.toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'card'}`,
+      instanceId: generateCardId(),
+      ownerId: safeOwnerId,
+      controllerId: controllerId || safeOwnerId,
+      zone,
+      tapped: false,
+      counters: {},
+      tempDamage: 0,
+      faceDown: false,
+      x: 8,
+      y: 8
+    });
+  }, [userId]);
+
+  const ensureTutorialStepSetup = useCallback(async (stepId) => {
+    if (!gameId || !game?.isTutorial || game?.tutorial?.inactive || !userId) return;
+    if (!game || typeof game !== 'object') return;
+    const logTutorialPhaseDebug = (details = {}) => {
+      console.debug('[Tutorial phase]', {
+        stepId,
+        requestedPhase: details.requestedPhase || null,
+        currentPhase: game?.phase || null,
+        didWrite: Boolean(details.didWrite),
+        reason: details.reason || null,
+        setupAppliedSignature: details.setupAppliedSignature || tutorialSetupAppliedRef.current?.signature || null,
+        actionSource: 'setup'
+      });
+    };
+    const opponentId = opponent?.id || (game?.players || []).find((player) => player?.isScriptedOpponent || /Nicol Bolas/i.test(player?.name || ''))?.id || null;
+    if (stepId === 'B1_01_bolas_island' && !opponentId) {
+      logTutorialPhaseDebug({ didWrite: false, reason: 'waiting for scripted Nicol Bolas opponent before land setup' });
+      return;
+    }
+
+    const needs = {
+      play_land: [{ name: 'Mountain', zone: ZONES.HAND, ownerId: userId, controllerId: userId }],
+      tap_mountain_red: [{ name: 'Mountain', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId, tapped: false }],
+      add_red_mana: [{ name: 'Mountain', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId, tapped: true }],
+      cast_spell_to_stack: [
+        { name: 'Lightning Bolt', zone: ZONES.HAND, ownerId: userId, controllerId: userId },
+        { name: 'Mountain', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId, tapped: true }
+      ],
+      inspect_stack: [{ name: 'Lightning Bolt', zone: 'stack_zone', ownerId: userId, controllerId: userId, stack: true }],
+      bolas_negate: [
+        { name: 'Lightning Bolt', zone: 'stack_zone', ownerId: userId, controllerId: userId, stack: true },
+        { name: 'Negate', zone: 'stack_zone', ownerId: opponent?.id || userId, controllerId: opponent?.id || userId, stack: true, targetName: 'Lightning Bolt' }
+      ],
+      copy_stack_item: [
+        { name: 'Mountain', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId },
+        { name: 'Reverberate', zone: ZONES.HAND, ownerId: userId, controllerId: userId },
+        { name: 'Lightning Bolt', zone: 'stack_zone', ownerId: userId, controllerId: userId, stack: true },
+        { name: 'Negate', zone: 'stack_zone', ownerId: opponent?.id || userId, controllerId: opponent?.id || userId, stack: true, targetName: 'Lightning Bolt' }
+      ],
+      resolve_stack_item: [
+        { name: 'Lightning Bolt', zone: 'stack_zone', ownerId: userId, controllerId: userId, stack: true },
+        { name: 'Negate', zone: 'stack_zone', ownerId: opponent?.id || userId, controllerId: opponent?.id || userId, stack: true, targetName: 'Lightning Bolt' }
+      ],
+      counter_stack_item: [
+        { name: 'Lightning Bolt', zone: 'stack_zone', ownerId: userId, controllerId: userId, stack: true },
+        { name: 'Negate', zone: 'stack_zone', ownerId: opponent?.id || userId, controllerId: opponent?.id || userId, stack: true, targetName: 'Lightning Bolt' }
+      ],
+      cast_delver: [
+        { name: 'Island', zone: ZONES.HAND, ownerId: userId, controllerId: userId },
+        { name: 'Delver of Secrets', zone: ZONES.HAND, ownerId: userId, controllerId: userId }
+      ],
+      reveal_top_delver: [{ name: 'Lightning Bolt', zone: ZONES.LIBRARY, ownerId: userId, controllerId: userId }],
+      transform_card: [{ name: 'Delver of Secrets', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId, activeFaceIndex: 0 }],
+      bolas_removal: [
+        { name: 'Delver of Secrets', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId, activeFaceIndex: 1 },
+        { name: 'Doom Blade', zone: 'stack_zone', ownerId: opponent?.id || userId, controllerId: opponent?.id || userId, stack: true, targetName: 'Insectile Aberration' }
+      ],
+      phase_card: [
+        { name: 'Island', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId },
+        { name: 'Slip Out the Back', zone: 'stack_zone', ownerId: userId, controllerId: userId, stack: true, targetName: 'Insectile Aberration' },
+        { name: 'Delver of Secrets', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId, activeFaceIndex: 1 }
+      ],
+      add_counter: [{ name: 'Delver of Secrets', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId, activeFaceIndex: 1 }],
+      add_reminder: [{ name: 'Delver of Secrets', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId, activeFaceIndex: 1 }],
+      tap_card: [{ name: 'Delver of Secrets', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId, activeFaceIndex: 1 }],
+      face_down_reveal: [{ name: 'Delver of Secrets', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId, activeFaceIndex: 1 }],
+      set_attackers_phase: [{ name: 'Llanowar Elves', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId }],
+      declare_attacker_player: [{ name: 'Llanowar Elves', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId }],
+      attack_planeswalker_battle_note: [
+        { name: 'Llanowar Elves', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId },
+        { name: 'Nicol Bolas, Planeswalker', zone: ZONES.BATTLEFIELD, ownerId: opponent?.id || userId, controllerId: opponent?.id || userId }
+      ],
+      bolas_blocks_summary: [
+        { name: 'Llanowar Elves', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId },
+        { name: 'Zombie Token', zone: ZONES.BATTLEFIELD, ownerId: opponent?.id || userId, controllerId: opponent?.id || userId }
+      ],
+      damage_markers: [{ name: 'Llanowar Elves', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId }],
+      bolas_declares_attacker: [
+        { name: 'Dragon Token', zone: ZONES.BATTLEFIELD, ownerId: opponent?.id || userId, controllerId: opponent?.id || userId },
+        { name: 'Llanowar Elves', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId }
+      ],
+      declare_blocker_note: [
+        { name: 'Dragon Token', zone: ZONES.BATTLEFIELD, ownerId: opponent?.id || userId, controllerId: opponent?.id || userId },
+        { name: 'Llanowar Elves', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId }
+      ],
+      create_token: [
+        { name: 'Mountain', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId },
+        { name: 'Island', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId },
+        { name: 'Dragon Fodder', zone: ZONES.HAND, ownerId: userId, controllerId: userId }
+      ],
+      deck_tokens_note: [
+        { name: 'Mountain', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId },
+        { name: 'Island', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId },
+        { name: 'Dragon Fodder', zone: ZONES.HAND, ownerId: userId, controllerId: userId }
+      ],
+      custom_token_note: [],
+      target_system: [
+        { name: 'Forest', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId },
+        { name: 'Giant Growth', zone: 'stack_zone', ownerId: userId, controllerId: userId, stack: true, targetName: 'Llanowar Elves' },
+        { name: 'Llanowar Elves', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId }
+      ],
+      attach_to_permanent: [
+        { name: 'Forest', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId },
+        { name: 'Rancor', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId },
+        { name: 'Llanowar Elves', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId }
+      ],
+      attach_to_player_note: [
+        { name: 'Mountain', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId },
+        { name: 'Island', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId },
+        { name: 'Curse of the Pierced Heart', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId }
+      ],
+      clone_control: [
+        { name: 'Island', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId },
+        { name: 'Mountain', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId },
+        { name: 'Clone', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId },
+        { name: 'Act of Treason', zone: ZONES.HAND, ownerId: userId, controllerId: userId },
+        { name: 'Zombie Token', zone: ZONES.BATTLEFIELD, ownerId: opponent?.id || userId, controllerId: opponent?.id || userId }
+      ],
+      mana_pool: [
+        { name: 'Forest', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId },
+        { name: 'Llanowar Elves', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId }
+      ],
+      private_hand_peek: [{ name: 'Doom Blade', zone: ZONES.HAND, ownerId: opponent?.id || userId, controllerId: opponent?.id || userId }],
+      opponent_library_tools: [{ name: 'Portent', zone: ZONES.HAND, ownerId: userId, controllerId: userId }],
+      final_spell: [
+        { name: 'Mountain', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId },
+        { name: 'Lightning Bolt', zone: ZONES.HAND, ownerId: userId, controllerId: userId }
+      ],
+      final_bolas_response: [
+        { name: 'Lightning Bolt', zone: 'stack_zone', ownerId: userId, controllerId: userId, stack: true },
+        { name: 'Negate', zone: 'stack_zone', ownerId: opponent?.id || userId, controllerId: opponent?.id || userId, stack: true, targetName: 'Lightning Bolt' }
+      ],
+      final_in_response: [
+        { name: 'Mountain', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId },
+        { name: 'Reverberate', zone: 'stack_zone', ownerId: userId, controllerId: userId, stack: true, targetName: 'Negate' },
+        { name: 'Negate', zone: 'stack_zone', ownerId: opponent?.id || userId, controllerId: opponent?.id || userId, stack: true, targetName: 'Lightning Bolt' }
+      ],
+      P1_01_play_mountain: [{ name: 'Mountain', zone: ZONES.HAND, ownerId: userId, controllerId: userId }],
+      P1_04_tap_mountain: [{ name: 'Mountain', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId, tapped: false }],
+      P1_05_add_r: [{ name: 'Mountain', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId, tapped: true }],
+      P1_06_open_bolt: [{ name: 'Lightning Bolt', zone: ZONES.HAND, ownerId: userId, controllerId: userId }],
+      P1_08_target_bolas: [{ name: 'Lightning Bolt', zone: ZONES.HAND, ownerId: userId, controllerId: userId }],
+      P1_09_inspect_stack: [{ name: 'Lightning Bolt', zone: 'stack_zone', ownerId: userId, controllerId: userId, stack: true, targetName: 'Nicol Bolas' }],
+      P1_10_resolve_bolt: [{ name: 'Lightning Bolt', zone: 'stack_zone', ownerId: userId, controllerId: userId, stack: true, targetName: 'Nicol Bolas' }],
+      P2_02_reach_draw: [{ name: 'Slip Out the Back', zone: ZONES.LIBRARY, ownerId: userId, controllerId: userId }],
+      P2_02_draw_slip: [{ name: 'Slip Out the Back', zone: ZONES.LIBRARY, ownerId: userId, controllerId: userId }],
+      P2_04_play_island: [{ name: 'Island', zone: ZONES.HAND, ownerId: userId, controllerId: userId }],
+      P2_05_tap_island: [{ name: 'Island', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId, tapped: false }],
+      P2_06_add_u: [{ name: 'Island', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId, tapped: true }],
+      P2_07_open_delver: [{ name: 'Delver of Secrets', zone: ZONES.HAND, ownerId: userId, controllerId: userId }],
+      P2_08_cast_delver: [{ name: 'Delver of Secrets', zone: ZONES.HAND, ownerId: userId, controllerId: userId }],
+      P2_09_resolve_delver: [{ name: 'Delver of Secrets', zone: 'stack_zone', ownerId: userId, controllerId: userId, stack: true }],
+      B1_01_bolas_island: [],
+      B1_02_bolas_pass: [{ name: 'Island', zone: ZONES.BATTLEFIELD, ownerId: opponent?.id || userId, controllerId: opponent?.id || userId }],
+      B2_02_bolas_swamp: [{ name: 'Swamp', zone: ZONES.BATTLEFIELD, ownerId: opponent?.id || userId, controllerId: opponent?.id || userId }],
+      B2_03_bolas_cast_knight: [
+        { name: 'Island', zone: ZONES.BATTLEFIELD, ownerId: opponent?.id || userId, controllerId: opponent?.id || userId, tapped: true },
+        { name: 'Swamp', zone: ZONES.BATTLEFIELD, ownerId: opponent?.id || userId, controllerId: opponent?.id || userId, tapped: true },
+        { name: 'Knight of Malice', zone: 'stack_zone', ownerId: opponent?.id || userId, controllerId: opponent?.id || userId, stack: true }
+      ],
+      B2_04_resolve_knight: [{ name: 'Knight of Malice', zone: 'stack_zone', ownerId: opponent?.id || userId, controllerId: opponent?.id || userId, stack: true }],
+      P3_03_delver_reveal_ponder: [{ name: 'Ponder', zone: ZONES.LIBRARY, ownerId: userId, controllerId: userId }],
+      P3_04_transform_delver: [{ name: 'Delver of Secrets', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId, activeFaceIndex: 0 }],
+      B3_01_bolas_swamp: [
+        { name: 'Island', zone: ZONES.BATTLEFIELD, ownerId: opponent?.id || userId, controllerId: opponent?.id || userId },
+        { name: 'Swamp', zone: ZONES.BATTLEFIELD, ownerId: opponent?.id || userId, controllerId: opponent?.id || userId },
+        { name: 'Knight of Malice', zone: ZONES.BATTLEFIELD, ownerId: opponent?.id || userId, controllerId: opponent?.id || userId }
+      ],
+      B3_02_bolas_doom_blade: [
+        { name: 'Doom Blade', zone: 'stack_zone', ownerId: opponent?.id || userId, controllerId: opponent?.id || userId, stack: true, targetName: 'Insectile Aberration' },
+        { name: 'Delver of Secrets', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId, activeFaceIndex: 1 }
+      ],
+      B3_05_cast_slip: [
+        { name: 'Slip Out the Back', zone: ZONES.HAND, ownerId: userId, controllerId: userId },
+        { name: 'Doom Blade', zone: 'stack_zone', ownerId: opponent?.id || userId, controllerId: opponent?.id || userId, stack: true, targetName: 'Insectile Aberration' }
+      ],
+      B3_06_resolve_slip: [{ name: 'Slip Out the Back', zone: 'stack_zone', ownerId: userId, controllerId: userId, stack: true, targetName: 'Insectile Aberration' }],
+      B3_07_add_counter: [{ name: 'Delver of Secrets', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId, activeFaceIndex: 1 }],
+      B3_08_phase_insectile: [{ name: 'Delver of Secrets', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId, activeFaceIndex: 1 }],
+      B3_09_fizzle_doom_blade: [{ name: 'Doom Blade', zone: 'stack_zone', ownerId: opponent?.id || userId, controllerId: opponent?.id || userId, stack: true, targetName: 'Insectile Aberration' }],
+      P4_10_attack_bolas: [{ name: 'Delver of Secrets', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId, activeFaceIndex: 1 }],
+      B4_01_bolas_untaps: [
+        { name: 'Llanowar Elves', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId },
+        { name: 'Knight of Malice', zone: ZONES.BATTLEFIELD, ownerId: opponent?.id || userId, controllerId: opponent?.id || userId }
+      ],
+      B4_04_block_with_llanowar: [
+        { name: 'Llanowar Elves', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId },
+        { name: 'Knight of Malice', zone: ZONES.BATTLEFIELD, ownerId: opponent?.id || userId, controllerId: opponent?.id || userId }
+      ],
+      B4_06_mark_llanowar_damage: [{ name: 'Llanowar Elves', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId }],
+      F1_tap_mountain_bolt: [
+        { name: 'Mountain', zone: ZONES.BATTLEFIELD, ownerId: userId, controllerId: userId, tapped: false },
+        { name: 'Lightning Bolt', zone: ZONES.HAND, ownerId: userId, controllerId: userId },
+        { name: 'Reverberate', zone: ZONES.HAND, ownerId: userId, controllerId: userId },
+        { name: 'Island', zone: ZONES.BATTLEFIELD, ownerId: opponent?.id || userId, controllerId: opponent?.id || userId, tapped: false },
+        { name: 'Swamp', zone: ZONES.BATTLEFIELD, ownerId: opponent?.id || userId, controllerId: opponent?.id || userId, tapped: false },
+        { name: 'Negate', zone: ZONES.HAND, ownerId: opponent?.id || userId, controllerId: opponent?.id || userId }
+      ],
+      F3_cast_bolt_bolas: [{ name: 'Lightning Bolt', zone: ZONES.HAND, ownerId: userId, controllerId: userId }],
+      F4_bolas_negate_real_mana: [
+        { name: 'Lightning Bolt', zone: 'stack_zone', ownerId: userId, controllerId: userId, stack: true, targetName: 'Nicol Bolas' },
+        { name: 'Negate', zone: 'stack_zone', ownerId: opponent?.id || userId, controllerId: opponent?.id || userId, stack: true, targetName: 'Lightning Bolt' },
+        { name: 'Island', zone: ZONES.BATTLEFIELD, ownerId: opponent?.id || userId, controllerId: opponent?.id || userId, tapped: true },
+        { name: 'Swamp', zone: ZONES.BATTLEFIELD, ownerId: opponent?.id || userId, controllerId: opponent?.id || userId, tapped: true }
+      ],
+      F7_reverberate_bolt: [{ name: 'Reverberate', zone: ZONES.HAND, ownerId: userId, controllerId: userId }],
+      F8_resolve_reverberate: [{ name: 'Reverberate', zone: 'stack_zone', ownerId: userId, controllerId: userId, stack: true, targetName: 'Lightning Bolt' }],
+      F9_resolve_bolt_copy_lethal: [{ name: 'Lightning Bolt', zone: 'stack_zone', ownerId: userId, controllerId: userId, stack: true, targetName: 'Nicol Bolas' }]
+    }[stepId];
+    if (!needs) return;
+    if (stepId === 'P1_01_play_mountain' && !hasExactTutorialOpeningHand(game.cards || [], userId) && !(game.cards || []).some((card) => getCardDisplayName(card, card?.name || '') === 'Mountain' && card.controllerId === userId && card.zone === ZONES.BATTLEFIELD)) {
+      const message = 'The tutorial hand is out of sync. Reset tutorial battle to continue cleanly.';
+      setTutorialOverlayError(message);
+      setNotification(message);
+      setTimeout(() => setNotification(null), 5000);
+      return;
+    }
+
+    let nextCards = Array.isArray(game.cards) ? [...game.cards] : [];
+    let nextStack = Array.isArray(game.stack) ? [...game.stack] : [];
+    let changed = false;
+    const bolasIslandDebugContext = {
+      updates: null,
+      updateKeys: [],
+      bolasId: opponentId,
+      cardsUpdateCount: null,
+      logUpdateCount: null
+    };
+
+    try {
+    needs.forEach((need) => {
+      const matching = nextCards.find((card) => (card.name === need.name || card.card_faces?.some((face) => face?.name === need.name)) && (!need.ownerId || card.ownerId === need.ownerId));
+      let card = matching;
+      if (!card) {
+        card = buildTutorialCardInstance(need.name, need.ownerId || userId, need.zone, need.controllerId || need.ownerId || userId);
+        nextCards.push(card);
+        changed = true;
+      } else {
+        const hydratedCard = hydrateTutorialCardPreviewData(card);
+        if (JSON.stringify(hydratedCard.card_faces || null) !== JSON.stringify(card.card_faces || null) || JSON.stringify(hydratedCard.image_uris || null) !== JSON.stringify(card.image_uris || null) || hydratedCard.image_uri !== card.image_uri) {
+          nextCards = nextCards.map((candidate) => candidate.instanceId === card.instanceId ? hydratedCard : candidate);
+          card = hydratedCard;
+          changed = true;
+        }
+      }
+      if (card.zone !== need.zone || card.controllerId !== need.controllerId || (need.ownerId && card.ownerId !== need.ownerId) || (Number.isInteger(need.activeFaceIndex) && card.activeFaceIndex !== need.activeFaceIndex) || (need.zone === ZONES.BATTLEFIELD && card.tapped && need.tapped !== true) || (need.zone === ZONES.BATTLEFIELD && need.tapped === true && !card.tapped)) {
+        nextCards = nextCards.map((candidate) => candidate.instanceId === card.instanceId ? { ...candidate, zone: need.zone, ownerId: need.ownerId || candidate.ownerId, controllerId: need.controllerId, ...(Number.isInteger(need.activeFaceIndex) ? { activeFaceIndex: need.activeFaceIndex } : {}), tapped: need.tapped === true, phasedOut: false } : candidate);
+        card = nextCards.find((candidate) => candidate.instanceId === card.instanceId) || card;
+        changed = true;
+      }
+      if (need.stack && !nextStack.some((item) => item.sourceId === card.instanceId || item.name === need.name)) {
+        nextStack.push({
+          id: `tutorial-stack-${card.instanceId}`,
+          sourceId: card.instanceId,
+          name: need.name,
+          controllerId: need.controllerId,
+          ownerId: need.ownerId,
+          itemType: 'SPELL',
+          type: 'SPELL',
+          createdAt: Date.now(),
+          ...(need.targetName ? { targets: [{ name: need.targetName, label: need.targetName }], ...(need.targetName === 'Nicol Bolas' && opponent?.id ? { targetPlayerIds: [opponent.id] } : {}) } : {})
+        });
+        changed = true;
+      }
+    });
+
+    const findTutorialCard = (name, controllerId = null) => nextCards.find((card) => (card.name === name || card.card_faces?.some((face) => face?.name === name)) && (!controllerId || card.controllerId === controllerId));
+    if (['P2_02_reach_draw', 'P2_02_draw_slip'].includes(stepId)) {
+      const topLuisLibraryCard = nextCards.find((card) => card.ownerId === userId && card.zone === ZONES.LIBRARY);
+      const slipCard = nextCards.find((card) => card.ownerId === userId && card.zone === ZONES.LIBRARY && getCardDisplayName(card) === 'Slip Out the Back');
+      if (slipCard?.instanceId && topLuisLibraryCard?.instanceId !== slipCard.instanceId) {
+        nextCards = [
+          ...nextCards.filter((card) => card.instanceId !== slipCard.instanceId && !(card.ownerId === userId && card.zone === ZONES.LIBRARY)),
+          slipCard,
+          ...nextCards.filter((card) => card.instanceId !== slipCard.instanceId && card.ownerId === userId && card.zone === ZONES.LIBRARY)
+        ];
+        changed = true;
+      }
+    }
+    let forcedPhase = null;
+    let forcedTurnPlayerId = null;
+    let forcedCombat = null;
+    let forcedStack = null;
+
+    if (['P1_01_play_mountain', 'P1_04_tap_mountain', 'P1_05_add_r', 'P1_06_open_bolt', 'P1_07_bolt_cast_target', 'P1_08_target_bolas', 'P1_09_inspect_stack', 'P1_10_resolve_bolt', 'P1_11_pass', 'P2_04_play_island', 'P2_05_tap_island', 'P2_06_add_u', 'P2_07_open_delver', 'P2_08_cast_delver', 'P2_09_resolve_delver', 'P2_10_pass', 'P3_07_play_mountain', 'P3_08_pass', 'P4_04_play_third_mountain', 'P4_05_cast_ponder', 'P4_06_reorder_ponder', 'P4_07_draw_ponder', 'F1_tap_mountain_bolt', 'F2_add_r', 'F3_cast_bolt_bolas', 'F5_tap_two_mountains', 'F6_add_rr', 'F7_reverberate_bolt', 'F8_resolve_reverberate', 'F9_resolve_bolt_copy_lethal', 'F10_resolve_negate_original'].includes(stepId)) {
+      forcedPhase = 'main1';
+      forcedTurnPlayerId = userId;
+    } else if (stepId === 'P2_02_reach_draw') {
+      forcedPhase = 'upkeep';
+      forcedTurnPlayerId = userId;
+    } else if (stepId === 'P2_03_main1') {
+      forcedPhase = 'draw';
+      forcedTurnPlayerId = userId;
+      forcedStack = [];
+    } else if (['P3_01_untap', 'P4_01_untap_phase_in', 'B4_01_bolas_untaps'].includes(stepId)) {
+      forcedPhase = 'untap';
+      forcedTurnPlayerId = stepId === 'B4_01_bolas_untaps' ? (opponentId || game.turnPlayerId) : userId;
+    } else if (stepId === 'B2_01_bolas_draw_mountain') {
+      forcedPhase = 'draw';
+      forcedTurnPlayerId = opponentId || game.turnPlayerId;
+    } else if (stepId === 'P2_02_draw_slip') {
+      forcedPhase = 'draw';
+      forcedTurnPlayerId = userId;
+    } else if (['P3_05_draw_ponder', 'P4_02_draw_mountain'].includes(stepId)) {
+      forcedPhase = 'upkeep';
+      forcedTurnPlayerId = userId;
+      forcedStack = [];
+    } else if (stepId === 'P3_02_upkeep') {
+      forcedPhase = 'untap';
+      forcedTurnPlayerId = userId;
+      forcedStack = [];
+    } else if (['P3_03_delver_reveal_ponder', 'P3_04_transform_delver'].includes(stepId)) {
+      forcedPhase = 'upkeep';
+      forcedTurnPlayerId = userId;
+    } else if (['P3_06_main1', 'P4_03_main1'].includes(stepId)) {
+      forcedPhase = 'draw';
+      forcedTurnPlayerId = userId;
+      forcedStack = [];
+    } else if (stepId === 'B1_02_bolas_pass') {
+      forcedPhase = 'untap';
+      forcedTurnPlayerId = userId;
+      forcedStack = [];
+    } else if (['B1_01_bolas_island', 'B2_02_bolas_swamp', 'B2_03_bolas_cast_knight', 'B2_04_resolve_knight', 'B2_05_bolas_pass', 'B3_01_bolas_swamp', 'B3_02_bolas_doom_blade', 'B3_03_tap_island_slip', 'B3_04_add_u_slip', 'B3_05_cast_slip', 'B3_06_resolve_slip', 'B3_07_add_counter', 'B3_08_phase_insectile', 'B3_09_fizzle_doom_blade', 'B3_10_add_phase_reminder', 'B3_11_bolas_pass', 'F4_bolas_negate_real_mana'].includes(stepId)) {
+      forcedPhase = 'main1';
+      forcedTurnPlayerId = opponentId || game.turnPlayerId;
+    } else if (stepId === 'P4_08_begin_combat') {
+      forcedPhase = 'main1';
+      forcedTurnPlayerId = userId;
+      forcedStack = [];
+    } else if (stepId === 'B4_02_bolas_combat') {
+      forcedPhase = 'combat_begin';
+      forcedTurnPlayerId = opponentId || game.turnPlayerId;
+      forcedStack = [];
+    } else if (stepId === 'P4_09_attackers_step') {
+      forcedPhase = 'combat_begin';
+      forcedTurnPlayerId = userId;
+      forcedStack = [];
+    } else if (['P4_10_attack_bolas', 'P4_11_combat_summary', 'B4_03_knight_attacks'].includes(stepId)) {
+      forcedPhase = 'combat_attackers';
+      forcedTurnPlayerId = stepId === 'B4_03_knight_attacks' ? (opponentId || game.turnPlayerId) : userId;
+      forcedStack = [];
+    } else if (stepId === 'B4_04_block_with_llanowar') {
+      forcedPhase = 'combat_blockers';
+      forcedTurnPlayerId = opponentId || game.turnPlayerId;
+      forcedStack = [];
+      const attacker = findTutorialCard('Knight of Malice', opponentId);
+      const blocker = findTutorialCard('Llanowar Elves', userId);
+      if (attacker?.instanceId && blocker?.instanceId) forcedCombat = normalizeCombatState({ attackers: { [attacker.instanceId]: normalizeAttackTarget({ type: 'player', id: userId, targetId: userId, kind: 'player' }, game, attacker) || { type: 'player', id: userId, targetId: userId, kind: 'player' } }, blockers: {}, combatDamageStep: null });
+    } else if (['P4_12_regular_damage', 'P4_13_apply_insectile_damage', 'B4_05_first_strike_damage', 'B4_06_mark_llanowar_damage', 'B4_07_llanowar_graveyard', 'B4_08_regular_damage'].includes(stepId)) {
+      forcedPhase = 'combat_damage';
+      forcedTurnPlayerId = stepId.startsWith('B4') ? (opponentId || game.turnPlayerId) : userId;
+      forcedStack = [];
+    } else if (['P4_14_end_combat'].includes(stepId)) {
+      forcedPhase = 'combat_damage';
+      forcedTurnPlayerId = userId;
+      forcedStack = [];
+    }
+
+    if (['tap_mountain_red', 'add_red_mana', 'cast_spell_to_stack', 'inspect_stack', 'bolas_negate', 'copy_stack_item', 'resolve_stack_item', 'counter_stack_item', 'pass_priority'].includes(stepId)) {
+      forcedPhase = stepId === 'pass_priority' ? 'end' : 'main1';
+      forcedTurnPlayerId = userId;
+    }
+    if (stepId === 'resolve_stack_item') {
+      const bolt = findTutorialCard('Lightning Bolt', userId);
+      const negate = findTutorialCard('Negate', opponentId);
+      const boltItem = (nextStack || []).find((item) => item.name === 'Lightning Bolt') || (bolt ? { id: `tutorial-stack-${bolt.instanceId}`, sourceId: bolt.instanceId, name: 'Lightning Bolt', controllerId: userId, ownerId: userId, itemType: 'SPELL', type: 'SPELL', createdAt: Date.now() } : null);
+      const negateItem = (nextStack || []).find((item) => item.name === 'Negate') || (negate ? { id: `tutorial-stack-${negate.instanceId}`, sourceId: negate.instanceId, name: 'Negate', controllerId: opponentId, ownerId: opponentId, itemType: 'SPELL', type: 'SPELL', createdAt: Date.now(), targets: [{ name: 'Lightning Bolt', label: 'Lightning Bolt' }] } : null);
+      if (boltItem && negateItem) forcedStack = [boltItem, negateItem, buildCopiedStackItem(boltItem)];
+    } else if (stepId === 'counter_stack_item') {
+      const bolt = findTutorialCard('Lightning Bolt', userId);
+      const negate = findTutorialCard('Negate', opponentId);
+      const boltItem = (nextStack || []).find((item) => item.name === 'Lightning Bolt') || (bolt ? { id: `tutorial-stack-${bolt.instanceId}`, sourceId: bolt.instanceId, name: 'Lightning Bolt', controllerId: userId, ownerId: userId, itemType: 'SPELL', type: 'SPELL', createdAt: Date.now() } : null);
+      const negateItem = (nextStack || []).find((item) => item.name === 'Negate') || (negate ? { id: `tutorial-stack-${negate.instanceId}`, sourceId: negate.instanceId, name: 'Negate', controllerId: opponentId, ownerId: opponentId, itemType: 'SPELL', type: 'SPELL', createdAt: Date.now(), targets: [{ name: 'Lightning Bolt', label: 'Lightning Bolt' }] } : null);
+      if (boltItem && negateItem) forcedStack = [boltItem, negateItem];
+    } else if (stepId === 'pass_priority') {
+      forcedStack = [];
+    }
+
+    if (stepId === 'beginning_phase_draw') {
+      forcedPhase = 'draw';
+      forcedTurnPlayerId = userId;
+      forcedStack = [];
+    } else if (stepId === 'cast_delver') {
+      forcedPhase = 'main1';
+      forcedTurnPlayerId = userId;
+      forcedStack = [];
+    } else if (['bolas_removal', 'phase_card', 'add_counter'].includes(stepId)) {
+      forcedPhase = 'main1';
+      forcedTurnPlayerId = opponentId || game.turnPlayerId;
+    } else if (stepId === 'tap_card') {
+      forcedPhase = 'untap';
+      forcedTurnPlayerId = userId;
+      forcedStack = [];
+    } else if (['reveal_top_delver', 'transform_card'].includes(stepId)) {
+      forcedPhase = 'upkeep';
+      forcedTurnPlayerId = userId;
+      forcedStack = [];
+    } else if (['set_attackers_phase', 'declare_attacker_player', 'attack_planeswalker_battle_note'].includes(stepId)) {
+      forcedPhase = 'combat_attackers';
+      forcedTurnPlayerId = userId;
+      forcedStack = [];
+    } else if (stepId === 'bolas_blocks_summary') {
+      const attacker = findTutorialCard('Llanowar Elves', userId);
+      const blocker = findTutorialCard('Zombie Token', opponentId);
+      forcedPhase = 'combat_blockers';
+      forcedTurnPlayerId = userId;
+      forcedStack = [];
+      if (attacker?.instanceId && blocker?.instanceId) {
+        forcedCombat = normalizeCombatState({
+          attackers: { [attacker.instanceId]: normalizeAttackTarget({ type: 'player', id: opponentId, targetId: opponentId, kind: 'player' }, game, attacker) || { type: 'player', id: opponentId, targetId: opponentId, kind: 'player' } },
+          blockers: { [blocker.instanceId]: [attacker.instanceId] },
+          combatDamageStep: null
+        });
+      }
+    } else if (['first_strike_step', 'regular_damage_step', 'damage_markers', 'combat_summary_note'].includes(stepId)) {
+      forcedPhase = stepId === 'combat_summary_note' ? 'combat_end' : 'combat_damage';
+      forcedTurnPlayerId = userId;
+      forcedStack = [];
+    } else if (stepId === 'bolas_declares_attacker') {
+      const attacker = findTutorialCard('Dragon Token', opponentId);
+      forcedPhase = 'combat_attackers';
+      forcedTurnPlayerId = opponentId || game.turnPlayerId;
+      forcedStack = [];
+      if (attacker?.instanceId) {
+        forcedCombat = normalizeCombatState({
+          attackers: { [attacker.instanceId]: normalizeAttackTarget({ type: 'player', id: userId, targetId: userId, kind: 'player' }, game, attacker) || { type: 'player', id: userId, targetId: userId, kind: 'player' } },
+          blockers: {},
+          combatDamageStep: null
+        });
+      }
+    } else if (['declare_blocker_note', 'B4_04_block_with_llanowar'].includes(stepId)) {
+      const attacker = findTutorialCard('Dragon Token', opponentId);
+      forcedPhase = 'combat_blockers';
+      forcedTurnPlayerId = opponentId || game.turnPlayerId;
+      forcedStack = [];
+      if (attacker?.instanceId) {
+        forcedCombat = normalizeCombatState({
+          attackers: { [attacker.instanceId]: normalizeAttackTarget({ type: 'player', id: userId, targetId: userId, kind: 'player' }, game, attacker) || { type: 'player', id: userId, targetId: userId, kind: 'player' } },
+          blockers: {},
+          combatDamageStep: null
+        });
+      }
+    }
+
+    const desiredSetupSignature = JSON.stringify({
+      needs: needs.map((need) => ({
+        name: need.name,
+        zone: need.zone,
+        ownerId: need.ownerId || null,
+        controllerId: need.controllerId || null,
+        tapped: need.tapped === true,
+        stack: need.stack === true,
+        targetName: need.targetName || null,
+        activeFaceIndex: Number.isInteger(need.activeFaceIndex) ? need.activeFaceIndex : null
+      })),
+      forcedPhase: forcedPhase || null,
+      forcedTurnPlayerId: forcedTurnPlayerId || null,
+      forcedStack: forcedStack ? (forcedStack || []).map((item) => ({ name: item?.name || null, sourceId: item?.sourceId || null, controllerId: item?.controllerId || null })) : null,
+      forcedCombat: forcedCombat || null
+    });
+    const bolasIslandActionSatisfied = () => {
+      if (stepId !== 'B1_01_bolas_island' || !opponentId) return true;
+      const hasBolasIsland = (game.cards || []).some((card) => (card.name === 'Island' || card.card_faces?.some((face) => face?.name === 'Island')) && card.ownerId === opponentId && card.controllerId === opponentId && card.zone === ZONES.BATTLEFIELD);
+      const currentTutorialRunId = game.tutorial?.runId || null;
+      const hasBolasIslandLog = (game.log || []).some((entry) => {
+        if (currentTutorialRunId && entry?.tutorialRunId !== currentTutorialRunId) return false;
+        return String(entry?.message || entry?.desc || '').includes('Nicol Bolas played Island.');
+      });
+      return hasBolasIsland && hasBolasIslandLog;
+    };
+    if (tutorialSetupAppliedRef.current?.stepId === stepId && tutorialSetupAppliedRef.current?.signature === desiredSetupSignature && bolasIslandActionSatisfied()) {
+      logTutorialPhaseDebug({ requestedPhase: forcedPhase, didWrite: false, reason: 'setup already applied for signature', setupAppliedSignature: desiredSetupSignature });
+      if (stepId === 'B1_01_bolas_island') setTutorialOverlayError(null);
+      return;
+    }
+
+    const updates = {};
+    const currentTutorialRunId = game.tutorial?.runId || null;
+    const appendTutorialLogOnce = (message, type = 'TUTORIAL_SCRIPT', category = 'tutorial') => {
+      const hasMessage = (game.log || []).some((entry) => {
+        if (currentTutorialRunId && entry?.tutorialRunId !== currentTutorialRunId) return false;
+        return String(entry?.message || entry?.desc || '').includes(message);
+      });
+      if (hasMessage) return;
+      updates.log = pruneLogForFirestore([...(updates.log || game.log || []), buildGameLogEntry({
+        currentGame: { ...game, phase: forcedPhase || game.phase, turnPlayerId: forcedTurnPlayerId || game.turnPlayerId },
+        playerId: opponentId || userId,
+        playerName: 'Nicol Bolas',
+        type,
+        category,
+        message,
+        ...(currentTutorialRunId ? { tutorialRunId: currentTutorialRunId } : {})
+      })]);
+    };
+    const updateBolasLife = (lifeTotal, reason) => {
+      const currentPlayers = Array.isArray(game.players) ? game.players : [];
+      const bolasPlayer = currentPlayers.find((player) => /Nicol Bolas/i.test(player?.name || ''));
+      if (!bolasPlayer || Number(bolasPlayer.life) === lifeTotal) return;
+      updates.players = currentPlayers.map((player) => player.id === bolasPlayer.id ? { ...player, life: lifeTotal } : player);
+      updates.log = pruneLogForFirestore([...(updates.log || game.log || []), buildGameLogEntry({ currentGame: game, playerId: userId, playerName: 'Tutorial', type: 'TUTORIAL_SNAPSHOT', category: 'tutorial', message: reason })]);
+    };
+    const ensureBolasHasPlayedIsland = () => {
+      const bolasPlayer = (game.players || []).find((player) => player?.id === opponentId) || (game.players || []).find((player) => player?.isScriptedOpponent || /Nicol Bolas/i.test(player?.name || ''));
+      if (!bolasPlayer?.id) {
+        console.debug('[Tutorial Bolas Island] missing Nicol Bolas player');
+        return false;
+      }
+
+      const bolasId = bolasPlayer.id;
+      bolasIslandDebugContext.bolasId = bolasId;
+      const isIslandCard = (card = {}) => getCardDisplayName(card, card?.name || '') === 'Island' || card?.name === 'Island' || card?.card_faces?.some((face) => face?.name === 'Island');
+      const getLogMessage = (entry = {}) => String(entry?.message || entry?.text || entry?.desc || '');
+      const currentLog = updates.log || game.log || [];
+      const hasPlayLog = currentLog.some((entry) => getLogMessage(entry) === 'Nicol Bolas played Island.' || getLogMessage(entry).includes('Nicol Bolas played Island.'));
+      const battlefieldIslands = nextCards.filter((card) => isIslandCard(card) && card.zone === ZONES.BATTLEFIELD && card.controllerId === bolasId);
+      const isBolasIslandCandidate = (card = {}) => {
+        if (!isIslandCard(card)) return false;
+        if (card.ownerId === bolasId || card.controllerId === bolasId) return true;
+        const ids = `${card.id || ''} ${card.instanceId || ''}`;
+        return /tutorial-bolas/i.test(ids);
+      };
+
+      console.debug('[Tutorial Bolas Island] Bolas id:', bolasId);
+      console.debug('[Tutorial Bolas Island] Islands found:', nextCards.filter(isIslandCard).map((card) => card.instanceId || card.id || card.name));
+      console.debug('[Tutorial Bolas Island] zones found:', nextCards.filter(isIslandCard).map((card) => card.zone || null));
+      console.debug('[Tutorial Bolas Island] owners/controllers found:', nextCards.filter(isIslandCard).map((card) => ({ ownerId: card.ownerId || null, controllerId: card.controllerId || null })));
+
+      let createdFallbackIsland = false;
+      if (battlefieldIslands.length > 0) {
+        const [keptIsland, ...duplicateBattlefieldIslands] = battlefieldIslands;
+        const needsBattlefieldRepair = keptIsland.ownerId !== bolasId || keptIsland.controllerId !== bolasId || keptIsland.tapped || keptIsland.phasedOut || !tutorialCardHasRealImageData(keptIsland);
+        if (needsBattlefieldRepair || duplicateBattlefieldIslands.length > 0) {
+          const duplicateIds = new Set(duplicateBattlefieldIslands.map((card) => card.instanceId));
+          nextCards = nextCards.map((card) => {
+            if (card.instanceId === keptIsland.instanceId) {
+              return { ...hydrateTutorialCardPreviewData(card), zone: ZONES.BATTLEFIELD, ownerId: bolasId, controllerId: bolasId, tapped: false, phasedOut: false };
+            }
+            if (duplicateIds.has(card.instanceId)) {
+              return { ...hydrateTutorialCardPreviewData(card), zone: ZONES.LIBRARY, ownerId: bolasId, controllerId: bolasId, tapped: false, phasedOut: false };
+            }
+            return card;
+          });
+          changed = true;
+        }
+      } else {
+        const existingIsland = nextCards.find((card) => isBolasIslandCandidate(card) && [ZONES.HAND, ZONES.LIBRARY].includes(card.zone)) || nextCards.find(isBolasIslandCandidate);
+        if (existingIsland?.instanceId) {
+          nextCards = nextCards.map((card) => card.instanceId === existingIsland.instanceId
+            ? { ...hydrateTutorialCardPreviewData(card), zone: ZONES.BATTLEFIELD, ownerId: bolasId, controllerId: bolasId, tapped: false, phasedOut: false }
+            : card);
+        } else {
+          nextCards.push({
+            ...buildTutorialCardInstance('Island', bolasId, ZONES.BATTLEFIELD, bolasId),
+            ownerId: bolasId,
+            controllerId: bolasId,
+            zone: ZONES.BATTLEFIELD,
+            tapped: false,
+            revealed: false
+          });
+          createdFallbackIsland = true;
+        }
+        changed = true;
+      }
+
+      console.debug('[Tutorial Bolas Island] created fallback Island:', createdFallbackIsland ? 'yes' : 'no');
+      if (!hasPlayLog) appendTutorialLogOnce('Nicol Bolas played Island.', 'PLAY_LAND', 'card');
+      return true;
+    };
+    if (stepId === 'B1_01_bolas_island') {
+      updateBolasLife(17, 'Lightning Bolt resolved earlier: Nicol Bolas is at 17 life.');
+      if (!ensureBolasHasPlayedIsland()) return;
+    }
+    if (stepId === 'B1_02_bolas_pass') {
+      appendTutorialLogOnce('Nicol Bolas passed the turn.', 'PASS_TURN', 'priority');
+    }
+    if (stepId === 'P4_13_apply_insectile_damage') updateBolasLife(13, 'Insectile Aberration deals 4 combat damage to Nicol Bolas. Nicol Bolas goes to 13.');
+    if (stepId === 'F1_tap_mountain_bolt') updateBolasLife(3, 'Several turns later, Insectile, the Curse, and earlier spells have pushed Nicol Bolas to 3 life.');
+    if (changed) {
+      updates.cards = nextCards;
+      if (JSON.stringify(nextStack || []) !== JSON.stringify(game.stack || [])) updates.stack = nextStack;
+    }
+    if (forcedPhase && game.phase !== forcedPhase) updates.phase = forcedPhase;
+    if (forcedTurnPlayerId) {
+      if (game.turnPlayerId !== forcedTurnPlayerId) updates.turnPlayerId = forcedTurnPlayerId;
+      const forcedActiveIndex = (game.players || []).findIndex((player) => player.id === forcedTurnPlayerId);
+      if (forcedActiveIndex >= 0 && game.activePlayerIndex !== forcedActiveIndex) updates.activePlayerIndex = forcedActiveIndex;
+      if (game.priorityPlayerId !== forcedTurnPlayerId) updates.priorityPlayerId = forcedTurnPlayerId;
+      if (forcedActiveIndex >= 0 && game.priorityIndex !== forcedActiveIndex) updates.priorityIndex = forcedActiveIndex;
+      if (game.consecutivePasses) updates.consecutivePasses = 0;
+    }
+    if (forcedStack && JSON.stringify(forcedStack) !== JSON.stringify(game.stack || [])) updates.stack = forcedStack;
+    if (forcedCombat && JSON.stringify(forcedCombat) !== JSON.stringify(game.combat || getEmptyCombatState())) updates.combat = forcedCombat;
+
+    const updateKeys = Object.keys(updates);
+    bolasIslandDebugContext.updates = updates;
+    bolasIslandDebugContext.updateKeys = updateKeys;
+    bolasIslandDebugContext.cardsUpdateCount = updates.cards?.length;
+    bolasIslandDebugContext.logUpdateCount = updates.log?.length;
+    if (stepId === 'B1_01_bolas_island') {
+      const undefinedPaths = findUndefinedPaths(updates);
+      if (undefinedPaths.length > 0) {
+        console.error('[Tutorial Bolas Island] Firestore unsafe undefined paths:', undefinedPaths);
+        throw new Error(`Bolas Island update contains undefined fields: ${undefinedPaths.join(', ')}`);
+      }
+    }
+    const optimisticScriptedActionId = stepId === 'B1_01_bolas_island' && updateKeys.length > 0 ? `tutorial-script-${stepId}-${Date.now()}` : null;
+    if (updateKeys.length > 0) {
+      setTutorialSyncPending(true);
+      if (optimisticScriptedActionId) {
+        setOptimisticGame({
+          ...game,
+          ...updates,
+          combat: normalizeCombatState(updates.combat || game.combat),
+          __optimisticActionId: optimisticScriptedActionId,
+          __tutorialScriptedActionId: optimisticScriptedActionId
+        });
+      }
+      try {
+        await updateDoc(doc(db, 'games_v3', gameId), { ...updates, updatedAt: serverTimestamp() });
+        if (optimisticScriptedActionId) {
+          setOptimisticGame((current) => current?.__tutorialScriptedActionId === optimisticScriptedActionId ? null : current);
+        }
+      } finally {
+        setTutorialSyncPending(false);
+      }
+      tutorialSetupAppliedRef.current = { stepId, signature: desiredSetupSignature };
+      logTutorialPhaseDebug({ requestedPhase: forcedPhase, didWrite: true, reason: `applied setup fields: ${updateKeys.join(',')}`, setupAppliedSignature: desiredSetupSignature });
+    } else {
+      tutorialSetupAppliedRef.current = { stepId, signature: desiredSetupSignature };
+      logTutorialPhaseDebug({ requestedPhase: forcedPhase, didWrite: false, reason: 'setup already matched live game', setupAppliedSignature: desiredSetupSignature });
+    }
+    setTutorialOverlayError(null);
+    } catch (error) {
+      console.error('Tutorial step setup failed', error);
+      if (stepId === 'B1_01_bolas_island') {
+        const updatesForDebug = bolasIslandDebugContext.updates || {};
+        console.error('[Tutorial Bolas Island] exact failure', {
+          stepId,
+          errorCode: error?.code,
+          errorMessage: error?.message,
+          errorStack: error?.stack,
+          opponentId,
+          bolasId: bolasIslandDebugContext.bolasId,
+          players: game.players?.map((player) => ({
+            id: player.id,
+            name: player.name,
+            isScriptedOpponent: player.isScriptedOpponent,
+            life: player.life
+          })),
+          islands: (game.cards || [])
+            .filter((card) => card.name === 'Island' || card.card_faces?.some((face) => face?.name === 'Island'))
+            .map((card) => ({
+              id: card.id,
+              instanceId: card.instanceId,
+              name: card.name,
+              zone: card.zone,
+              ownerId: card.ownerId,
+              controllerId: card.controllerId,
+              tapped: card.tapped,
+              hasImageUri: Boolean(card.image_uri || card.imageUrl || card.image_uris),
+              keys: Object.keys(card || {})
+            })),
+          updateKeys: Object.keys(updatesForDebug || {}),
+          hasCardsUpdate: Boolean(updatesForDebug?.cards),
+          cardsUpdateCount: updatesForDebug?.cards?.length,
+          logUpdateCount: updatesForDebug?.log?.length
+        });
+        setOptimisticGame((current) => current?.__tutorialScriptedActionId ? null : current);
+        const shortReason = error?.code || String(error?.message || error || 'unknown error').slice(0, 120);
+        const message = `Tutorial action failed: Bolas Island — ${shortReason}`;
+        setTutorialOverlayError(message);
+        setNotification(message);
+        setTimeout(() => setNotification(null), 5000);
+        return;
+      }
+      const message = isResourceExhaustedError(error)
+        ? 'Tutorial sync hit Firebase quota. Wait a moment, then retry this step.'
+        : 'Tutorial step unavailable. Skip or restart tutorial.';
+      setTutorialOverlayError(message);
+    }
+  }, [buildTutorialCardInstance, game, gameId, opponent?.id, userId]);
+
+  useEffect(() => {
+    if (!isTutorialGame || !currentTutorialStep?.id) return;
+    ensureTutorialStepSetup(currentTutorialStep.id);
+  }, [isTutorialGame, currentTutorialStep?.id, ensureTutorialStepSetup]);
 
   const handleRepairGameSize = async () => {
     if (!gameId || !userId || (!isHost && !isPlayer)) {
@@ -4702,8 +7816,11 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         setLoading(false);
       },
       (err) => {
-        recordPerfListenerEvent({ type: 'error', gameId, listenerInstanceId, reason: err?.message || String(err) });
+        const message = isResourceExhaustedError(err) ? FIRESTORE_RESOURCE_EXHAUSTED_MESSAGE : (err?.message || String(err));
+        recordPerfListenerEvent({ type: 'error', gameId, listenerInstanceId, reason: message });
         console.error(err);
+        setNotification(message);
+        setLoading(false);
       }
     );
     return () => {
@@ -4793,7 +7910,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       typeLine,
       currentUserId: userId,
       currentPlayerId: viewAsPlayerId,
-      activePlayerId: game?.turnPlayerId || game?.players?.[game?.activePlayerIndex]?.id || null,
+      activePlayerId: game?.turnPlayerId || players?.[game?.activePlayerIndex]?.id || null,
       priorityPlayerId: game?.priorityPlayerId || null,
       canAct,
       isLand,
@@ -4804,7 +7921,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       transformAvailable,
       ...extra
     };
-  }, [selectedCard, game?.cards, game?.turnPlayerId, game?.activePlayerIndex, game?.priorityPlayerId, game?.players, userId, viewAsPlayerId, canAct]);
+  }, [selectedCard, game?.cards, game?.turnPlayerId, game?.activePlayerIndex, game?.priorityPlayerId, players, userId, viewAsPlayerId, canAct]);
 
   const debugCardActionClick = (buttonName, actionType, payload, event, card = selectedCard) => {
     if (!isDebugActionsEnabled()) return;
@@ -4959,6 +8076,11 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
   const openRecap = () => {
     setRecapOpen(true);
+    maybeCompleteTutorialStep('game_log', { detail: 'recapOpen' });
+    maybeCompleteTutorialStep('manual_toolbox_note', { detail: 'recapOpen' });
+    maybeCompleteTutorialStep('async_oath', { detail: 'recapOpen' });
+    maybeCompleteTutorialStep('B1_01_bolas_island', { detail: 'recapOpen' });
+    maybeCompleteTutorialStep('B1_02_bolas_pass', { detail: 'recapOpen' });
   };
 
   useLayoutEffect(() => {
@@ -5096,8 +8218,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const isMyTurn = game?.turnPlayerId === viewAsPlayerId;
   const hasPriority = game?.priorityPlayerId === viewAsPlayerId;
 
-  const opponent = game?.players.find(p => p.id !== viewAsPlayerId);
-  const privateHandPeekPlayer = privateHandPeek?.playerId ? (game?.players || []).find(p => p.id === privateHandPeek.playerId) : null;
+  const privateHandPeekPlayer = privateHandPeek?.playerId ? players.find(p => p?.id === privateHandPeek.playerId) : null;
   const isOppTurn = !!opponent && game?.turnPlayerId === opponent.id;
   const closePrivateHandPeek = () => {
     setPrivatePeekInspectCard(null);
@@ -5122,7 +8243,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     ...battlefieldBattles.map(c => ({ type: 'card', id: c.instanceId, targetId: c.instanceId, label: getCardDisplayName(c, 'Battle'), kind: 'battle' }))
   ].filter(Boolean);
 
-  const waitingForPlayers = game?.players.length < 2;
+  const waitingForPlayers = players.length < 2;
   const isAutoPassEnabled = autoPassConfig.mode !== AUTO_PASS_MODE.OFF;
   const autoPassControlsDisabled = !isPlayer || !game;
 
@@ -5140,6 +8261,10 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   };
 
   const enableAutoPass = async (mode, phaseId = null, stopOnOpponentAction = autoPassConfig.stopOnOpponentAction) => {
+    const liveStepId = (optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.stepId || 'intro';
+    if (isTutorialGame && liveStepId === 'P2_10_pass' && mode === AUTO_PASS_MODE.END_OF_TURN) {
+      tutorialP210UsedAutoPassUntilEndRef.current = true;
+    }
     const nextConfig = normalizeAutoPassConfig({
       mode,
       phaseId,
@@ -5152,6 +8277,9 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     setAutoPassMenuOpen(false);
     if (gameId && userId && isPlayer) {
       await updateDoc(doc(db, 'games_v3', gameId), { [`autopass.${userId}`]: nextConfig });
+    }
+    if (mode === AUTO_PASS_MODE.END_OF_TURN) {
+      await maybeCompleteTutorialStep('P1_11_pass', { detail: 'autoPassUntilEndOfTurn' });
     }
   };
 
@@ -5237,8 +8365,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     setDiceMenuOpen(false);
   };
 
-  const getLatestUndoEntry = () => (game?.undoStack || [])[(game?.undoStack || []).length - 1] || null;
-  const latestDisplayedUndoEntry = getLatestUndoEntry();
+  const latestDisplayedUndoEntry = getLatestUndoEntry(game?.undoStack || []);
   const canOpenUndoModal = canAct && Boolean(latestDisplayedUndoEntry) && (!undoPendingSync || latestDisplayedUndoEntry.pendingSync);
   const canUndoLatestAction = canOpenUndoModal && !undoPendingSync;
 
@@ -5281,7 +8408,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       return;
     }
 
-    const expectedUndoEntry = (undoBaseGame?.undoStack || [])[(undoBaseGame?.undoStack || []).length - 1] || null;
+    const expectedUndoEntry = getLatestUndoEntry(undoBaseGame?.undoStack || []);
     if (!expectedUndoEntry) {
       setNotification('Nothing to undo.');
       setTimeout(() => setNotification(null), 2000);
@@ -5327,6 +8454,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     const optimisticUndoPatch = buildOptimisticUndoPatch(undoBaseGame, expectedUndoEntry);
     const optimisticUndoActionId = perfActionId || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     let appliedOptimisticUndo = false;
+    let undoRestoredCards = Array.isArray(optimisticUndoPatch?.cards) ? optimisticUndoPatch.cards : null;
+    let consumedUndoActionType = expectedUndoEntry.actionType || expectedUndoEntry.type || null;
 
     if (optimisticUndoPatch) {
       const optimisticUndoGame = {
@@ -5395,6 +8524,10 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           return;
         }
 
+        consumedUndoActionType = latestUndoEntry.actionType || latestUndoEntry.type || consumedUndoActionType;
+        const restoreUpdates = getUndoRestoreUpdates(latestUndoEntry.previousState || {});
+        if (Array.isArray(restoreUpdates.cards)) undoRestoredCards = restoreUpdates.cards;
+
         const actionLabel = latestUndoEntry.actionLabel || 'last action';
         const undoActorName = currentPlayer.name || myPlayer?.name || 'Unknown';
         const undoLogEntry = buildGameLogEntry({
@@ -5411,7 +8544,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         });
 
         transaction.update(gameRef, normalizeGameUpdatesForFirestore({
-          ...getUndoRestoreUpdates(latestUndoEntry.previousState || {}),
+          ...restoreUpdates,
           undoStack: normalizeUndoStackForFirestore(currentUndoStack.slice(0, -1)),
           log: [...(currentGame.log || []), undoLogEntry],
           updatedAt: serverTimestamp()
@@ -5442,6 +8575,18 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     }
 
     closeTransientGameModals();
+    const liveTutorialStepId = (optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.stepId || 'intro';
+    if (liveTutorialStepId === 'G07_undo_mulligan') {
+      const restoredTutorialHand = hasExactTutorialOpeningHand(undoRestoredCards || [], userId);
+      if (isMulliganUndoEntry({ actionType: consumedUndoActionType }) && restoredTutorialHand) {
+        maybeCompleteTutorialStep('G07_undo_mulligan', { source: 'undo-handler', detail: 'mulliganUndoRestoredTutorialHand' });
+      } else {
+        const message = 'Undo did not restore the tutorial opening hand. Reset tutorial battle to continue cleanly.';
+        setTutorialOverlayError(message);
+        setNotification(message);
+        setTimeout(() => setNotification(null), 5000);
+      }
+    }
     finishPerfAction(perfActionId);
   };
 
@@ -5473,7 +8618,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         cardCount: game?.cards?.length || 0,
         hasPlayers: Array.isArray(game?.players),
         playerCount: game?.players?.length || 0,
-        activePlayerId: game?.turnPlayerId || game?.players?.[game?.activePlayerIndex]?.id || null,
+        activePlayerId: game?.turnPlayerId || players?.[game?.activePlayerIndex]?.id || null,
         priorityPlayerId: game?.priorityPlayerId || null,
         payloadCard: payloadCard || null
       });
@@ -5487,6 +8632,11 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       setTimeout(() => setNotification(null), 2000);
       return;
     }
+    const deferTutorialCompletionUntilAfterWrite = () => {
+      const liveStepId = (optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.stepId || 'intro';
+      return actionType === 'PASS_PRIORITY' && Boolean(TUTORIAL_NATURAL_PHASE_ADVANCE_STEPS[liveStepId]);
+    };
+    if (actionType !== 'MANUAL_SET_STEP' && !deferTutorialCompletionUntilAfterWrite()) maybeCompleteTutorialAction(actionType, payload);
     // UPDATED: Path
     const gameRef = doc(db, 'games_v3', gameId);
     const perfRunTransaction = async (label, callback) => {
@@ -5590,16 +8740,18 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
     if (actionType === 'PASS' || actionType === 'PASS_PRIORITY') {
       const turnStartEvents = [];
+      let completedNaturalPhaseAdvanceAfterWrite = null;
       await perfRunTransaction('runTransaction', async (transaction) => {
+        completedNaturalPhaseAdvanceAfterWrite = null;
         const snap = await transaction.get(gameRef);
         if (!snap.exists()) return;
         const currentGame = snap.data();
 
         const currentPlayers = currentGame.players || [];
-        const isCurrentPlayer = currentPlayers.some(p => p.id === userId);
-        if (!isCurrentPlayer) return;
+        const currentPlayer = currentPlayers.find(p => p.id === userId);
+        if (!currentPlayer) return;
 
-        const actorName = currentPlayers.find(p => p.id === userId)?.name || myPlayer?.name || 'Unknown';
+        const actorName = currentPlayer?.name || myPlayer?.name || 'Unknown';
         const passLogEntry = buildGameLogEntry({
           currentGame,
           playerId: userId,
@@ -5612,8 +8764,31 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         const layoutOptions = {
           getBattlefieldWidthForController: (controllerId) => controllerId === userId ? getCurrentBattlefieldWidthPx() : undefined
         };
-        const passedGame = advancePassPriorityState(currentGame, passLogEntry, (event) => turnStartEvents.push(event), layoutOptions);
+        let passedGame = advancePassPriorityState(currentGame, passLogEntry, (event) => turnStartEvents.push(event), layoutOptions);
+
+        const bolasPlayer = currentPlayers.find((player) => player?.id !== userId && /Nicol Bolas/i.test(player?.name || ''));
+        const naturalPhaseAdvance = currentGame.isTutorial === true ? TUTORIAL_NATURAL_PHASE_ADVANCE_STEPS[currentGame.tutorial?.stepId] : null;
+        const shouldTrackP210AutoPassCompletion = currentGame.isTutorial === true && currentGame.tutorial?.stepId === 'P2_10_pass' && getPlayerAutoPassConfig(currentGame, userId).mode === AUTO_PASS_MODE.END_OF_TURN;
+        passedGame = maybeApplyTutorialBolasPassAfterUserPass({
+          actionType,
+          currentGame,
+          passedGame,
+          naturalPhaseAdvance,
+          actingPlayerId: userId,
+          bolasPlayer,
+          onTurnStart: (event) => turnStartEvents.push(event),
+          layoutOptions
+        });
+
         const { game: proxyGame } = runProxyAutoPassAdvances(passedGame, userId, actorName, (event) => turnStartEvents.push(event));
+        completedNaturalPhaseAdvanceAfterWrite = naturalPhaseAdvance?.completionDetail && proxyGame.phase === naturalPhaseAdvance.targetPhase ? { stepId: currentGame.tutorial?.stepId, detail: naturalPhaseAdvance.completionDetail } : null;
+        if (!completedNaturalPhaseAdvanceAfterWrite && shouldTrackP210AutoPassCompletion) {
+          const proxyTurnPlayer = currentPlayers.find((player) => player?.id === proxyGame.turnPlayerId);
+          const turnPassedToBolas = Boolean(proxyTurnPlayer && /Nicol Bolas/i.test(proxyTurnPlayer?.name || ''));
+          if (turnPassedToBolas) {
+            completedNaturalPhaseAdvanceAfterWrite = { stepId: 'P2_10_pass', detail: 'PASS_PRIORITY:autopassTurnHandedToBolas' };
+          }
+        }
 
         transaction.update(gameRef, normalizeGameUpdatesForFirestore({
           phase: proxyGame.phase,
@@ -5639,6 +8814,9 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       });
       if (turnStartEvents.length > 0) {
         await Promise.all(turnStartEvents.map((event) => appendEvent(gameId, event)));
+      }
+      if (completedNaturalPhaseAdvanceAfterWrite) {
+        await maybeCompleteTutorialStep(completedNaturalPhaseAdvanceAfterWrite.stepId, { source: 'game-action', detail: completedNaturalPhaseAdvanceAfterWrite.detail });
       }
       return;
     }
@@ -5716,6 +8894,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     }
 
     if (['MANUAL_SET_STEP', 'START_EXTRA_COMBAT', 'GO_EXTRA_MAIN', 'START_EXTRA_TURN', 'SET_ACTIVE_PLAYER'].includes(actionType)) {
+      let manualPhaseDidWrite = false;
+      let manualPhaseSkipReason = null;
       await perfRunTransaction('runTransaction', async (transaction) => {
         const snap = await transaction.get(gameRef);
         if (!snap.exists()) return;
@@ -5752,6 +8932,10 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         if (actionType === 'MANUAL_SET_STEP') {
           const targetPhase = PHASES.find((phase) => phase.id === payload.phaseId);
           if (!targetPhase) return;
+          if (currentGame.phase === targetPhase.id) {
+            manualPhaseSkipReason = 'phase already current in transaction; skipped write';
+            return;
+          }
           const nextCombatState = shouldClearCombatState(currentGame.phase, targetPhase.id)
             ? getEmptyCombatState()
             : (currentGame.combat || getEmptyCombatState());
@@ -5820,6 +9004,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             START_EXTRA_TURN: 'started an extra turn',
             SET_ACTIVE_PLAYER: 'changed the active player'
           };
+          manualPhaseDidWrite = actionType === 'MANUAL_SET_STEP' ? true : manualPhaseDidWrite;
           transaction.update(gameRef, normalizeGameUpdatesForFirestore({
             ...manualUpdates,
             undoStack: appendUndoEntry(currentGame, buildUndoEntry({
@@ -5834,6 +9019,18 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       });
       setAutoPassConfig(getDefaultAutoPassConfig());
       setTimeControlsOpen(false);
+      if (game?.isTutorial && actionType === 'MANUAL_SET_STEP') {
+        console.debug('[Tutorial phase]', {
+          stepId: (optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.stepId || 'intro',
+          requestedPhase: payload?.phaseId || null,
+          currentPhase: game?.phase || null,
+          didWrite: manualPhaseDidWrite,
+          reason: manualPhaseDidWrite ? 'manual phase write committed' : (manualPhaseSkipReason || 'manual phase write skipped'),
+          setupAppliedSignature: tutorialSetupAppliedRef.current?.signature || null,
+          actionSource: 'user'
+        });
+      }
+      await maybeCompleteTutorialAction(actionType, payload);
       return;
     }
 
@@ -5908,6 +9105,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         setSelectedStackItemId(copiedStackItemId);
         setStackDetailOpen(true);
       }
+      await maybeCompleteTutorialAction(actionType, payload);
       return;
     }
 
@@ -5989,6 +9187,19 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         const nextPriorityIndex = Number.isInteger(currentGame.activePlayerIndex) ? currentGame.activePlayerIndex : 0;
         const nextPriorityPlayerId = currentPlayers[nextPriorityIndex]?.id || currentGame.priorityPlayerId || null;
         const logActorName = currentPlayers.find(p => p.id === userId)?.name || actorName;
+        const tutorialResolution = applyTutorialResolutionEffect({
+          currentGame,
+          topItem,
+          actionType,
+          currentStack,
+          updatedCards,
+          currentPlayers,
+          userId,
+          buildLogEntry: (message, extra = {}) => buildGameLogEntry({ currentGame, playerId: userId, playerName: logActorName, type: 'TUTORIAL_RESOLUTION', category: 'tutorial', message, cardId: topItem.sourceId || null, cardName, ...extra })
+        });
+        const resolvedCards = tutorialResolution.cards || updatedCards;
+        const resolvedPlayers = tutorialResolution.players || currentPlayers;
+        if (tutorialResolution.cardsChanged) cardsChanged = true;
         const stackLogEntry = buildGameLogEntry({
           currentGame,
           playerId: userId,
@@ -6000,13 +9211,14 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           cardName
         });
 
-        const undoFields = cardsChanged ? UNDO_STATE_FIELDS : STACK_ONLY_UNDO_STATE_FIELDS;
+        const undoFields = cardsChanged || currentGame.isTutorial ? UNDO_STATE_FIELDS : STACK_ONLY_UNDO_STATE_FIELDS;
         const stackUpdates = {
           stack: currentStack,
           consecutivePasses: 0,
           priorityIndex: nextPriorityIndex,
           priorityPlayerId: nextPriorityPlayerId,
-          log: [...(currentGame.log || []), stackLogEntry],
+          players: resolvedPlayers,
+          log: [...(currentGame.log || []), stackLogEntry, ...(tutorialResolution.extraLogEntries || [])],
           undoStack: appendUndoEntry(currentGame, buildUndoEntry({
             currentGame,
             actorId: userId,
@@ -6017,7 +9229,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           })),
           updatedAt: serverTimestamp()
         };
-        if (cardsChanged) stackUpdates.cards = updatedCards;
+        if (cardsChanged) stackUpdates.cards = resolvedCards;
         transactionUpdatesIncludeCards = cardsChanged;
 
         transaction.update(gameRef, normalizeGameUpdatesForFirestore(stackUpdates, actionType));
@@ -6029,6 +9241,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       });
       setSelectedStackItemId(null);
       setStackDetailOpen(false);
+      await maybeCompleteTutorialAction(actionType, payload);
       return;
     }
 
@@ -7400,12 +10613,16 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         }
       }
     }
+    await maybeCompleteTutorialAction(actionType, payload);
     if (pendingRecapEvents.length > 0) {
       await Promise.all(pendingRecapEvents.map((event) => appendEvent(gameId, event)));
     }
     } catch (error) {
       clearOptimisticGame(error?.message || 'Firestore action failed', perfActionId);
-      setNotification(`Action failed: ${error?.message || String(error)}`);
+      const tutorialQuotaMessage = game?.isTutorial && isResourceExhaustedError(error)
+        ? 'Tutorial sync hit Firebase quota/rate limit. Wait a moment, then try again.'
+        : null;
+      setNotification(tutorialQuotaMessage || `Action failed: ${error?.message || String(error)}`);
       setTimeout(() => setNotification(null), 3500);
       failPerfAction(perfActionId, error);
       debugActionsError(`handleAction threw: ${actionType}`, {
@@ -7767,6 +10984,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     }
     setLibraryMenuOpen(false);
     setTokenModal(getDefaultCustomToken());
+    maybeCompleteTutorialStep('custom_token_note');
   };
 
   const submitTokenPreset = async (preset) => {
@@ -7896,6 +11114,18 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     if (isSpectator || !targetingState || !game) return;
     const { source, mode, selectedIds } = targetingState;
 
+    const sourceName = getCardDisplayName(source, '');
+    const requiresTutorialTarget = Boolean(
+      isTutorialGame
+      && ['cast_spell_to_stack', 'final_spell', 'P1_08_target_bolas', 'F3_cast_bolt_bolas'].includes(currentTutorialStep?.id)
+      && /Lightning Bolt/i.test(sourceName)
+    );
+    if (requiresTutorialTarget && selectedIds.length === 0) {
+      setNotification('Choose Nicol Bolas as the target first.');
+      setTimeout(() => setNotification(null), 2200);
+      return;
+    }
+
     const cardTargets = selectedIds.filter(id => !id.startsWith('player:'));
     const playerTargets = selectedIds.filter(id => id.startsWith('player:')).map(id => id.replace('player:', ''));
 
@@ -7932,6 +11162,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         });
       }
     }
+    await maybeCompleteTutorialAction('TARGET', { sourceId: source.instanceId, targetIds: cardTargets, targetPlayerIds: playerTargets });
     setTargetingState(null);
   };
 
@@ -8095,6 +11326,9 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     if (!item) return;
     setSelectedStackItemId(item.id || item.sourceId || null);
     setStackDetailOpen(true);
+    maybeCompleteTutorialStep('bolas_negate', { detail: 'stackItemInspect' });
+    maybeCompleteTutorialStep('bolas_removal', { detail: 'stackItemInspect' });
+    maybeCompleteTutorialStep('final_bolas_response', { detail: 'stackItemInspect' });
   };
 
   const closeStackDetail = () => {
@@ -8351,7 +11585,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   if (loading) return <div className="text-white p-10 flex justify-center"><RotateCw className="animate-spin"/></div>;
   if (!game) return <div className="text-white p-10">Game not found</div>;
 
-  const opponentIsRevealing = (game.players || []).find(p => p.id !== viewAsPlayerId)?.handRevealed;
+  const opponentIsRevealing = players.find(p => p?.id !== viewAsPlayerId)?.handRevealed;
 
   const getZoneCount = (pid, zone) => (game.cards || []).filter(c => c.ownerId === pid && c.zone === zone).length;
   const myGYCount = getZoneCount(viewAsPlayerId, ZONES.GRAVEYARD);
@@ -8359,11 +11593,12 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const myCommandCount = getZoneCount(viewAsPlayerId, ZONES.COMMAND);
   const myLibraryCount = isPlayer ? getZoneCount(userId, ZONES.LIBRARY) : 0;
   const canDrawFromLibrary = canAct && myLibraryCount > 0;
+  const tutorialHasOpenPanel = Boolean(libraryMenuOpen || diceMenuOpen || libraryBatchOpen || selectedCard || zoomedCard || viewZone || searchLibraryOwner || deckInput || deleteDeckConfirmOpen || scryCard || peekCard || privateHandPeek || privatePeekInspectCard || tokenModal || playerStatsOpen || commanderDamageSummaryPlayerId || stackDetailOpen || timeControlsOpen || undoConfirmOpen || repairGameSizeBusy || customCounterModal || damageModal || revealsOpen);
   const latestUndoEntry = latestDisplayedUndoEntry;
   const undoButtonDisabled = !canOpenUndoModal;
   const undoConfirmDisabled = !canUndoLatestAction;
   const undoPendingLabel = 'Undo available after sync…';
-  const handleDrawCard = () => { recordPerfActionClick({ actionType: 'DRAW_CARD', buttonName: 'Draw', currentGame: game }); handleAction('DRAW_CARD'); };
+  const handleDrawCard = async () => { recordPerfActionClick({ actionType: 'DRAW_CARD', buttonName: 'Draw', currentGame: game }); await handleAction('DRAW_CARD'); await maybeCompleteTutorialStep('draw_card'); };
   const addCardReminder = (cardId, reminder) => handleAction('ADD_CARD_REMINDER', { cardId, ...reminder });
   const addPlayerReminder = (playerId, reminder) => handleAction('ADD_PLAYER_REMINDER', { targetPlayerId: playerId, ...reminder });
   const clearCleanupReminders = () => handleAction('CLEAR_CLEANUP_REMINDERS');
@@ -8428,8 +11663,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const priorityPassCount = Math.max(0, Math.min(game.consecutivePasses || 0, (game.players || []).length));
   const passedPriorityPlayers = (game.players || []).length > 1 && priorityPassCount > 0
     ? Array.from({ length: priorityPassCount }, (_, offset) => {
-        const index = (((game.priorityIndex || 0) - offset - 1) % game.players.length + game.players.length) % game.players.length;
-        return game.players[index];
+        const index = (((game.priorityIndex || 0) - offset - 1) % players.length + players.length) % players.length;
+        return players[index];
       }).filter(Boolean)
     : [];
   const waitingPriorityPlayers = game.priorityPlayerId
@@ -8461,10 +11696,29 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const handleSetManualStep = (phaseId) => {
     const targetPhase = PHASES.find((phase) => phase.id === phaseId);
     if (!targetPhase) return;
+    const liveStepId = (optimisticTutorialRef.current || displayedTutorialState || game?.tutorial || {})?.stepId || 'intro';
+    const logTutorialPhaseDebug = (details = {}) => {
+      if (!game?.isTutorial) return;
+      console.debug('[Tutorial phase]', {
+        stepId: liveStepId,
+        requestedPhase: phaseId,
+        currentPhase: game?.phase || null,
+        didWrite: Boolean(details.didWrite),
+        reason: details.reason || null,
+        setupAppliedSignature: tutorialSetupAppliedRef.current?.signature || null,
+        actionSource: 'user'
+      });
+    };
+    if (game?.phase === phaseId) {
+      logTutorialPhaseDebug({ didWrite: false, reason: 'phase already current; skipped redundant manual write' });
+      if (game?.isTutorial) maybeCompleteTutorialAction('MANUAL_SET_STEP', { phaseId });
+      return;
+    }
     const currentIndex = PHASES.findIndex((phase) => phase.id === game.phase);
     const targetIndex = PHASES.findIndex((phase) => phase.id === phaseId);
     const isFarJump = currentIndex >= 0 && targetIndex >= 0 && Math.abs(targetIndex - currentIndex) > 1;
     if (isFarJump && !confirmTimeControl(`Set step to ${targetPhase.label}?`)) return;
+    logTutorialPhaseDebug({ didWrite: true, reason: 'manual phase write requested' });
     handleAction('MANUAL_SET_STEP', { phaseId });
   };
   const handleSetCombatDamageStep = (combatDamageStep) => handleAction('SET_COMBAT_DAMAGE_STEP', { combatDamageStep });
@@ -8568,6 +11822,16 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   });
 
   const isSelfTargeted = targetingState?.selectedIds.includes(getPlayerTargetId(viewAsPlayerId)) || stackPlayerTargets.has(viewAsPlayerId);
+  const opponentTargetId = opponent?.id ? getPlayerTargetId(opponent.id) : null;
+  const isOpponentTargetSelected = Boolean(opponent?.id && (targetingState?.selectedIds.includes(opponentTargetId) || stackPlayerTargets.has(opponent.id)));
+  const isTutorialLightningBoltTargeting = Boolean(
+    targetingState
+    && isTutorialGame
+    && ['cast_spell_to_stack', 'final_spell', 'P1_08_target_bolas', 'F3_cast_bolt_bolas'].includes(currentTutorialStep?.id)
+    && /Lightning Bolt/i.test(getCardDisplayName(targetingState.source, ''))
+  );
+  const targetingRequiresSelection = Boolean(targetingState && isTutorialLightningBoltTargeting);
+  const canFinishTargeting = Boolean(targetingState && (!targetingRequiresSelection || targetingState.selectedIds.length > 0));
 
   const scrollToOpponentBattlefield = () => {
     const container = battlefieldScrollRef.current;
@@ -8587,6 +11851,14 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     await handleAction('TEMP_DAMAGE', { cardId, amount, clear });
   };
 
+  const openHandCardDetail = (card) => {
+    setSelectedCard(card);
+    if (card?.zone === ZONES.HAND && card?.controllerId === viewAsPlayerId) {
+      maybeCompleteTutorialStep('hand_area', { source: 'user-action', detail: 'handCardTapped' });
+    }
+  };
+
+
   return (
     <div
       className="flex flex-col h-screen bg-slate-900 text-slate-100 overflow-hidden font-sans"
@@ -8596,7 +11868,53 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       onTouchEnd={handleDragEnd}
     >
       <PerfDebugIndicator />
+      <QuickStartGuideModal open={quickStartOpen} onClose={() => setQuickStartOpen(false)} />
       <PerformanceDebugPanel game={game} onRepairGameSize={handleRepairGameSize} canRepairGameSize={isPlayer || isHost} repairGameSizeBusy={repairGameSizeBusy} />
+      <TutorialOverlay
+        game={{ ...game, tutorial: displayedTutorialState || game?.tutorial }}
+        currentStep={currentTutorialStep}
+        activeAnchor={currentTutorialAnchor}
+        canGoBack={canGoBackTutorial}
+        isMinimized={tutorialMinimized}
+        hasOpenPanel={tutorialHasOpenPanel}
+        onToggleMinimized={() => setTutorialMinimized((value) => !value)}
+        onResume={resumeTutorialOverlay}
+        onNext={() => advanceTutorialStep({ markCompleted: true, finish: ['tutorial_complete', 'F11_victory_complete'].includes(currentTutorialStep?.id), actionLabel: 'manual next' })}
+        onBack={goBackTutorialStep}
+        onSkip={() => {
+          const isFinalTutorialStep = ['tutorial_complete', 'F11_victory_complete'].includes(currentTutorialStep?.id);
+          return advanceTutorialStep({
+            markCompleted: false,
+            finish: isFinalTutorialStep,
+            actionLabel: 'manual skip',
+            force: !isFinalTutorialStep
+          });
+        }}
+        onExit={requestExitTutorial}
+        onFocusTarget={focusTutorialTarget}
+        onRestart={resetTutorialBattle}
+        onExplore={continueExploringTutorial}
+        errorMessage={tutorialOverlayError || ''}
+        debugInfo={tutorialDebugInfo}
+      />
+      <TutorialResumePill
+        show={isTutorialGame && (tutorialMinimized || tutorialHasOpenPanel)}
+        currentStep={currentTutorialStep}
+        hasOpenPanel={tutorialHasOpenPanel}
+        onResume={resumeTutorialOverlay}
+      />
+      {tutorialExitConfirmOpen && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/70 p-4" onClick={() => setTutorialExitConfirmOpen(false)}>
+          <div className="w-full max-w-sm rounded-2xl border border-amber-400/50 bg-slate-950 p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+            <h2 className="text-lg font-black text-amber-100">Exit tutorial?</h2>
+            <p className="mt-2 text-sm text-slate-300">Your current tutorial step is saved. Cancel to keep the overlay open, or exit to leave tutorial guidance.</p>
+            <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <button type="button" onClick={() => setTutorialExitConfirmOpen(false)} className="min-h-11 rounded-xl border border-slate-600 px-4 py-2 font-bold text-slate-100 hover:bg-slate-800">Cancel</button>
+              <button type="button" onClick={confirmExitTutorial} className="min-h-11 rounded-xl bg-red-600 px-4 py-2 font-black text-white hover:bg-red-500">Exit tutorial</button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* 1. Header */}
       <div className="bg-slate-800 border-b border-slate-700 p-2 shrink-0 shadow-md top-action-scroll-wrap">
         <div
@@ -8617,9 +11935,10 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         >
         <button
           type="button"
-          onClick={(e) => { e.stopPropagation(); setTimeControlsOpen(true); }}
+          onClick={(e) => { e.stopPropagation(); setTimeControlsOpen(true); maybeCompleteTutorialStep('open_time_controls'); }}
           disabled={!canAct}
-          className={`flex items-center gap-2 rounded-lg border px-2 py-1.5 text-left transition-colors ${canAct ? 'border-slate-700 hover:border-purple-500/60 hover:bg-slate-900' : 'border-transparent cursor-default'}`}
+          data-tutorial-anchor="phase-indicator"
+          className={`flex items-center gap-2 rounded-lg border px-2 py-1.5 text-left transition-colors ${canAct ? 'border-slate-700 hover:border-purple-500/60 hover:bg-slate-900' : 'border-transparent cursor-default'}${getTutorialAnchorClass(currentTutorialAnchor, 'phase-indicator', tutorialPulseAnchor)}`}
           title={canAct ? 'Open Time Controls' : 'Phase'}
           aria-label="Open Time Controls"
         >
@@ -8643,13 +11962,58 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         </button>
 
         <div
-          className="flex flex-col items-center justify-center bg-slate-900 px-3 py-1 rounded border border-slate-700 cursor-pointer hover:bg-slate-800"
-          onClick={() => copyToClipboard(gameId)}
+          data-tutorial-anchor="room-code"
+          className={`flex flex-col items-center justify-center bg-slate-900 px-3 py-1 rounded border border-slate-700 cursor-pointer hover:bg-slate-800${getTutorialAnchorClass(currentTutorialAnchor, 'room-code', tutorialPulseAnchor)}`}
+          onClick={() => {
+            if (currentTutorialStep?.id === 'G01_room_code') {
+              forceAdvanceTutorialStep('G01_room_code', 'room code copied');
+            } else {
+              maybeCompleteTutorialStep('G01_room_code', { source: 'user-action', detail: 'roomCodeCopied' });
+              maybeCompleteTutorialStep('intro');
+              maybeCompleteTutorialStep('room_code');
+              maybeCompleteTutorialStep('watch_cleanup_note');
+              maybeCompleteTutorialAction('ROOM_CODE_COPIED', { roomCode: gameId });
+            }
+            copyToClipboard(gameId, {
+              onCopied: (message) => {
+                setNotification(message);
+                setTimeout(() => setNotification(null), 1800);
+              },
+              onCopyFailed: (message) => {
+                setNotification(message);
+                setTimeout(() => setNotification(null), 3000);
+              }
+            });
+          }}
           title="Click to Copy Game ID"
         >
           <span className="text-[9px] text-slate-500 uppercase tracking-widest hidden sm:block">Room Code</span>
           <span className="text-xs font-mono font-bold text-white tracking-widest">{gameId}</span>
         </div>
+
+        <button
+          type="button"
+          onClick={(event) => { event.stopPropagation(); setQuickStartOpen(true); }}
+          className="relative z-20 pointer-events-auto flex items-center gap-1 rounded-lg border border-sky-500/40 bg-sky-950/50 px-2 py-1.5 text-xs font-black text-sky-100 hover:bg-sky-900/60"
+          title="Quick Start Guide"
+        >
+          <BookOpen size={14} /> Quick Start
+        </button>
+
+        {game?.isTutorial && !displayedTutorialState?.inactive && (
+          <div className="flex items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-950/40 px-2 py-1">
+            <span className="hidden text-[10px] font-black uppercase tracking-widest text-amber-200 sm:inline">Tutorial Battle (Beta)</span>
+            <button
+              type="button"
+              onClick={(event) => { event.stopPropagation(); resetTutorialBattle(); }}
+              disabled={tutorialResetBusy}
+              className="rounded-md border border-amber-300/50 px-2 py-1 text-xs font-black text-amber-100 hover:bg-amber-900/60 disabled:cursor-wait disabled:opacity-60"
+              title="Reset tutorial battle to a fresh scripted opening"
+            >
+              {tutorialResetBusy ? 'Resetting…' : 'Reset tutorial battle'}
+            </button>
+          </div>
+        )}
 
         {gameDocumentSizeEstimate && (
           <div className={`flex items-center gap-2 rounded border px-2 py-1 text-[10px] font-bold ${gameDocumentSizeEstimate.isNearLimit ? 'border-amber-400/60 bg-amber-950/60 text-amber-100' : 'border-slate-700 bg-slate-900 text-slate-300'}`}>
@@ -8701,8 +12065,9 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         <div className="flex items-center gap-3">
           <button
             type="button"
-            onClick={(e) => { e.stopPropagation(); setSelectedStackItemId(null); setStackDetailOpen(true); }}
-            className={`relative z-20 pointer-events-auto flex flex-col items-center px-3 py-1 rounded border transition-colors ${stackCards.length > 0 ? 'border-yellow-600/60 bg-yellow-950/40 hover:bg-yellow-900/50' : 'border-slate-700 bg-slate-900 hover:bg-slate-800'}`}
+            onClick={(e) => { e.stopPropagation(); setSelectedStackItemId(null); setStackDetailOpen(true); maybeCompleteTutorialStep('inspect_stack'); }}
+            data-tutorial-anchor="stack-button"
+            className={`relative z-20 pointer-events-auto flex flex-col items-center px-3 py-1 rounded border transition-colors ${stackCards.length > 0 ? 'border-yellow-600/60 bg-yellow-950/40 hover:bg-yellow-900/50' : 'border-slate-700 bg-slate-900 hover:bg-slate-800'}${getTutorialAnchorClass(currentTutorialAnchor, 'stack-button', tutorialPulseAnchor)}`}
             title="Inspect stack and priority"
             aria-label={`Inspect stack, ${stackCards.length} item${stackCards.length === 1 ? '' : 's'}`}
           >
@@ -8713,7 +12078,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           </button>
           <button
             onClick={openChat}
-            className="relative z-20 pointer-events-auto p-2 rounded hover:bg-slate-700 text-slate-400 hover:text-white"
+            data-tutorial-anchor="chat-button"
+            className={`relative z-20 pointer-events-auto p-2 rounded hover:bg-slate-700 text-slate-400 hover:text-white${getTutorialAnchorClass(currentTutorialAnchor, 'chat-button', tutorialPulseAnchor)}`}
           >
             <MessageSquare size={20} />
             {unreadCount > 0 && (
@@ -8724,14 +12090,16 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           </button>
           <button
             onClick={openRecap}
-            className="relative z-20 pointer-events-auto p-2 rounded hover:bg-slate-700 text-slate-400 hover:text-white"
-            title="Recap"
+            data-tutorial-anchor="game-log-button"
+            className={`relative z-20 pointer-events-auto p-2 rounded hover:bg-slate-700 text-slate-400 hover:text-white${getTutorialAnchorClass(currentTutorialAnchor, 'game-log-button', tutorialPulseAnchor)}`}
+            title="Game Log"
           >
             <BookOpen size={20} />
           </button>
           <button
-            onClick={() => setRevealsOpen(true)}
-            className="relative z-20 pointer-events-auto flex flex-col items-center justify-center px-2 py-1 rounded hover:bg-slate-700"
+            onClick={() => { setRevealsOpen(true); maybeCompleteTutorialStep('reveal_hand_note'); maybeCompleteTutorialStep('tool_open_book_hex'); }}
+            data-tutorial-anchor="reveal-tools"
+            className={`relative z-20 pointer-events-auto flex flex-col items-center justify-center px-2 py-1 rounded hover:bg-slate-700${getTutorialAnchorClass(currentTutorialAnchor, 'reveal-tools', tutorialPulseAnchor)}`}
             title="View reveals and reveal tools"
           >
             <span className="text-[10px] text-slate-400">REVEALS</span>
@@ -8751,7 +12119,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               {hasPriority ? (
                 <button
                   onClick={() => { recordPerfActionClick({ actionType: 'PASS_PRIORITY', buttonName: 'Pass', currentGame: game }); handleAction('PASS_PRIORITY'); }}
-                  className="relative z-20 pointer-events-auto bg-green-600 hover:bg-green-500 text-white px-4 py-1.5 rounded-full text-sm font-bold shadow-lg transform active:scale-95 transition-all flex items-center gap-2"
+                  data-tutorial-anchor="pass-button"
+                  className={`relative z-20 pointer-events-auto bg-green-600 hover:bg-green-500 text-white px-4 py-1.5 rounded-full text-sm font-bold shadow-lg transform active:scale-95 transition-all flex items-center gap-2${getTutorialAnchorClass(currentTutorialAnchor, 'pass-button', tutorialPulseAnchor)}`}
                 >
                   <ArrowRight size={14} /> Pass
                 </button>
@@ -8763,12 +12132,13 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               <div className="relative">
                 <button
                   ref={autoPassBtnRef}
+                  data-tutorial-anchor="autopass-button"
                   onClick={() => {
                     console.log('AutoPass tapped');
                     setAutoPassMenuOpen(prev => !prev);
                   }}
                   disabled={autoPassControlsDisabled}
-                  className={`relative z-20 pointer-events-auto px-3 py-1.5 rounded-full text-xs font-bold border flex items-center gap-1 ${isAutoPassEnabled ? 'bg-purple-700/60 border-purple-400 text-purple-100' : 'bg-slate-800 border-slate-600 text-slate-300 hover:text-white'} ${autoPassControlsDisabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  className={`relative z-20 pointer-events-auto px-3 py-1.5 rounded-full text-xs font-bold border flex items-center gap-1 ${isAutoPassEnabled ? 'bg-purple-700/60 border-purple-400 text-purple-100' : 'bg-slate-800 border-slate-600 text-slate-300 hover:text-white'} ${autoPassControlsDisabled ? 'opacity-50 cursor-not-allowed' : ''}${getTutorialAnchorClass(currentTutorialAnchor, 'autopass-button', tutorialPulseAnchor)}`}
                 >
                   AutoPass <ChevronDown size={12} />
                 </button>
@@ -8855,14 +12225,34 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         <div ref={battlefieldScrollRef} className="h-full overflow-y-auto overflow-x-hidden px-3 pb-4 pt-2 sm:px-4">
           <section
             ref={opponentSectionRef}
-            className={`rounded-xl border p-3 mb-3 min-h-[280px] transition-all duration-300 ${opponentSectionHighlighted ? 'border-blue-400 bg-blue-900/20 ring-2 ring-blue-400/60' : 'border-slate-700 bg-slate-800/30'}`}
+            data-tutorial-anchor="opponent-battlefield"
+            onClick={() => { maybeCompleteTutorialStep('G02_opponent_area'); maybeCompleteTutorialStep('B2_02_bolas_swamp'); }}
+            className={`rounded-xl border p-3 mb-3 min-h-[280px] transition-all duration-300 ${opponentSectionHighlighted ? 'border-blue-400 bg-blue-900/20 ring-2 ring-blue-400/60' : 'border-slate-700 bg-slate-800/30'}${isOpponentTargetSelected ? ' ring-2 ring-blue-400 bg-blue-900/20 border-blue-400' : ''}${getTutorialAnchorClass(currentTutorialAnchor, 'opponent-battlefield', tutorialPulseAnchor)}`}
           >
-            <div className="flex justify-between items-start mb-2">
+            <div
+              data-tutorial-anchor="opponent-player-target"
+              role={targetingState && opponent ? 'button' : undefined}
+              tabIndex={targetingState && opponent ? 0 : undefined}
+              aria-label={targetingState && opponent ? `Target ${opponent.name || 'opponent player'}` : undefined}
+              onClick={(event) => {
+                if (!targetingState || !opponent?.id) return;
+                event.stopPropagation();
+                toggleTargetPlayer(opponent.id);
+              }}
+              onKeyDown={(event) => {
+                if (!targetingState || !opponent?.id || !['Enter', ' '].includes(event.key)) return;
+                event.preventDefault();
+                toggleTargetPlayer(opponent.id);
+              }}
+              className={`flex min-h-16 justify-between items-start mb-2 rounded-lg p-2 transition-all ${targetingState && opponent ? 'cursor-crosshair border border-blue-400/60 bg-blue-950/30 hover:bg-blue-900/40 active:scale-[0.99]' : 'border border-transparent'}${isOpponentTargetSelected ? ' ring-2 ring-blue-300 bg-blue-800/30' : ''}${getTutorialAnchorClass(currentTutorialAnchor, 'opponent-player-target', tutorialPulseAnchor)}`}>
               <div className="flex items-center gap-2">
                 <Shield size={16} className="text-red-400"/>
                 <div>
                   <div className="text-[10px] uppercase tracking-widest text-slate-400 font-bold">Opponent Battlefield</div>
-                  <div className="font-bold text-slate-100">{opponent?.name || 'Waiting...'}</div>
+                  <div className="flex items-center gap-2 font-bold text-slate-100">
+                    <span>{opponent?.name || 'Waiting...'}</span>
+                    {isOpponentTargetSelected && <span className="rounded-full bg-blue-500 px-2 py-0.5 text-xs font-black text-white shadow">🎯 Targeted</span>}
+                  </div>
                 </div>
                 {isOppTurn && (
                   <span className="text-[10px] font-extrabold uppercase tracking-widest px-2 py-0.5 rounded-full bg-amber-600/30 text-amber-200 border border-amber-500/40">
@@ -8877,7 +12267,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               </div>
               {opponent && (
                 <div className="flex max-w-[55%] flex-wrap justify-end gap-1 text-xs">
-                  <span className="bg-slate-700 px-2 py-0.5 rounded h-fit">Life: {opponent?.life}</span>
+                  <span className={`px-2 py-0.5 rounded h-fit ${targetingState ? 'bg-blue-700 text-white ring-1 ring-blue-300' : 'bg-slate-700'}`}>Life: {opponent?.life}</span>
                   {getVisiblePlayerCounters(opponent).map((counter) => (
                     <span key={counter.key} className="rounded bg-slate-700 px-2 py-0.5 text-slate-100" title={counter.label}>{counter.label}: {counter.value}</span>
                   ))}
@@ -8910,7 +12300,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                 <button
                   type="button"
                   onClick={() => openPrivateHandPeek(opponent.id)}
-                  className="min-h-9 rounded-lg border border-cyan-500/40 bg-cyan-950/40 px-3 py-1.5 text-xs font-bold text-cyan-100 hover:bg-cyan-900/60 flex items-center gap-1.5"
+                  data-tutorial-anchor="private-hand-peek-button"
+                  className={`min-h-9 rounded-lg border border-cyan-500/40 bg-cyan-950/40 px-3 py-1.5 text-xs font-bold text-cyan-100 hover:bg-cyan-900/60 flex items-center gap-1.5${getTutorialAnchorClass(currentTutorialAnchor, 'private-hand-peek-button', tutorialPulseAnchor)}`}
                   title="Open a private local view of the opponent's hand"
                 >
                   <Eye size={14} /> Private hand peek
@@ -8962,6 +12353,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                       targetInfo={getTargetInfoFor(card)}
                       attachmentLabel={getAttachmentBadgeLabel(card)}
                       attachedCount={getAttachedCount(card)}
+                      isTutorialGame={isTutorialGame}
                     />
                   </div>
                 );
@@ -8998,7 +12390,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                           )}
                         </div>
                         <span className="shrink-0 text-[10px] text-slate-400">
-                          {game.players.find(p => p.id === item.controllerId)?.name}
+                          {players.find(p => p?.id === item.controllerId)?.name}
                         </span>
                       </div>
                     );
@@ -9007,7 +12399,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               </div>
             ) : <div />}
 
-            <div className="bg-slate-900/90 border border-slate-700 rounded-lg p-3 text-xs space-y-2">
+            <div data-tutorial-anchor="combat-summary" onClick={() => { maybeCompleteTutorialStep('bolas_blocks_summary'); maybeCompleteTutorialStep('combat_summary_note'); maybeCompleteTutorialStep('bolas_declares_attacker'); maybeCompleteTutorialStep('P4_11_combat_summary'); maybeCompleteTutorialStep('B4_02_bolas_combat'); maybeCompleteTutorialStep('B4_03_knight_attacks'); }} className={`bg-slate-900/90 border border-slate-700 rounded-lg p-3 text-xs space-y-2${getTutorialAnchorClass(currentTutorialAnchor, 'combat-summary', tutorialPulseAnchor)}`}>
               <div className="font-bold text-slate-200 uppercase tracking-wider">Combat Summary</div>
               <div className="flex flex-wrap items-center gap-2">
                 <span className="font-semibold text-slate-300">Damage step:</span>
@@ -9036,7 +12428,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             </div>
           </div>
 
-          <section className="rounded-xl border border-slate-700 bg-slate-900/30 p-3">
+          <section data-tutorial-anchor="own-battlefield" onClick={() => { maybeCompleteTutorialStep('battlefields'); maybeCompleteTutorialStep('G03_own_battlefield'); maybeCompleteTutorialStep('P3_01_untap'); }} className={`rounded-xl border border-slate-700 bg-slate-900/30 p-3${getTutorialAnchorClass(currentTutorialAnchor, 'own-battlefield', tutorialPulseAnchor)}`}>
             <div className="flex items-center justify-between mb-3 gap-2">
               <div className="flex items-center gap-2">
                 <User size={16} className="text-green-400"/>
@@ -9124,6 +12516,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                       targetInfo={getTargetInfoFor(card)}
                       attachmentLabel={getAttachmentBadgeLabel(card)}
                       attachedCount={getAttachedCount(card)}
+                      isTutorialGame={isTutorialGame}
                     />
                   </div>
                 );
@@ -9136,7 +12529,12 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       {/* 3. Footer */}
       <div className="bg-slate-800 border-t border-slate-700 shadow-[0_-5px_15px_rgba(0,0,0,0.5)] z-30">
         <div className="px-4 py-2 bg-slate-900/80 border-b border-slate-700/50">
-          <div className="overflow-x-auto sm:overflow-visible hide-scrollbar snap-x snap-proximity scroll-smooth">
+          {isTutorialGame && currentTutorialAnchor === 'library-menu-button' && (
+            <div className="mb-2 rounded-lg border border-amber-400/40 bg-amber-950/40 px-3 py-2 text-xs font-bold text-amber-100 sm:hidden">
+              Swipe this lower toolbar sideways → until the book/library icon appears.
+            </div>
+          )}
+          <div ref={bottomToolbarRef} data-tutorial-anchor="bottom-toolbar" className={`overflow-x-auto sm:overflow-visible hide-scrollbar snap-x snap-proximity scroll-smooth${getTutorialAnchorClass(currentTutorialAnchor, 'bottom-toolbar', tutorialPulseAnchor)}`}>
             <div className="flex items-center gap-6 flex-nowrap min-w-max whitespace-nowrap sm:min-w-0 sm:justify-between sm:w-full">
             <div className="flex items-center gap-4 snap-start">
             {/* IDENTITY BADGE */}
@@ -9165,9 +12563,9 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               </div>
             </div>
 
-            <div className="flex items-center gap-2 cursor-pointer p-1 rounded hover:bg-slate-800" onClick={(e) => {
+            <div data-tutorial-anchor="player-counters-button" className={`flex items-center gap-2 cursor-pointer p-1 rounded hover:bg-slate-800${getTutorialAnchorClass(currentTutorialAnchor, 'player-counters-button', tutorialPulseAnchor)}`} onClick={(e) => {
               if(targetingState) { e.stopPropagation(); toggleTargetPlayer(viewAsPlayerId); }
-              else { setPlayerStatsOpen(true); }
+              else { setPlayerStatsOpen(true); maybeCompleteTutorialStep('player_panel'); }
             }}>
               <span className="text-red-400 font-bold text-xl">{myPlayer?.life}</span>
               <div className="flex flex-col">
@@ -9205,7 +12603,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                 type="button"
                 onClick={handleDrawCard}
                 disabled={!canDrawFromLibrary}
-                className={`min-h-9 px-3 py-1.5 rounded-full text-xs font-extrabold transition-all flex items-center gap-1.5 active:scale-95 ${canDrawFromLibrary ? 'bg-blue-600 hover:bg-blue-500 text-white border border-blue-400/60 shadow-md shadow-blue-950/30' : 'bg-slate-700/50 text-slate-400 border border-slate-600 cursor-not-allowed opacity-60'}`}
+                data-tutorial-anchor="draw-button"
+                className={`min-h-9 px-3 py-1.5 rounded-full text-xs font-extrabold transition-all flex items-center gap-1.5 active:scale-95 ${canDrawFromLibrary ? 'bg-blue-600 hover:bg-blue-500 text-white border border-blue-400/60 shadow-md shadow-blue-950/30' : 'bg-slate-700/50 text-slate-400 border border-slate-600 cursor-not-allowed opacity-60'}${getTutorialAnchorClass(canDrawFromLibrary ? currentTutorialAnchor : null, 'draw-button', tutorialPulseAnchor)}`}
                 title={canDrawFromLibrary ? 'Draw one card' : 'No cards left in library'}
                 aria-label="Draw one card from bottom panel"
               >
@@ -9243,8 +12642,9 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             <div className="relative">
               <button
                 ref={libraryButtonRef}
-                onClick={canAct ? () => setLibraryMenuOpen(!libraryMenuOpen) : undefined}
-                className={`p-2 rounded-full hover:bg-slate-700 ${libraryMenuOpen ? 'text-white bg-slate-700' : 'text-slate-400'} ${canAct ? '' : 'opacity-40 cursor-not-allowed'}`}
+                onClick={canAct ? () => { const willOpen = !libraryMenuOpen; setLibraryMenuOpen(willOpen); if (willOpen) { maybeCompleteTutorialStep('open_library_tools'); maybeCompleteTutorialStep('G05_open_library_tools'); maybeCompleteTutorialStep('P3_03_delver_reveal_ponder'); maybeCompleteTutorialStep('P4_06_reorder_ponder'); } } : undefined}
+                data-tutorial-anchor="library-menu-button"
+                className={`p-2 rounded-full hover:bg-slate-700 ${libraryMenuOpen ? 'text-white bg-slate-700' : 'text-slate-400'} ${canAct ? '' : 'opacity-40 cursor-not-allowed'}${getTutorialAnchorClass(currentTutorialAnchor, 'library-menu-button', tutorialPulseAnchor)}`}
               >
                 <BookOpen size={18} />
               </button>
@@ -9263,7 +12663,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                 setUndoConfirmOpen(true);
               }}
               disabled={undoButtonDisabled}
-              className={`min-h-9 rounded-full border px-3 py-1.5 text-xs font-extrabold transition-all flex items-center gap-1.5 ${undoButtonDisabled ? 'border-slate-700 bg-slate-800/50 text-slate-500 cursor-not-allowed opacity-60' : 'border-amber-500/60 bg-amber-900/40 text-amber-100 hover:bg-amber-800/60 active:scale-95'}`}
+              data-tutorial-anchor="undo-button"
+              className={`min-h-9 rounded-full border px-3 py-1.5 text-xs font-extrabold transition-all flex items-center gap-1.5 ${undoButtonDisabled ? 'border-slate-700 bg-slate-800/50 text-slate-500 cursor-not-allowed opacity-60' : 'border-amber-500/60 bg-amber-900/40 text-amber-100 hover:bg-amber-800/60 active:scale-95'}${getTutorialAnchorClass(currentTutorialAnchor, 'undo-button', tutorialPulseAnchor)}`}
               title={latestUndoEntry ? (undoPendingSync ? undoPendingLabel : `Undo ${latestUndoEntry.actionLabel || 'last action'}`) : 'Nothing to undo'}
               aria-label="Undo last game action"
             >
@@ -9390,13 +12791,18 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         )}
         {libraryMenuOpen && libraryMenuPos && createPortal(
           <div
-            className="fixed z-[100] w-40 bg-slate-800 rounded shadow-xl border border-slate-600 overflow-hidden"
-            style={{ top: libraryMenuPos.top - 8, left: libraryMenuPos.right, transform: 'translate(-100%, -100%)' }}
+            className="fixed z-[100] w-40 bg-slate-800 rounded shadow-xl border border-slate-600 overflow-y-auto"
+            style={{
+              top: libraryMenuPos.top - 8,
+              left: libraryMenuPos.right,
+              maxHeight: `max(7rem, calc(${libraryMenuPos.top}px - 1rem))`,
+              transform: 'translate(-100%, -100%)'
+            }}
           >
-            <button onClick={() => { recordPerfActionClick({ actionType: 'DRAW_CARD', buttonName: 'Draw', currentGame: game }); handleAction('DRAW_CARD'); setLibraryMenuOpen(false); }} disabled={!canDrawFromLibrary} className={`w-full text-left px-3 py-2 text-sm flex items-center gap-2 ${canDrawFromLibrary ? 'hover:bg-slate-700 text-blue-300' : 'text-slate-500 cursor-not-allowed'}`}>
+            <button data-tutorial-anchor="draw-button" onClick={async () => { recordPerfActionClick({ actionType: 'DRAW_CARD', buttonName: 'Draw', currentGame: game }); await handleAction('DRAW_CARD'); setLibraryMenuOpen(false); await maybeCompleteTutorialStep('draw_card'); }} disabled={!canDrawFromLibrary} className={`w-full text-left px-3 py-2 text-sm flex items-center gap-2 ${canDrawFromLibrary ? 'hover:bg-slate-700 text-blue-300' : 'text-slate-500 cursor-not-allowed'}${getTutorialAnchorClass(canDrawFromLibrary ? currentTutorialAnchor : null, 'draw-button', tutorialPulseAnchor)}`}>
               <Plus size={12} /> Draw
             </button>
-            <button onClick={() => { handleAction('MULLIGAN'); setLibraryMenuOpen(false); }} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-700 flex items-center gap-2 text-amber-300" >
+            <button data-tutorial-anchor="mulligan-button" onClick={() => { handleAction('MULLIGAN'); setLibraryMenuOpen(false); }} className={`w-full text-left px-3 py-2 text-sm hover:bg-slate-700 flex items-center gap-2 text-amber-300${getTutorialAnchorClass(currentTutorialAnchor, 'mulligan-button', tutorialPulseAnchor)}`} >
               <RefreshCw size={12} /> Mulligan (7)
             </button>
             <button onClick={() => handleAction('SCRY_TOP')} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-700 flex items-center gap-2 text-purple-300">
@@ -9408,7 +12814,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             <button onClick={() => startReorderTop()} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-700 flex items-center gap-2 text-indigo-300">
               <Layers size={12} /> Reorder Top...
             </button>
-            <button onClick={() => { setLibraryBatchOpen(true); setLibraryMenuOpen(false); }} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-700 flex items-center gap-2 text-cyan-300">
+            <button onClick={() => { setLibraryBatchOpen(true); setLibraryMenuOpen(false); maybeCompleteTutorialStep('batch_library_actions'); }} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-700 flex items-center gap-2 text-cyan-300">
               <LayoutGrid size={12} /> Batch Actions
             </button>
             <button onClick={() => handleAction('SHUFFLE_LIBRARY')} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-700 flex items-center gap-2 text-yellow-300">
@@ -9442,11 +12848,15 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           document.body
         )}
 
-        <div className="p-2 overflow-x-auto whitespace-nowrap hide-scrollbar flex gap-2 min-h-[140px] items-center px-4">
-          {canAct && noDeckLoaded && (
+        <div data-tutorial-anchor="hand-area" className={`p-2 overflow-x-auto whitespace-nowrap hide-scrollbar flex gap-2 min-h-[140px] items-center px-4${getTutorialAnchorClass(currentTutorialAnchor, 'hand-area', tutorialPulseAnchor)}`}>
+          {canAct && (noDeckLoaded || currentTutorialStep?.id === 'import_deck') && (
             <button
-              onClick={() => setDeckInput(commanderModeEnabled ? "Commander\n1 Atraxa, Praetors' Voice\n\nDeck\n1 Sol Ring\n1 Command Tower" : '20 Mountain\n20 Lightning Bolt\n20 Llanowar Elves')}
-              className="mx-auto text-sm text-slate-500 border border-slate-600 border-dashed rounded px-4 py-2 hover:text-white hover:border-slate-400"
+              data-tutorial-anchor="import-deck-button"
+              onClick={() => {
+                setDeckInput(commanderModeEnabled ? "Commander\n1 Atraxa, Praetors' Voice\n\nDeck\n1 Sol Ring\n1 Command Tower" : '20 Mountain\n20 Lightning Bolt\n20 Llanowar Elves');
+                maybeCompleteTutorialStep('import_deck');
+              }}
+              className={`mx-auto text-sm text-slate-500 border border-slate-600 border-dashed rounded px-4 py-2 hover:text-white hover:border-slate-400${getTutorialAnchorClass(currentTutorialAnchor, 'import-deck-button', tutorialPulseAnchor)}`}
             >
               Import Deck
             </button>
@@ -9467,9 +12877,10 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               targets={game.targets || []}
               stack={stackCards}
               isSelected={targetingState?.selectedIds.includes(card.instanceId)}
-              onMove={() => setSelectedCard(card)}
+              onMove={() => openHandCardDetail(card)}
               onZoom={setZoomedCard}
               targetInfo={getTargetInfoFor(card)}
+              isTutorialGame={isTutorialGame}
             />
           ))}
           <button onClick={canAct ? () => setDiceMenuOpen(true) : undefined} className={`ml-4 px-3 py-8 border-l border-slate-700 text-slate-500 hover:text-purple-300 flex flex-col items-center justify-center text-[10px] font-bold ${canAct ? '' : 'opacity-40 cursor-not-allowed'}`}>
@@ -9574,7 +12985,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       {/* TIME CONTROLS PANEL */}
       {timeControlsOpen && (
         <div className="fixed inset-0 z-[149] bg-black/70 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={() => setTimeControlsOpen(false)}>
-          <div className="w-full sm:max-w-lg max-h-[90vh] bg-slate-900 border border-slate-700 shadow-2xl rounded-t-2xl sm:rounded-2xl overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
+          <div data-tutorial-anchor="phase-controls" className={`w-full sm:max-w-lg max-h-[90vh] bg-slate-900 border border-slate-700 shadow-2xl rounded-t-2xl sm:rounded-2xl overflow-hidden flex flex-col${getTutorialAnchorClass(currentTutorialAnchor, 'phase-controls', tutorialPulseAnchor)}`} onClick={(e) => e.stopPropagation()}>
             <div className="flex items-start justify-between gap-3 border-b border-slate-700 bg-slate-800/90 p-4">
               <div>
                 <h2 className="text-xl font-black text-white flex items-center gap-2"><Clock size={20} className="text-purple-300" /> Time Controls</h2>
@@ -9602,6 +13013,9 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
               <section>
                 <h3 className="text-sm font-black uppercase tracking-wider text-slate-300 mb-2">Set current step</h3>
+                {game?.isTutorial && tutorialSyncPending && (
+                  <div className="mb-2 rounded-lg border border-purple-500/30 bg-purple-950/30 px-3 py-2 text-xs font-bold text-purple-100">Syncing tutorial step…</div>
+                )}
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                   {PHASES.map((phase) => {
                     const isCurrent = phase.id === game.phase;
@@ -9609,7 +13023,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                       <button
                         key={phase.id}
                         onClick={() => handleSetManualStep(phase.id)}
-                        className={`min-h-12 rounded-xl border px-3 py-2 text-sm font-bold ${isCurrent ? 'bg-purple-700 border-purple-400 text-white' : 'bg-slate-800 border-slate-700 text-slate-100 hover:bg-slate-700 hover:border-slate-500'}`}
+                        disabled={game?.isTutorial && tutorialSyncPending}
+                        className={`min-h-12 rounded-xl border px-3 py-2 text-sm font-bold ${game?.isTutorial && tutorialSyncPending ? 'cursor-wait border-slate-800 bg-slate-900 text-slate-500' : (isCurrent ? 'bg-purple-700 border-purple-400 text-white' : 'bg-slate-800 border-slate-700 text-slate-100 hover:bg-slate-700 hover:border-slate-500')}`}
                         aria-pressed={isCurrent}
                       >
                         {phase.label}
@@ -9709,13 +13124,21 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       {/* TARGETING BANNER */}
       {targetingState && (
         <div className="fixed bottom-40 left-0 right-0 z-[90] flex justify-center pointer-events-none px-4">
-          <div className="bg-blue-600 text-white p-3 rounded-lg shadow-xl text-center font-bold animate-in fade-in slide-in-from-bottom-4 border-2 border-blue-400 flex flex-col gap-2 pointer-events-auto max-w-md w-full">
+          <div data-tutorial-anchor="target-tools" className={`bg-blue-600 text-white p-3 rounded-lg shadow-xl text-center font-bold animate-in fade-in slide-in-from-bottom-4 border-2 border-blue-400 flex flex-col gap-2 pointer-events-auto max-w-md w-full${getTutorialAnchorClass(currentTutorialAnchor, 'target-tools', tutorialPulseAnchor)}`}>
             <div className="flex justify-center items-center gap-2">
               <span>Select targets for: {getCardDisplayName(targetingState.source)}</span>
               <span className="bg-white text-blue-600 px-2 rounded-full text-xs">{targetingState.selectedIds.length}</span>
             </div>
+            {targetingRequiresSelection && targetingState.selectedIds.length === 0 && (
+              <div className="rounded-md border border-white/25 bg-blue-900/40 px-2 py-1 text-xs text-blue-50">Choose Nicol Bolas as the target first.</div>
+            )}
             <div className="flex justify-center gap-4 text-xs mt-1">
-              <button onClick={finishTargeting} className="bg-white text-blue-600 px-4 py-1.5 rounded-full font-bold shadow hover:bg-blue-50 flex items-center gap-1"><Check size={14}/> Done</button>
+              <button
+                onClick={finishTargeting}
+                disabled={!canFinishTargeting}
+                className={`bg-white text-blue-600 px-4 py-1.5 rounded-full font-bold shadow hover:bg-blue-50 flex items-center gap-1 disabled:cursor-not-allowed disabled:opacity-50 ${!canFinishTargeting ? 'ring-2 ring-white/30' : ''}`}
+                title={!canFinishTargeting ? 'Choose Nicol Bolas as the target first.' : 'Confirm selected targets'}
+              ><Check size={14}/> Done</button>
               <button onClick={() => setTargetingState(null)} className="text-blue-200 underline hover:text-white">Cancel</button>
             </div>
           </div>
@@ -9765,7 +13188,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       {/* STACK DETAIL MODAL */}
       {stackDetailOpen && (
         <div className="fixed inset-0 z-[148] pointer-events-none flex items-end sm:items-center justify-center p-3 sm:p-4">
-          <div className="pointer-events-auto w-full sm:max-w-lg max-h-[82vh] bg-slate-900 border border-slate-700 shadow-2xl flex flex-col rounded-t-2xl sm:rounded-2xl overflow-hidden">
+          <div data-tutorial-anchor="stack-panel" className={`pointer-events-auto w-full sm:max-w-lg max-h-[82vh] bg-slate-900 border border-slate-700 shadow-2xl flex flex-col rounded-t-2xl sm:rounded-2xl overflow-hidden${getTutorialAnchorClass(currentTutorialAnchor, 'stack-panel', tutorialPulseAnchor)}`}>
             <div className="flex items-start justify-between gap-3 p-4 border-b border-slate-700 bg-slate-800">
               <div className="min-w-0">
                 <h3 className="font-bold text-white text-lg flex items-center gap-2"><Layers size={18} className="text-yellow-400"/> Stack</h3>
@@ -10049,7 +13472,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       {viewZone && (
         <div className="fixed inset-0 bg-black/90 z-50 flex flex-col p-4">
           <div className="flex justify-between items-center mb-4">
-            <h2 className="text-xl font-bold text-white capitalize">{viewZone.zone} ({game.players.find(p => p.id === viewZone.ownerId)?.name})</h2>
+            <h2 className="text-xl font-bold text-white capitalize">{viewZone.zone} ({players.find(p => p?.id === viewZone.ownerId)?.name})</h2>
             <button onClick={() => setViewZone(null)}><X className="text-white"/></button>
           </div>
           <div className="flex-1 overflow-y-auto grid grid-cols-4 gap-2 content-start">
@@ -10237,7 +13660,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       {/* Token Tools Panel */}
       {tokenModal && (
         <div className="fixed inset-0 bg-black/80 z-[70] flex items-end justify-center p-2 sm:items-center sm:p-4" onClick={() => setTokenModal(null)}>
-          <div className="max-h-[88vh] w-full max-w-md overflow-y-auto rounded-t-2xl border border-slate-600 bg-slate-800 shadow-2xl sm:rounded-2xl" onClick={e => e.stopPropagation()}>
+          <div data-tutorial-anchor="token-tools" className={`max-h-[88vh] w-full max-w-md overflow-y-auto rounded-t-2xl border border-slate-600 bg-slate-800 shadow-2xl sm:rounded-2xl${getTutorialAnchorClass(currentTutorialAnchor, 'token-tools', tutorialPulseAnchor)}`} onClick={e => e.stopPropagation()}>
             <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-700 bg-slate-800/95 px-4 py-3 backdrop-blur">
               <div>
                 <h3 className="text-lg font-extrabold text-white">Token Tools</h3>
@@ -10407,10 +13830,10 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       {/* Player Stats Modal */}
       {playerStatsOpen && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={() => setPlayerStatsOpen(false)}>
-          <div className="max-h-[88vh] w-full max-w-sm overflow-y-auto rounded-xl border border-slate-600 bg-slate-800 p-5" onClick={e => e.stopPropagation()}>
+          <div data-tutorial-anchor="player-counters-panel" className={`max-h-[88vh] w-full max-w-sm overflow-y-auto rounded-xl border border-slate-600 bg-slate-800 p-5${getTutorialAnchorClass(currentTutorialAnchor, 'player-counters-panel', tutorialPulseAnchor)}`} onClick={e => e.stopPropagation()}>
             <h3 className="text-xl font-bold mb-4 text-white">Player Counters & Statuses</h3>
             <div className="space-y-4">
-              <div className="rounded-lg border border-blue-500/30 bg-blue-950/20 p-3">
+              <div data-tutorial-anchor="mana-pool-panel" className={`rounded-lg border border-blue-500/30 bg-blue-950/20 p-3${getTutorialAnchorClass(currentTutorialAnchor, 'mana-pool-panel', tutorialPulseAnchor)}`}>
                 <div className="mb-2 flex items-center justify-between gap-2">
                   <div>
                     <div className="text-[11px] font-bold uppercase tracking-wider text-blue-200">Mana Pool</div>
@@ -10486,7 +13909,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                 <ReminderTool label="Add Player Reminder" onAdd={(reminder) => addPlayerReminder(viewAsPlayerId, reminder)} disabled={!canAct} />
               </div>
 
-              <div className="rounded-lg border border-amber-500/30 bg-slate-900/60 p-3">
+              <div data-tutorial-anchor="status-panel" className={`rounded-lg border border-amber-500/30 bg-slate-900/60 p-3${getTutorialAnchorClass(currentTutorialAnchor, 'status-panel', tutorialPulseAnchor)}`}>
                 <div className="mb-2 flex items-center justify-between gap-2">
                   <div>
                     <div className="text-[11px] font-bold uppercase tracking-wider text-amber-200">Player Status Badges</div>
@@ -10852,7 +14275,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
       {selectedCard && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-3 sm:p-4 animate-in fade-in duration-200" onClick={() => setSelectedCard(null)}>
-          <div className="bg-slate-800 w-full max-w-sm rounded-xl p-4 shadow-2xl border border-slate-600 max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+          <div data-tutorial-anchor="card-detail" className={`bg-slate-800 w-full max-w-sm rounded-xl p-4 shadow-2xl border border-slate-600 max-h-[85vh] overflow-y-auto${getTutorialAnchorClass(currentTutorialAnchor, 'card-detail', tutorialPulseAnchor)}`} onClick={e => e.stopPropagation()}>
             <div className="flex justify-between items-center border-b border-slate-700 pb-2 mb-3">
               <span className="font-bold text-lg text-white truncate pr-2">{getDisplayCardName(selectedCard)}</span>
               <button onClick={() => setSelectedCard(null)}><X className="text-slate-400" /></button>
@@ -10916,7 +14339,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                 const activeFace = faces[activeIndex];
                 const otherIndex = (activeIndex + 1) % faces.length;
                 const otherFace = getCardFaceAt(liveSelectedCard, otherIndex);
-                const otherImage = otherFace?.image_uris?.normal || otherFace?.image_uris?.large || null;
+                const otherImage = getBestImageUriFromImageUris(otherFace?.image_uris) || otherFace?.image_uri || null;
                 return (
                   <section className="space-y-2 rounded-lg border border-cyan-500/40 bg-cyan-950/20 p-3">
                     <div className="flex items-center justify-between gap-2">
@@ -10924,7 +14347,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                       <span className="rounded-full border border-cyan-400/40 bg-cyan-900/40 px-2 py-0.5 text-[10px] font-bold text-cyan-100">Face {activeIndex + 1}/{faces.length}</span>
                     </div>
                     <div className="text-sm text-slate-100">Current face: <span className="font-bold">{activeFace?.name || getCardDisplayName(liveSelectedCard)}</span></div>
-                    <div className="rounded-lg border border-slate-700 bg-slate-950/40 p-2">
+                    <div className="rounded-lg border border-slate-700 bg-slate-950/40 p-2" aria-label="Other face preview only; use the Transform button to switch faces">
                       <div className="flex gap-2">
                         {otherImage && <img src={otherImage} alt={otherFace?.name || 'Other face'} className="h-24 w-16 rounded object-cover border border-slate-700" />}
                         <div className="min-w-0 flex-1 space-y-1">
@@ -11043,7 +14466,16 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                       actionType: 'SET_TARGETING_STATE_CAST',
                       payload: { sourceId: selectedCard.instanceId, mode: 'CAST', selectedIds: [] },
                       className: "col-span-2 min-h-10 bg-purple-900/50 hover:bg-purple-800 text-purple-100 p-2 rounded-lg text-sm font-medium border border-purple-800 flex items-center justify-center gap-2",
-                      onClick: () => { if (!canAct) return; setTargetingState({ source: selectedCard, mode: 'CAST', selectedIds: [] }); setSelectedCard(null); },
+                      onClick: () => {
+                        if (!canAct) return;
+                        const shouldFocusOpponentTarget = isTutorialGame
+                          && ['cast_spell_to_stack', 'final_spell', 'P1_08_target_bolas', 'F3_cast_bolt_bolas'].includes(currentTutorialStep?.id)
+                          && /Lightning Bolt/i.test(getCardDisplayName(selectedCard, ''));
+                        setTargetingState({ source: selectedCard, mode: 'CAST', selectedIds: [] });
+                        maybeCompleteTutorialStep('P1_07_bolt_cast_target');
+                        setSelectedCard(null);
+                        if (shouldFocusOpponentTarget) window.setTimeout(scrollToOpponentBattlefield, 50);
+                      },
                       children: 'Cast + Target 🎯'
                     })}
                     <button onClick={() => { handleAction('MOVE_ZONE', { cardId: selectedCard.instanceId, targetZone: ZONES.BATTLEFIELD }); handleAction('TOGGLE_FACE', { cardId: selectedCard.instanceId }); setSelectedCard(null); }} className="col-span-2 min-h-10 bg-slate-700 text-slate-300 p-2 rounded-lg text-sm">Play Face Down (Morph)</button>
@@ -11330,7 +14762,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         </div>
       )}
 
-      {deckInput !== '' && !importing && noDeckLoaded && (
+      {deckInput !== '' && !importing && (noDeckLoaded || game?.isTutorial) && (
         <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
           <div className="bg-slate-800 w-full max-w-md rounded-xl p-6 shadow-2xl border border-slate-600">
             <h3 className="text-xl font-bold mb-2">Import Deck</h3>
@@ -11349,7 +14781,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             />
             <div className="flex gap-3 mt-4">
               <button onClick={() => setDeckInput('')} className="flex-1 bg-slate-700 py-2 rounded">Cancel</button>
-              <button onClick={importDeck} className="flex-1 bg-green-600 py-2 rounded font-bold text-white">Import Cards</button>
+              <button onClick={game?.isTutorial && !noDeckLoaded ? () => { setDeckInput(''); setNotification('Tutorial import preview closed. Your scripted duel deck is unchanged.'); setTimeout(() => setNotification(null), 2500); } : importDeck} className="flex-1 bg-green-600 py-2 rounded font-bold text-white">{game?.isTutorial && !noDeckLoaded ? 'Keep Tutorial Deck' : 'Import Cards'}</button>
             </div>
           </div>
         </div>
@@ -11494,6 +14926,9 @@ export default function App() {
   const [activeGameId, setActiveGameId] = useState(null);
   const [initError, setInitError] = useState(null);
   const [isActionLoading, setIsActionLoading] = useState(false);
+  const [loadingAction, setLoadingAction] = useState('');
+  const [lobbyActionDebug, setLobbyActionDebug] = useState({ action: '', checkpoint: '', errorMessage: '', errorCode: '' });
+  const lobbyActionRunIdRef = useRef(0);
   const [isAuthStartupLoading, setIsAuthStartupLoading] = useState(true);
   const [playerName, setPlayerName] = useState('');
   const [myGames, setMyGames] = useState([]);
@@ -11505,6 +14940,20 @@ export default function App() {
   const [pendingUrlEntry, setPendingUrlEntry] = useState(null);
   const isExitingRef = useRef(false);
   const suggestedName = myGames.find((g) => (g.myName || '').trim())?.myName || '';
+  const getCachedMembership = (roomCode) => myGames.find((game) => game.id === roomCode || game.roomCode === roomCode) || null;
+
+  const shouldUpsertCachedMembership = (roomCode, role, extraFields = {}) => {
+    const cached = getCachedMembership(roomCode);
+    if (!cached) return true;
+    const expectedName = (extraFields.myName || '').trim();
+    const expectedTitle = (extraFields.title || '').trim();
+    if ((cached.role || '') !== role) return true;
+    if (expectedName && (cached.myName || '').trim() !== expectedName) return true;
+    if (expectedTitle && (cached.title || '').trim() !== expectedTitle) return true;
+    if (extraFields.isTutorial && !cached.isTutorial) return true;
+    return false;
+  };
+
 
   const clearPersistedJoinState = () => {
     const keysToClear = [
@@ -11545,19 +14994,108 @@ export default function App() {
     clearGameUrlParams();
   };
 
-  const upsertUserGameMembership = async (uid, roomCode, role, extraFields = {}) => {
+  const upsertUserGameMembership = async (uid, roomCode, role, extraFields = {}, firestoreOps = null) => {
     const trimmedName = (extraFields.myName || '').trim();
     const trimmedTitle = (extraFields.title || '').trim();
     const membershipRef = doc(db, 'users', uid, 'games', roomCode);
-    await setDoc(membershipRef, {
+    const payload = {
       roomCode,
       role,
       gameId: roomCode,
       ...(trimmedName ? { myName: trimmedName } : {}),
       ...(trimmedTitle ? { title: trimmedTitle } : {}),
+      ...(extraFields.isTutorial ? { isTutorial: true } : {}),
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp()
-    }, { merge: true });
+    };
+    if (firestoreOps) {
+      await firestoreOps.setDoc(membershipRef, payload, { merge: true }, { path: `users/${uid}/games/${roomCode}` });
+    } else {
+      await setDoc(membershipRef, payload, { merge: true });
+    }
+  };
+
+  const recordLobbyActionCheckpoint = (actionName, checkpoint, details = {}) => {
+    const debugUpdate = {
+      action: actionName,
+      checkpoint,
+      errorMessage: details.errorMessage || '',
+      errorCode: details.errorCode || ''
+    };
+    setLobbyActionDebug((current) => (
+      current.action === debugUpdate.action
+        && current.checkpoint === debugUpdate.checkpoint
+        && current.errorMessage === debugUpdate.errorMessage
+        && current.errorCode === debugUpdate.errorCode
+        ? current
+        : { ...current, ...debugUpdate }
+    ));
+    console.info('[Lobby action]', actionName, checkpoint, details);
+  };
+
+  const runLobbyAction = async (actionName, asyncFn) => {
+    const runId = lobbyActionRunIdRef.current + 1;
+    lobbyActionRunIdRef.current = runId;
+    setLoadingAction(actionName);
+    setIsActionLoading(true);
+    setInitError(null);
+    recordLobbyActionCheckpoint(actionName, 'started');
+    const firestoreOps = createLobbyFirestoreCounter(actionName);
+
+    let lastCheckpoint = 'started';
+    let timedOut = false;
+    const checkpoint = (label, details = {}) => {
+      if (timedOut) {
+        console.info('[Lobby action]', actionName, `late checkpoint after timeout: ${label}`, details);
+        return;
+      }
+      lastCheckpoint = label;
+      recordLobbyActionCheckpoint(actionName, label, details);
+    };
+
+    const timeoutId = window.setTimeout(() => {
+      if (lobbyActionRunIdRef.current !== runId) return;
+      timedOut = true;
+      const message = `Lobby action timed out at checkpoint: ${lastCheckpoint}`;
+      console.warn('[Lobby action]', actionName, message, { checkpoint: lastCheckpoint });
+      setLobbyActionDebug((current) => ({
+        ...current,
+        action: actionName,
+        checkpoint: lastCheckpoint,
+        errorMessage: message,
+        errorCode: 'timeout'
+      }));
+      setInitError(message);
+      setLoadingAction('');
+      setIsActionLoading(false);
+    }, 12000);
+
+    try {
+      const result = await asyncFn(checkpoint, firestoreOps);
+      checkpoint('completed');
+      return result;
+    } catch (e) {
+      const quotaError = isResourceExhaustedError(e);
+      const message = quotaError ? FIRESTORE_RESOURCE_EXHAUSTED_MESSAGE : (e?.message || String(e) || 'Unknown lobby action error');
+      const code = quotaError ? (e?.code || 'resource-exhausted') : (e?.code || '');
+      console.error('[Lobby action]', actionName, 'failed', e);
+      setLobbyActionDebug((current) => ({
+        ...current,
+        action: actionName,
+        checkpoint: lastCheckpoint,
+        errorMessage: message,
+        errorCode: code
+      }));
+      setInitError(code ? `${message} (${code})` : message);
+      return undefined;
+    } finally {
+      window.clearTimeout(timeoutId);
+      firestoreOps.logTotals();
+      if (lobbyActionRunIdRef.current === runId) {
+        setLoadingAction('');
+        setIsActionLoading(false);
+      }
+    }
   };
 
   const getPreferredNameForGame = async (uid, roomCode, fallbackName) => {
@@ -11587,6 +15125,7 @@ export default function App() {
     const finishStartup = () => {
       if (cancelled) return;
       setIsAuthStartupLoading(false);
+      setLoadingAction('');
       setIsActionLoading(false);
     };
 
@@ -11736,10 +15275,13 @@ export default function App() {
       return;
     }
 
-    const q = query(collection(db, 'users', user.uid, 'games'), orderBy('updatedAt', 'desc'));
+    const q = query(collection(db, 'users', user.uid, 'games'), orderBy('updatedAt', 'desc'), limit(20));
     const unsub = onSnapshot(q, (snap) => {
       setMyGames(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-    }, (e) => setInitError(e.message));
+    }, (e) => {
+      console.error('My Games listener failed', e);
+      setInitError(isResourceExhaustedError(e) ? FIRESTORE_RESOURCE_EXHAUSTED_MESSAGE : e.message);
+    });
 
     return () => unsub();
   }, [user]);
@@ -11751,13 +15293,15 @@ export default function App() {
     console.log('currentUser providerData', user.providerData);
   }, [user]);
 
-  const createGame = async (playerNameInput, gameTitleInput, selectedGameMode = GAME_MODES.REGULAR) => {
-    if (!user) return;
-    setIsActionLoading(true);
-    setInitError(null);
+  const createGame = async (playerNameInput, gameTitleInput, selectedGameMode = GAME_MODES.REGULAR) => runLobbyAction('createGame', async (checkpoint, firestoreOps) => {
+    checkpoint('clicked Create Game');
+    if (!user) throw new Error('Authentication is not ready yet.');
+    checkpoint('currentUser exists / uid', { uid: user.uid });
     const safeName = (playerNameInput || '').trim();
     const safeTitle = (gameTitleInput || '').trim();
+    checkpoint('display name resolved', { displayName: safeName || '(blank)' });
     const safeGameMode = selectedGameMode === GAME_MODES.COMMANDER ? GAME_MODES.COMMANDER : GAME_MODES.REGULAR;
+    checkpoint('game mode selected', { gameMode: safeGameMode });
     const startingLife = getStartingLifeForMode(safeGameMode);
     setPlayerName(safeName);
     try {
@@ -11807,37 +15351,187 @@ export default function App() {
         })]
       };
 
-      const shortCode = generateGameId();
-      await setDoc(doc(db, 'games_v3', shortCode), { ...initialData, id: shortCode });
-      await upsertUserGameMembership(user.uid, shortCode, 'player', { myName: safeName, title: safeTitle });
-      setActiveGameId(shortCode);
-    } catch (e) {
-      console.error(e);
-      setInitError(e.message);
-    } finally {
-      setIsActionLoading(false);
-    }
-  };
+    const shortCode = generateGameId();
+    checkpoint('generated room code / game id', { gameId: shortCode });
+    const initialData = {
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      hostId: user.uid,
+      gameMode: safeGameMode,
+      ...(safeTitle ? { title: safeTitle } : {}),
+      allowSpectators: true,
+      spectatorIds: [],
+      players: [{
+        id: user.uid,
+        name: safeName,
+        life: startingLife,
+        turnOrder: 0,
+        counters: { poison: 0, energy: 0, experience: 0 },
+        manaPool: clearManaPool(),
+        statuses: { monarch: false, initiative: false, citysBlessing: false, ringBearerLevel: 0, custom: [] },
+        emblems: [],
+        deckExtras: getEmptyDeckExtras(),
+        handRevealed: false,
+        lastSeenChatAt: Date.now()
+      }],
+      phase: 'main1',
+      dayNight: null,
+      activePlayerIndex: 0,
+      priorityIndex: 0,
+      priorityPlayerId: user.uid,
+      turnPlayerId: user.uid,
+      turnNumber: 1,
+      consecutivePasses: 0,
+      stack: [],
+      cards: [],
+      targets: [],
+      reveals: [],
+      autopass: {},
+      undoStack: [],
+      combat: getEmptyCombatState(),
+      log: [buildGameLogEntry({
+        currentGame: { turnNumber: 1, turnPlayerId: user.uid, phase: 'main1' },
+        playerId: user.uid,
+        playerName: safeName || 'Unknown',
+        type: 'GAME_CREATE',
+        category: 'setup',
+        message: `${safeName || 'Unknown'} created the ${safeGameMode === GAME_MODES.COMMANDER ? 'Commander' : 'Regular'} game.`
+      })]
+    };
 
-  const joinGame = async (playerNameInput, code) => {
-    if (!user) return;
-    setIsActionLoading(true);
-    setInitError(null);
-    const safeName = (playerNameInput || '').trim();
+    checkpoint('before Firestore write', { gameId: shortCode });
+    await firestoreOps.setDoc(doc(db, 'games_v3', shortCode), { ...initialData, id: shortCode }, undefined, { path: `games_v3/${shortCode}` });
+    await upsertUserGameMembership(user.uid, shortCode, 'player', { myName: safeName, title: safeTitle }, firestoreOps);
+    checkpoint('after Firestore write', { gameId: shortCode });
+    checkpoint('before setting/opening current game', { gameId: shortCode });
+    setActiveGameId(shortCode);
+    checkpoint('after setting/opening current game', { gameId: shortCode });
+  });
+
+  const startTutorialGame = async (playerNameInput) => runLobbyAction('startTutorial', async (checkpoint, firestoreOps) => {
+    checkpoint('confirmed start');
+    if (!user) throw new Error('Authentication is not ready yet.');
+    checkpoint('currentUser exists / uid', { uid: user.uid });
+    const safeName = (playerNameInput || '').trim() || suggestedName || 'Planeswalker';
+    checkpoint('display name resolved', { displayName: safeName });
     setPlayerName(safeName);
-    try {
-      const safeCode = (code || '').trim().toUpperCase();
-      const gameRef = doc(db, 'games_v3', safeCode);
-      let gameTitle = '';
 
-      await runTransaction(db, async (transaction) => {
+    checkpoint('before tutorial Firestore lookup');
+    const existingTutorialRefs = await firestoreOps.getDocs(query(collection(db, 'users', user.uid, 'games'), where('isTutorial', '==', true), limit(1)), { path: `users/${user.uid}/games`, isTutorial: true });
+    checkpoint('after tutorial Firestore lookup', { count: existingTutorialRefs.docs.length });
+    for (const membershipDoc of existingTutorialRefs.docs) {
+      const candidateId = membershipDoc.data()?.roomCode || membershipDoc.id;
+      if (!candidateId) continue;
+      const candidateSnap = await firestoreOps.getDoc(doc(db, 'games_v3', candidateId), { path: `games_v3/${candidateId}`, purpose: 'tutorial reuse' });
+      if (candidateSnap.exists() && candidateSnap.data()?.isTutorial) {
+        const candidateData = candidateSnap.data() || {};
+        const bolasId = candidateData.players?.find((p) => p?.isScriptedOpponent || /Nicol Bolas/i.test(p?.name || ''))?.id || `tutorial-bolas-${candidateId}`;
+        const hydratedTutorialCards = await hydrateTutorialDuelCards(user.uid, bolasId);
+        checkpoint('before tutorial Firestore write', { gameId: candidateId, reusingExisting: true });
+        await firestoreOps.updateDoc(doc(db, 'games_v3', candidateId), {
+          ...buildFreshTutorialResetFields({
+            playerId: user.uid,
+            playerName: safeName,
+            bolasId,
+            existingPlayers: candidateData.players || [],
+            cards: hydratedTutorialCards
+          }),
+          updatedAt: serverTimestamp()
+        }, { path: `games_v3/${candidateId}`, purpose: 'tutorial reset' });
+        checkpoint('after tutorial Firestore write', { gameId: candidateId, reusingExisting: true });
+        checkpoint('before opening tutorial game', { gameId: candidateId });
+        setActiveGameId(candidateId);
+        return;
+      }
+    }
+
+    const shortCode = generateGameId();
+    const bolasId = `tutorial-bolas-${shortCode}`;
+    checkpoint('generated tutorial room code / game id', { gameId: shortCode });
+    const initialTutorial = buildFreshTutorialState(user.uid);
+    const initialData = {
+      id: shortCode,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      hostId: user.uid,
+      gameMode: GAME_MODES.REGULAR,
+      title: 'Tutorial Battle (Beta): Nicol Bolas',
+      allowSpectators: false,
+      spectatorIds: [],
+      isTutorial: true,
+      tutorial: initialTutorial,
+      players: buildFreshTutorialPlayers({ playerId: user.uid, playerName: safeName, bolasId }),
+      phase: 'main1',
+      dayNight: null,
+      activePlayerIndex: 0,
+      priorityIndex: 0,
+      priorityPlayerId: user.uid,
+      turnPlayerId: user.uid,
+      turnNumber: 1,
+      consecutivePasses: 0,
+      stack: [],
+      cards: await hydrateTutorialDuelCards(user.uid, bolasId),
+      targets: [],
+      reveals: [],
+      autopass: {},
+      undoStack: [],
+      combat: getEmptyCombatState(),
+      log: [buildGameLogEntry({
+        currentGame: { turnNumber: 1, turnPlayerId: user.uid, phase: 'main1' },
+        playerId: user.uid,
+        playerName: safeName || 'Unknown',
+        type: 'TUTORIAL_CREATE',
+        category: 'setup',
+        message: `${safeName || 'Unknown'} began the tutorial battle against Nicol Bolas.`,
+        tutorialRunId: initialTutorial.runId
+      })]
+    };
+
+    checkpoint('before tutorial Firestore write', { gameId: shortCode });
+    await firestoreOps.setDoc(doc(db, 'games_v3', shortCode), initialData, undefined, { path: `games_v3/${shortCode}`, purpose: 'tutorial create' });
+    await upsertUserGameMembership(user.uid, shortCode, 'player', { myName: safeName, title: initialData.title, isTutorial: true }, firestoreOps);
+    checkpoint('after tutorial Firestore write', { gameId: shortCode });
+    checkpoint('before opening tutorial game', { gameId: shortCode });
+    setActiveGameId(shortCode);
+  });
+
+  const joinGame = async (playerNameInput, code) => runLobbyAction('joinGame', async (checkpoint, firestoreOps) => {
+    checkpoint('clicked Join Game');
+    if (!user) throw new Error('Authentication is not ready yet.');
+    checkpoint('currentUser exists / uid', { uid: user.uid });
+    const safeName = (playerNameInput || '').trim();
+    checkpoint('display name resolved', { displayName: safeName || '(blank)' });
+    setPlayerName(safeName);
+    checkpoint('input code', { code });
+    const safeCode = (code || '').trim().toUpperCase();
+    checkpoint('normalized code', { code: safeCode });
+    const gameRef = doc(db, 'games_v3', safeCode);
+
+    checkpoint('before Firestore lookup', { gameId: safeCode });
+    const initialGameDoc = await firestoreOps.getDoc(gameRef, { path: `games_v3/${safeCode}`, purpose: 'join lookup' });
+    checkpoint('after Firestore lookup', { gameId: safeCode, exists: initialGameDoc.exists() });
+    if (!initialGameDoc.exists()) throw new Error('Game not found! Check the code.');
+
+    const initialGameData = initialGameDoc.data() || {};
+    const gameTitle = (initialGameData.title || '').trim();
+    const initialPlayers = initialGameData.players || [];
+    const existingPlayer = initialPlayers.find((p) => p.id === user.uid);
+    checkpoint('whether game exists', { exists: true });
+    checkpoint('before joining/updating players', { existingPlayer: Boolean(existingPlayer), playerCount: initialPlayers.length });
+
+    if (existingPlayer) {
+      checkpoint('already joined; skipping game write', { gameId: safeCode });
+    } else if (initialPlayers.length >= 2) {
+      throw new Error('Game is full.');
+    } else {
+      checkpoint('before player transaction', { gameId: safeCode });
+      await firestoreOps.runTransaction(db, async (transaction) => {
         const gameDoc = await transaction.get(gameRef);
         if (!gameDoc.exists()) throw new Error('Game not found! Check the code.');
-
-        const gameData = gameDoc.data();
-        gameTitle = (gameData.title || '').trim();
+        const gameData = gameDoc.data() || {};
         const players = gameData.players || [];
-        const existingPlayerIndex = players.findIndex((p) => p.id === user.uid);
+        if (players.some((p) => p.id === user.uid)) return;
+        if (players.length >= 2) throw new Error('Game is full.');
 
         if (existingPlayerIndex >= 0) {
           const newPlayers = [...players];
@@ -11872,53 +15566,91 @@ export default function App() {
           throw new Error('Game is full.');
         }
       });
-
-      await upsertUserGameMembership(user.uid, safeCode, 'player', { myName: safeName, title: gameTitle });
-      setActiveGameId(safeCode);
-    } catch (e) {
-      console.error(e);
-      setInitError(e.message);
-    } finally {
-      setIsActionLoading(false);
+        const newPlayer = {
+          id: user.uid,
+          name: safeName,
+          life: getStartingLifeForMode(getGameMode(gameData)),
+          turnOrder: players.length,
+          counters: { poison: 0, energy: 0, experience: 0 },
+          manaPool: clearManaPool(),
+          statuses: { monarch: false, initiative: false, citysBlessing: false, ringBearerLevel: 0, custom: [] },
+          emblems: [],
+          deckExtras: getEmptyDeckExtras(),
+          handRevealed: false,
+          lastSeenChatAt: Date.now()
+        };
+        transaction.update(gameRef, normalizeGameUpdatesForFirestore({
+          players: [...players, newPlayer],
+          undoStack: gameData.undoStack || [],
+          updatedAt: serverTimestamp(),
+          log: pruneLogForFirestore([...(gameData.log || []), buildGameLogEntry({ currentGame: gameData, playerId: user.uid, playerName: safeName || 'Unknown', type: 'PLAYER_JOIN', category: 'setup', message: `${safeName || 'Unknown'} joined the game.` })])
+        }, 'PLAYER_JOIN'));
+      }, { path: `games_v3/${safeCode}`, purpose: 'join player' });
+      checkpoint('after player transaction', { gameId: safeCode });
     }
-  };
 
-  const watchGame = async (playerNameInput, code) => {
-    if (!user) return;
-    setIsActionLoading(true);
-    setInitError(null);
+    checkpoint('after joining/updating players', { gameId: safeCode });
+    if (shouldUpsertCachedMembership(safeCode, 'player', { myName: safeName, title: gameTitle })) {
+      await upsertUserGameMembership(user.uid, safeCode, 'player', { myName: safeName, title: gameTitle }, firestoreOps);
+    } else {
+      checkpoint('membership unchanged; skipping membership write', { gameId: safeCode });
+    }
+    checkpoint('before opening game', { gameId: safeCode });
+    setActiveGameId(safeCode);
+  });
+
+  const watchGame = async (playerNameInput, code) => runLobbyAction('watchGame', async (checkpoint, firestoreOps) => {
+    checkpoint('clicked Watch Game');
+    if (!user) throw new Error('Authentication is not ready yet.');
+    checkpoint('currentUser exists / uid', { uid: user.uid });
     const safeName = (playerNameInput || '').trim();
+    checkpoint('display name resolved', { displayName: safeName || '(blank)' });
     setPlayerName(safeName);
-    try {
-      const safeCode = (code || '').trim().toUpperCase();
-      const gameRef = doc(db, 'games_v3', safeCode);
-      let gameTitle = '';
+    const safeCode = (code || '').trim().toUpperCase();
+    checkpoint('normalized code', { code: safeCode });
+    const gameRef = doc(db, 'games_v3', safeCode);
 
-      await runTransaction(db, async (transaction) => {
+    checkpoint('before Firestore lookup', { gameId: safeCode });
+    const initialGameDoc = await firestoreOps.getDoc(gameRef, { path: `games_v3/${safeCode}`, purpose: 'watch lookup' });
+    checkpoint('after Firestore lookup', { gameId: safeCode, exists: initialGameDoc.exists() });
+    if (!initialGameDoc.exists()) throw new Error('Game not found! Check the code.');
+
+    const initialGameData = initialGameDoc.data() || {};
+    const gameTitle = (initialGameData.title || '').trim();
+    if (initialGameData.allowSpectators === false) throw new Error('Spectators are not allowed in this game.');
+
+    const players = initialGameData.players || [];
+    const isPlayer = players.some((p) => p.id === user.uid);
+    const spectatorIds = initialGameData.spectatorIds || [];
+    const isSpectator = spectatorIds.includes(user.uid);
+
+    if (isPlayer || isSpectator) {
+      checkpoint('already has game access; skipping spectator write', { gameId: safeCode, isPlayer, isSpectator });
+    } else {
+      checkpoint('before spectator transaction', { gameId: safeCode });
+      await firestoreOps.runTransaction(db, async (transaction) => {
         const gameDoc = await transaction.get(gameRef);
         if (!gameDoc.exists()) throw new Error('Game not found! Check the code.');
-
-        const gameData = gameDoc.data();
-        gameTitle = (gameData.title || '').trim();
+        const gameData = gameDoc.data() || {};
         if (gameData.allowSpectators === false) throw new Error('Spectators are not allowed in this game.');
-
-        const players = gameData.players || [];
-        const isPlayer = players.some((p) => p.id === user.uid);
-        const spectatorIds = gameData.spectatorIds || [];
-        const isSpectator = spectatorIds.includes(user.uid);
-
-        if (!isPlayer && !isSpectator) transaction.update(gameRef, { spectatorIds: [...spectatorIds, user.uid] });
-      });
-
-      await upsertUserGameMembership(user.uid, safeCode, 'spectator', { myName: safeName, title: gameTitle });
-      setActiveGameId(safeCode);
-    } catch (e) {
-      console.error(e);
-      setInitError(e.message);
-    } finally {
-      setIsActionLoading(false);
+        const latestPlayers = gameData.players || [];
+        const latestSpectatorIds = gameData.spectatorIds || [];
+        if (latestPlayers.some((p) => p.id === user.uid) || latestSpectatorIds.includes(user.uid)) return;
+        transaction.update(gameRef, { spectatorIds: [...latestSpectatorIds, user.uid], updatedAt: serverTimestamp() });
+      }, { path: `games_v3/${safeCode}`, purpose: 'watch spectator' });
+      checkpoint('after spectator transaction', { gameId: safeCode });
     }
-  };
+
+    checkpoint('after joining/updating spectators', { gameId: safeCode });
+    const membershipRole = isPlayer ? 'player' : 'spectator';
+    if (shouldUpsertCachedMembership(safeCode, membershipRole, { myName: safeName, title: gameTitle })) {
+      await upsertUserGameMembership(user.uid, safeCode, membershipRole, { myName: safeName, title: gameTitle }, firestoreOps);
+    } else {
+      checkpoint('membership unchanged; skipping membership write', { gameId: safeCode, role: membershipRole });
+    }
+    checkpoint('before opening game', { gameId: safeCode });
+    setActiveGameId(safeCode);
+  });
 
   useEffect(() => {
     if (isExitingRef.current || !pendingUrlEntry || !user || isActionLoading || isAuthStartupLoading || activeGameId) return;
@@ -12169,6 +15901,7 @@ export default function App() {
       onCreate={createGame}
       onJoin={joinGame}
       onWatch={watchGame}
+      onStartTutorial={startTutorialGame}
       onDeleteGame={deleteLobbyGame}
       onLoadCleanupGames={loadCleanupGames}
       onDeleteCleanupGames={deleteCleanupGames}
@@ -12186,6 +15919,9 @@ export default function App() {
       errorMsg={initError}
       currentUser={user}
       isActionLoading={isActionLoading}
+      loadingAction={loadingAction}
+      lobbyActionDebug={lobbyActionDebug}
+      onLobbyActionDebugCheckpoint={recordLobbyActionCheckpoint}
     />
   );
 }

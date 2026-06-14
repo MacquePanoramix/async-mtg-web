@@ -64,6 +64,11 @@ const GAME_MODES = {
   COMMANDER: 'commander'
 };
 
+const GAME_SCHEMA_VERSION = 1;
+const GAME_RULES_VERSION = 1;
+const DEFAULT_MAX_PLAYERS = 2;
+const DEFAULT_MIN_PLAYERS = 2;
+
 const TUTORIAL_SCRIPT_VERSION = 14;
 const TUTORIAL_RULES_BY_STEP_ID = {
   intro: { actor: 'player', turnOwner: 'player', activePlayer: 'player', phase: 'main1', requiredAction: 'Inspect room code', sourceCardOrEffect: 'Async room setup', boardPrecondition: 'Tutorial duel exists', stackPrecondition: 'Stack may be empty', completionCondition: 'Room code tapped', tutorialTargetAnchor: 'room-code' },
@@ -2684,6 +2689,13 @@ const getGameDocumentSizeEstimate = (gameData = {}) => {
   };
 };
 
+const warnIfGameDocumentIsLarge = (gameData = {}, context = 'game document') => {
+  const estimate = getGameDocumentSizeEstimate(gameData);
+  if (!estimate?.isNearLimit) return estimate;
+  console.warn(`[Firestore size] ${context} is approaching the 1 MiB document limit.`, estimate);
+  return estimate;
+};
+
 const normalizeGameUpdatesForFirestore = (updates = {}, debugContext = 'card write') => {
   if (!updates || typeof updates !== 'object') return updates;
   const debugEnabled = isDebugActionsEnabled();
@@ -2814,8 +2826,121 @@ const getCardsAttachedToPlayer = (cards = [], playerId) => cards.filter((card) =
   return attachment?.type === 'player' && attachment.id === playerId && card.zone === ZONES.BATTLEFIELD;
 });
 
+const getPlayerById = (game, playerId) => (
+  (Array.isArray(game?.players) ? game.players : []).find((player) => player?.id === playerId) || null
+);
+
+const getPlayerIds = (game) => {
+  const players = Array.isArray(game?.players) ? game.players : [];
+  const storedPlayerIds = Array.isArray(game?.playerIds) ? game.playerIds : [];
+  const validStoredIds = storedPlayerIds.filter((playerId) => players.some((player) => player?.id === playerId));
+  const derivedIds = players.map((player) => player?.id).filter(Boolean);
+  return [...new Set([...validStoredIds, ...derivedIds])];
+};
+
+const getActivePlayers = (game) => (
+  (Array.isArray(game?.players) ? game.players : []).filter((player) => (player?.status || 'active') === 'active')
+);
+
+const getOtherPlayers = (game, playerId) => (
+  (Array.isArray(game?.players) ? game.players : []).filter((player) => player?.id !== playerId)
+);
+
+// Stage 0 has no teams or elimination, so every other active player is an opponent.
+const getOpponents = (game, playerId) => getOtherPlayers(game, playerId)
+  .filter((player) => (player?.status || 'active') === 'active');
+
+const getTurnEligiblePlayers = (game) => getActivePlayers(game);
+const getPriorityEligiblePlayers = (game) => getActivePlayers(game);
+
+const getPlayerIndexById = (game, playerId) => (
+  (Array.isArray(game?.players) ? game.players : []).findIndex((player) => player?.id === playerId)
+);
+
+const getNextEligiblePlayerId = (game, fromPlayerId, eligiblePlayers = getActivePlayers(game)) => {
+  const eligibleIds = new Set((Array.isArray(eligiblePlayers) ? eligiblePlayers : [])
+    .map((player) => typeof player === 'string' ? player : player?.id)
+    .filter(Boolean));
+  const turnOrderIds = (Array.isArray(game?.turnOrderPlayerIds) ? game.turnOrderPlayerIds : getPlayerIds(game))
+    .filter((playerId) => eligibleIds.has(playerId));
+  if (turnOrderIds.length === 0) return null;
+  const currentIndex = turnOrderIds.indexOf(fromPlayerId);
+  return turnOrderIds[(currentIndex + 1 + turnOrderIds.length) % turnOrderIds.length];
+};
+
+const normalizeGameMetadata = (game = {}) => {
+  const players = (Array.isArray(game.players) ? game.players : []).map((player, index) => ({
+    ...player,
+    status: player?.status || 'active',
+    seat: Number.isInteger(player?.seat) ? player.seat : (Number.isInteger(player?.turnOrder) ? player.turnOrder : index),
+    teamId: player?.teamId ?? null
+  }));
+  const playerIds = getPlayerIds({ ...game, players });
+  const storedTurnOrder = Array.isArray(game.turnOrderPlayerIds) ? game.turnOrderPlayerIds : [];
+  const turnOrderPlayerIds = [...new Set([
+    ...storedTurnOrder.filter((playerId) => playerIds.includes(playerId)),
+    ...players
+      .slice()
+      .sort((a, b) => (a.seat ?? 0) - (b.seat ?? 0))
+      .map((player) => player.id)
+      .filter(Boolean)
+  ])];
+  return {
+    ...game,
+    schemaVersion: game.schemaVersion || GAME_SCHEMA_VERSION,
+    rulesVersion: game.rulesVersion || GAME_RULES_VERSION,
+    maxPlayers: Number.isInteger(game.maxPlayers) ? game.maxPlayers : DEFAULT_MAX_PLAYERS,
+    minPlayers: Number.isInteger(game.minPlayers) ? game.minPlayers : DEFAULT_MIN_PLAYERS,
+    state: ['lobby', 'active', 'finished'].includes(game.state)
+      ? game.state
+      : (players.length >= DEFAULT_MIN_PLAYERS ? 'active' : 'lobby'),
+    multiplayerMode: game.multiplayerMode === 'free_for_all' ? 'free_for_all' : 'duel',
+    playerIds,
+    turnOrderPlayerIds,
+    outcome: game.outcome ?? null,
+    players
+  };
+};
+
+const normalizeTurnAndPriorityPointers = (game = {}) => {
+  const normalizedGame = normalizeGameMetadata(game);
+  const players = normalizedGame.players;
+  const turnIndex = getPlayerIndexById(normalizedGame, normalizedGame.turnPlayerId);
+  const priorityIndex = getPlayerIndexById(normalizedGame, normalizedGame.priorityPlayerId);
+  // Preserve the legacy indexes as authoritative whenever they are valid.
+  const activePlayerIndex = Number.isInteger(normalizedGame.activePlayerIndex) && players[normalizedGame.activePlayerIndex]
+    ? normalizedGame.activePlayerIndex
+    : (turnIndex >= 0 ? turnIndex : 0);
+  const normalizedPriorityIndex = Number.isInteger(normalizedGame.priorityIndex) && players[normalizedGame.priorityIndex]
+    ? normalizedGame.priorityIndex
+    : (priorityIndex >= 0 ? priorityIndex : activePlayerIndex);
+  return {
+    ...normalizedGame,
+    activePlayerIndex,
+    priorityIndex: normalizedPriorityIndex,
+    turnPlayerId: players[activePlayerIndex]?.id || normalizedGame.turnPlayerId || null,
+    priorityPlayerId: players[normalizedPriorityIndex]?.id || normalizedGame.priorityPlayerId || null
+  };
+};
+
+// Kept together for future Stage 1 call sites while Stage 0 deliberately avoids
+// replacing the established duel-specific gameplay paths wholesale.
+const MULTIPLAYER_FOUNDATION_HELPERS = {
+  getPlayerById,
+  getPlayerIds,
+  getActivePlayers,
+  getOtherPlayers,
+  getOpponents,
+  getTurnEligiblePlayers,
+  getPriorityEligiblePlayers,
+  getPlayerIndexById,
+  getNextEligiblePlayerId,
+  normalizeGameMetadata,
+  normalizeTurnAndPriorityPointers
+};
+
 const getPlayerNameById = (currentGame, playerId, fallback = 'Player') => (
-  (currentGame?.players || []).find((player) => player.id === playerId)?.name || fallback
+  getPlayerById(currentGame, playerId)?.name || fallback
 );
 
 
@@ -3856,6 +3981,9 @@ const buildFreshTutorialPlayers = ({ playerId, playerName = 'Planeswalker', bola
     name: player.name || fallbackName,
     life: startingLife,
     turnOrder,
+    status: 'active',
+    seat: turnOrder,
+    teamId: null,
     counters: { poison: 0, energy: 0, experience: 0 },
     manaPool: clearManaPool(),
     statuses: { monarch: false, initiative: false, citysBlessing: false, ringBearerLevel: 0, custom: [] },
@@ -3871,6 +3999,16 @@ const buildFreshTutorialPlayers = ({ playerId, playerName = 'Planeswalker', bola
 };
 
 const buildFreshTutorialResetFields = ({ playerId, playerName, bolasId, existingPlayers = [], cards = [] }) => ({
+  schemaVersion: GAME_SCHEMA_VERSION,
+  rulesVersion: GAME_RULES_VERSION,
+  maxPlayers: 2,
+  minPlayers: 2,
+  state: 'active',
+  multiplayerMode: 'duel',
+  rulesProfile: 'tutorial_duel',
+  playerIds: [playerId, bolasId],
+  turnOrderPlayerIds: [playerId, bolasId],
+  outcome: null,
   tutorial: buildFreshTutorialState(playerId),
   cards,
   players: buildFreshTutorialPlayers({ playerId, playerName, bolasId, existingPlayers }),
@@ -8489,7 +8627,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               reflectionDebug: lastActionReflection?.debug || null
             });
           }
-          const nextFirestoreGame = { ...data, combat: normalizeCombatState(data.combat) };
+          const nextFirestoreGame = normalizeTurnAndPriorityPointers({ ...data, combat: normalizeCombatState(data.combat) });
+          warnIfGameDocumentIsLarge(nextFirestoreGame, `games_v3/${gameId}`);
           latestFirestoreGameRef.current = nextFirestoreGame;
           setFirestoreGame(nextFirestoreGame);
           const pendingOptimistic = pendingOptimisticActionRef.current;
@@ -16109,6 +16248,15 @@ export default function App() {
       updatedAt: serverTimestamp(),
       hostId: user.uid,
       gameMode: safeGameMode,
+      schemaVersion: GAME_SCHEMA_VERSION,
+      rulesVersion: GAME_RULES_VERSION,
+      maxPlayers: 2,
+      minPlayers: 2,
+      state: 'lobby',
+      multiplayerMode: 'duel',
+      playerIds: [user.uid],
+      turnOrderPlayerIds: [user.uid],
+      outcome: null,
       ...(safeTitle ? { title: safeTitle } : {}),
       allowSpectators: true,
       spectatorIds: [],
@@ -16117,6 +16265,9 @@ export default function App() {
         name: safeName,
         life: startingLife,
         turnOrder: 0,
+        status: 'active',
+        seat: 0,
+        teamId: null,
         counters: { poison: 0, energy: 0, experience: 0 },
         manaPool: clearManaPool(),
         statuses: { monarch: false, initiative: false, citysBlessing: false, ringBearerLevel: 0, custom: [] },
@@ -16206,6 +16357,16 @@ export default function App() {
       updatedAt: serverTimestamp(),
       hostId: user.uid,
       gameMode: GAME_MODES.REGULAR,
+      schemaVersion: GAME_SCHEMA_VERSION,
+      rulesVersion: GAME_RULES_VERSION,
+      maxPlayers: 2,
+      minPlayers: 2,
+      state: 'active',
+      multiplayerMode: 'duel',
+      rulesProfile: 'tutorial_duel',
+      playerIds: [user.uid, bolasId],
+      turnOrderPlayerIds: [user.uid, bolasId],
+      outcome: null,
       title: 'Tutorial Battle (Beta): Nicol Bolas',
       allowSpectators: false,
       spectatorIds: [],
@@ -16289,6 +16450,9 @@ export default function App() {
           name: safeName,
           life: getStartingLifeForMode(getGameMode(gameData)),
           turnOrder: players.length,
+          status: 'active',
+          seat: players.length,
+          teamId: null,
           counters: { poison: 0, energy: 0, experience: 0 },
           manaPool: clearManaPool(),
           statuses: { monarch: false, initiative: false, citysBlessing: false, ringBearerLevel: 0, custom: [] },
@@ -16299,6 +16463,9 @@ export default function App() {
         };
         transaction.update(gameRef, normalizeGameUpdatesForFirestore({
           players: [...players, newPlayer],
+          playerIds: [...new Set([...getPlayerIds(gameData), user.uid])],
+          turnOrderPlayerIds: [...new Set([...(Array.isArray(gameData.turnOrderPlayerIds) ? gameData.turnOrderPlayerIds : getPlayerIds(gameData)), user.uid])],
+          state: 'active',
           undoStack: gameData.undoStack || [],
           updatedAt: serverTimestamp(),
           log: pruneLogForFirestore([...(gameData.log || []), buildGameLogEntry({ currentGame: gameData, playerId: user.uid, playerName: safeName || 'Unknown', type: 'PLAYER_JOIN', category: 'setup', message: `${safeName || 'Unknown'} joined the game.` })])

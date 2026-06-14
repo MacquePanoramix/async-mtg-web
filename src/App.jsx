@@ -814,6 +814,16 @@ const getPlayerManaPool = (player = {}) => {
 };
 const clearManaPool = () => ({ ...DEFAULT_MANA_POOL });
 const hasFloatingMana = (player = {}) => Object.values(getPlayerManaPool(player)).some((amount) => amount > 0);
+const shouldHoldMana = (player = {}) => player?.holdMana === true;
+const emptyManaPoolsForStepChange = (players = []) => {
+  const emptiedPlayers = [];
+  const nextPlayers = players.map((player) => {
+    if (shouldHoldMana(player) || !hasFloatingMana(player)) return player;
+    emptiedPlayers.push(player);
+    return { ...player, manaPool: clearManaPool() };
+  });
+  return { players: nextPlayers, emptiedPlayers };
+};
 const getManaPoolSummary = (player = {}, { includeZeroes = false } = {}) => {
   const manaPool = getPlayerManaPool(player);
   const entries = MANA_COLORS
@@ -3948,11 +3958,20 @@ const buildDuplicateDisplayNameMap = (cards = []) => {
 
 
 const TARGET_PLAYER_PREFIX = 'player:';
+const TARGET_STACK_PREFIX = 'stack:';
 const getPlayerTargetIdFromRaw = (value) => typeof value === 'string' && value.startsWith(TARGET_PLAYER_PREFIX) ? value.slice(TARGET_PLAYER_PREFIX.length) : null;
+const getStackTargetIdFromRaw = (value) => typeof value === 'string' && value.startsWith(TARGET_STACK_PREFIX) ? value.slice(TARGET_STACK_PREFIX.length) : null;
+const getStackTargetId = (stackItemId) => `${TARGET_STACK_PREFIX}${stackItemId}`;
 
 const getPublicTargetDisplayName = (targetId, currentGame, displayNameMap = null, fallback = 'a target') => {
   const playerId = getPlayerTargetIdFromRaw(targetId);
   if (playerId) return getPlayerNameById(currentGame, playerId, 'Player');
+
+  const stackItemId = getStackTargetIdFromRaw(targetId);
+  if (stackItemId) {
+    const stackItem = (currentGame?.stack || []).find((item) => item?.id === stackItemId);
+    return stackItem?.name || stackItem?.copiedFromName || 'a spell or ability that left the stack';
+  }
 
   const card = (currentGame?.cards || []).find((candidate) => candidate.instanceId === targetId);
   if (!card) return fallback;
@@ -3981,7 +4000,7 @@ const getPublicSourceDisplayName = (sourceId, currentGame, displayNameMap = null
 };
 
 const getStackItemTargets = (item) => [
-  ...((item?.targetIds || []).map((targetId) => ({ targetId, targetType: 'card' }))),
+  ...((item?.targetIds || []).map((targetId) => ({ targetId, targetType: getStackTargetIdFromRaw(targetId) ? 'stack' : 'card' }))),
   ...((item?.targetPlayerIds || []).map((playerId) => ({ targetId: `${TARGET_PLAYER_PREFIX}${playerId}`, targetType: 'player' })))
 ];
 
@@ -4001,7 +4020,7 @@ const getCardTargetInfo = (cardOrStackItem, currentGame, displayNameMap = null) 
     if (!targetId) return;
     chosenTargets.push({
       targetId,
-      targetType: getPlayerTargetIdFromRaw(targetId) ? 'player' : 'card',
+      targetType: getPlayerTargetIdFromRaw(targetId) ? 'player' : (getStackTargetIdFromRaw(targetId) ? 'stack' : 'card'),
       displayName: getPublicTargetDisplayName(targetId, currentGame, publicDisplayNames),
       sourceType
     });
@@ -4219,6 +4238,7 @@ const advancePassPriorityState = (currentGame, logEntry, onTurnStart, layoutOpti
   const players = currentGame.players || [];
   const updatedGame = {
     ...currentGame,
+    players: [...players],
     cards: [...(currentGame.cards || [])],
     stack: [...(currentGame.stack || [])],
     log: [...(currentGame.log || [])]
@@ -4250,6 +4270,11 @@ const advancePassPriorityState = (currentGame, logEntry, onTurnStart, layoutOpti
     updatedGame.phase = nextPhase.id;
     updatedGame.turnNumber = nextTurnNum;
     updatedGame.log.push(withUpdatedLogContext(logEntry, 'PHASE_ADVANCE', 'phase', `${actorName} moved to ${nextPhase.label}.`));
+    const manaResult = emptyManaPoolsForStepChange(updatedGame.players);
+    updatedGame.players = manaResult.players;
+    manaResult.emptiedPlayers.forEach((player) => {
+      updatedGame.log.push(withUpdatedLogContext(logEntry, 'MANA_POOL_EMPTY', 'mana', `${player.name || 'Player'}’s mana pool empties.`, { playerId: player.id }));
+    });
 
     if (shouldResetTemporaryDamageForPhase(nextPhase.id)) {
       updatedGame.cards = resetTemporaryDamage(updatedGame.cards);
@@ -4328,6 +4353,11 @@ const advancePassPriorityState = (currentGame, logEntry, onTurnStart, layoutOpti
     updatedGame.turnPlayerId = nextTurnPlayerId;
     updatedGame.turnNumber = nextTurnNum;
     updatedGame.log.push(withUpdatedLogContext(logEntry, 'PHASE_ADVANCE', 'phase', `${actorName} moved to ${nextPhase.label}.`));
+    const manaResult = emptyManaPoolsForStepChange(updatedGame.players);
+    updatedGame.players = manaResult.players;
+    manaResult.emptiedPlayers.forEach((player) => {
+      updatedGame.log.push(withUpdatedLogContext(logEntry, 'MANA_POOL_EMPTY', 'mana', `${player.name || 'Player'}’s mana pool empties.`, { playerId: player.id }));
+    });
 
     if (shouldResetTemporaryDamageForPhase(nextPhase.id)) {
       updatedGame.cards = resetTemporaryDamage(updatedGame.cards);
@@ -8686,6 +8716,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   };
   const adjustManaPool = (color, amount) => handleAction('MANA_POOL_ADJUST', { color, amount });
   const handleClearManaPool = () => handleAction('MANA_POOL_CLEAR');
+  const handleToggleManaHold = () => handleAction('MANA_HOLD_TOGGLE');
   const getPlayerReminders = (playerId) => getEntityReminders((game?.players || []).find((player) => player.id === playerId));
   const renderPlayerEmblemBadges = (player, size = 'compact') => {
     const label = getPlayerEmblemBadgeLabel(player);
@@ -9487,6 +9518,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           consecutivePasses: proxyGame.consecutivePasses,
           stack: proxyGame.stack,
           cards: proxyGame.cards,
+          players: proxyGame.players,
           combat: proxyGame.combat || getEmptyCombatState(),
           log: proxyGame.log,
           autopass: proxyGame.autopass || {},
@@ -9615,6 +9647,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         };
 
         let manualUpdates = null;
+        let manualLogEntries = [];
 
         if (actionType === 'MANUAL_SET_STEP') {
           const targetPhase = PHASES.find((phase) => phase.id === payload.phaseId);
@@ -9626,29 +9659,32 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           const nextCombatState = shouldClearCombatState(currentGame.phase, targetPhase.id)
             ? getEmptyCombatState()
             : (currentGame.combat || getEmptyCombatState());
+          manualLogEntries = [buildManualLog('MANUAL_SET_STEP', `${currentPlayer.name || actorName} manually set the step to ${targetPhase.label}.`, { phase: targetPhase.id, phaseLabel: targetPhase.label })];
           manualUpdates = {
             ...baseManualUpdates,
             phase: targetPhase.id,
             combat: nextCombatState,
-            log: arrayUnion(buildManualLog('MANUAL_SET_STEP', `${currentPlayer.name || actorName} manually set the step to ${targetPhase.label}.`, { phase: targetPhase.id, phaseLabel: targetPhase.label }))
+            log: arrayUnion(...manualLogEntries)
           };
         }
 
         if (actionType === 'START_EXTRA_COMBAT') {
+          manualLogEntries = [buildManualLog('START_EXTRA_COMBAT', `${currentPlayer.name || actorName} started an extra combat phase.`, { phase: 'combat_begin', phaseLabel: getPhaseLabel('combat_begin') })];
           manualUpdates = {
             ...baseManualUpdates,
             phase: 'combat_begin',
             combat: getEmptyCombatState(),
-            log: arrayUnion(buildManualLog('START_EXTRA_COMBAT', `${currentPlayer.name || actorName} started an extra combat phase.`, { phase: 'combat_begin', phaseLabel: getPhaseLabel('combat_begin') }))
+            log: arrayUnion(...manualLogEntries)
           };
         }
 
         if (actionType === 'GO_EXTRA_MAIN') {
+          manualLogEntries = [buildManualLog('GO_EXTRA_MAIN', `${currentPlayer.name || actorName} moved to an extra main phase.`, { phase: 'main2', phaseLabel: getPhaseLabel('main2') })];
           manualUpdates = {
             ...baseManualUpdates,
             phase: 'main2',
             combat: getEmptyCombatState(),
-            log: arrayUnion(buildManualLog('GO_EXTRA_MAIN', `${currentPlayer.name || actorName} moved to an extra main phase.`, { phase: 'main2', phaseLabel: getPhaseLabel('main2') }))
+            log: arrayUnion(...manualLogEntries)
           };
         }
 
@@ -9656,6 +9692,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
           const targetPlayer = currentPlayers.find((player) => player.id === payload.playerId);
           if (!targetPlayer) return;
           const targetIndex = currentPlayers.findIndex((player) => player.id === targetPlayer.id);
+          manualLogEntries = [buildManualLog('START_EXTRA_TURN', `${currentPlayer.name || actorName} started an extra turn for ${targetPlayer.name || 'Player'}.`, { phase: 'untap', phaseLabel: getPhaseLabel('untap'), turnNumber: (Number.isFinite(currentGame.turnNumber) ? currentGame.turnNumber : 0) + 1, turnPlayerId: targetPlayer.id, targetPlayerId: targetPlayer.id, targetPlayerName: targetPlayer.name || 'Player' })];
           manualUpdates = {
             ...baseManualUpdates,
             activePlayerIndex: targetIndex,
@@ -9665,7 +9702,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             phase: 'untap',
             turnNumber: (Number.isFinite(currentGame.turnNumber) ? currentGame.turnNumber : 0) + 1,
             combat: getEmptyCombatState(),
-            log: arrayUnion(buildManualLog('START_EXTRA_TURN', `${currentPlayer.name || actorName} started an extra turn for ${targetPlayer.name || 'Player'}.`, { phase: 'untap', phaseLabel: getPhaseLabel('untap'), turnNumber: (Number.isFinite(currentGame.turnNumber) ? currentGame.turnNumber : 0) + 1, turnPlayerId: targetPlayer.id, targetPlayerId: targetPlayer.id, targetPlayerName: targetPlayer.name || 'Player' }))
+            log: arrayUnion(...manualLogEntries)
           };
         }
 
@@ -9684,6 +9721,22 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         }
 
         if (manualUpdates) {
+          if (manualUpdates.phase && manualUpdates.phase !== currentGame.phase) {
+            const manaResult = emptyManaPoolsForStepChange(currentPlayers);
+            manualUpdates.players = manaResult.players;
+            const manaLogs = manaResult.emptiedPlayers.map((player) => buildGameLogEntry({
+              currentGame,
+              playerId: userId,
+              playerName: currentPlayer.name || actorName,
+              type: 'MANA_POOL_EMPTY',
+              category: 'mana',
+              message: `${player.name || 'Player'}’s mana pool empties.`,
+              targetPlayerId: player.id
+            }));
+            if (manaLogs.length > 0) {
+              manualUpdates.log = arrayUnion(...manualLogEntries, ...manaLogs);
+            }
+          }
           const manualActionLabels = {
             MANUAL_SET_STEP: `changed phase to ${PHASES.find((phase) => phase.id === payload.phaseId)?.label || 'another step'}`,
             START_EXTRA_COMBAT: 'started an extra combat phase',
@@ -10278,6 +10331,16 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       updates.players = nextPlayers;
       optimisticPatch = { players: nextPlayers };
       updates.log = arrayUnion(makeActionLog('MANA_POOL_CLEAR', `${actorName} cleared their mana pool.`, { category: 'mana', targetPlayerId }));
+
+    } else if (actionType === 'MANA_HOLD_TOGGLE') {
+      const targetPlayerId = userId;
+      const targetPlayer = game.players.find((player) => player.id === targetPlayerId);
+      if (!targetPlayer) return;
+      const holdMana = !shouldHoldMana(targetPlayer);
+      const nextPlayers = game.players.map((player) => player.id === targetPlayerId ? { ...player, holdMana } : player);
+      updates.players = nextPlayers;
+      optimisticPatch = { players: nextPlayers };
+      updates.log = arrayUnion(makeActionLog('MANA_HOLD_TOGGLE', `${actorName} turned Mana hold ${holdMana ? 'on' : 'off'}.`, { category: 'mana', targetPlayerId, holdMana }));
 
     } else if (actionType === 'SET_DAY_NIGHT') {
       const nextDayNight = payload.value === 'day' || payload.value === 'night' ? payload.value : null;
@@ -11769,6 +11832,23 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     setTargetingState({ ...targetingState, selectedIds: newSelected });
   };
 
+  const toggleTargetStackItem = (item) => {
+    if (isSpectator || !targetingState || !item?.id) return;
+    const source = targetingState.source || {};
+    const isSelf = item.id === source.id || (source.zone === 'stack_zone' && item.sourceId === source.instanceId);
+    if (isSelf) {
+      setNotification("A spell or ability can't target itself.");
+      setTimeout(() => setNotification(null), 2000);
+      return;
+    }
+    const targetId = getStackTargetId(item.id);
+    const newSelected = [...targetingState.selectedIds];
+    const index = newSelected.indexOf(targetId);
+    if (index >= 0) newSelected.splice(index, 1);
+    else newSelected.push(targetId);
+    setTargetingState({ ...targetingState, selectedIds: newSelected });
+  };
+
   const selectAttachmentTarget = async (targetCard) => {
     if (!canAct || !attachmentState?.source || !targetCard) return;
     if (targetCard.instanceId === attachmentState.source.instanceId) {
@@ -11824,7 +11904,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       return;
     }
 
-    const cardTargets = selectedIds.filter(id => !id.startsWith('player:'));
+    const cardTargets = selectedIds.filter(id => !id.startsWith(TARGET_PLAYER_PREFIX));
     const playerTargets = selectedIds.filter(id => id.startsWith('player:')).map(id => id.replace('player:', ''));
 
     if (mode === 'CAST') {
@@ -13068,11 +13148,12 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                 <div className="space-y-1">
                   {[...stackCards].reverse().map((item) => {
                     const itemTargetInfo = getTargetInfoFor(item);
+                    const isSelectedStackTarget = targetingState?.selectedIds.includes(getStackTargetId(item.id));
                     return (
                       <div
                         key={item.id}
-                        onClick={() => openStackItemDetail(item)}
-                        className="bg-black/60 p-2 rounded border-l-2 border-yellow-500 flex justify-between items-start gap-4 cursor-pointer hover:bg-black/80 transition-colors"
+                        onClick={() => targetingState ? toggleTargetStackItem(item) : openStackItemDetail(item)}
+                        className={`bg-black/60 p-2 rounded border-l-2 flex justify-between items-start gap-4 cursor-pointer transition-colors ${isSelectedStackTarget ? 'border-blue-400 bg-blue-950/70 ring-2 ring-blue-400' : 'border-yellow-500 hover:bg-black/80'}`}
                       >
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-1.5 text-sm font-medium text-yellow-100 break-words">
@@ -13080,6 +13161,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                             {item.isCopy && (
                               <span className="rounded-full border border-cyan-400/40 bg-cyan-950/60 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-cyan-100">Copy</span>
                             )}
+                            {isSelectedStackTarget && <span className="rounded-full bg-blue-500 px-2 py-0.5 text-[9px] font-black uppercase text-white">🎯 Targeted</span>}
                           </div>
                           {itemTargetInfo.targetDisplayNames.length > 0 && (
                             <div className="mt-0.5 text-[11px] text-yellow-200 break-words">
@@ -14039,8 +14121,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                 <button
                   type="button"
                   key={item.id || `${item.sourceId}-${item.timestamp}`}
-                  onClick={() => openStackItemDetail(item)}
-                  className={`block w-full text-left rounded-xl border p-3 shadow-lg transition-colors ${isTop ? 'border-yellow-500/60 bg-yellow-950/30 hover:bg-yellow-900/40' : 'border-slate-700 bg-slate-800/70 hover:bg-slate-800'}`}
+                  onClick={() => targetingState ? toggleTargetStackItem(item) : openStackItemDetail(item)}
+                  className={`block w-full text-left rounded-xl border p-3 shadow-lg transition-colors ${targetingState?.selectedIds.includes(getStackTargetId(item.id)) ? 'border-blue-400 bg-blue-950/60 ring-2 ring-blue-400' : (isTop ? 'border-yellow-500/60 bg-yellow-950/30 hover:bg-yellow-900/40' : 'border-slate-700 bg-slate-800/70 hover:bg-slate-800')}`}
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
@@ -14049,6 +14131,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                         {isCopy && (
                           <span className="rounded-full border border-cyan-400/40 bg-cyan-950/60 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-cyan-100">Copy</span>
                         )}
+                        {targetingState?.selectedIds.includes(getStackTargetId(item.id)) && <span className="rounded-full bg-blue-500 px-2 py-0.5 text-[9px] font-black uppercase text-white">🎯 Targeted</span>}
                       </div>
                       <div className="mt-1 text-xs text-slate-300">{typeLabel === 'Ability' ? 'Controller' : 'Caster'}: {casterName}</div>
                     </div>
@@ -14539,6 +14622,22 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                   </div>
                   <span className="rounded-full border border-blue-500/40 bg-blue-950/60 px-2 py-0.5 text-[10px] font-bold text-blue-100">{getManaPoolSummary(myPlayer)}</span>
                 </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={shouldHoldMana(myPlayer)}
+                  disabled={!canAct}
+                  onClick={handleToggleManaHold}
+                  className={`mb-3 flex w-full items-center justify-between rounded-lg border px-3 py-2 text-left transition-colors disabled:opacity-40 ${shouldHoldMana(myPlayer) ? 'border-amber-400/70 bg-amber-950/60 text-amber-100' : 'border-slate-600 bg-slate-900/70 text-slate-300'}`}
+                >
+                  <span>
+                    <span className="block text-sm font-bold">Mana hold</span>
+                    <span className="block text-[10px] opacity-80">{shouldHoldMana(myPlayer) ? 'Mana will persist across steps and phases.' : 'Mana empties when the step or phase changes.'}</span>
+                  </span>
+                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-black uppercase ${shouldHoldMana(myPlayer) ? 'bg-amber-500 text-slate-950' : 'bg-slate-700 text-slate-300'}`}>
+                    {shouldHoldMana(myPlayer) ? 'On' : 'Off'}
+                  </span>
+                </button>
                 <div className="grid grid-cols-2 gap-2">
                   {MANA_COLORS.map((color) => {
                     const amount = getPlayerManaPool(myPlayer)[color];
@@ -15170,6 +15269,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                           && ['cast_spell_to_stack', 'final_spell', 'P1_08_target_bolas', 'F3_cast_bolt_bolas'].includes(currentTutorialStep?.id)
                           && /Lightning Bolt/i.test(getCardDisplayName(selectedCard, ''));
                         setTargetingState({ source: selectedCard, mode: 'CAST', selectedIds: [] });
+                        if ((game.stack || []).length > 0) setStackDetailOpen(true);
                         maybeCompleteTutorialStep('P1_07_bolt_cast_target');
                         setSelectedCard(null);
                         if (shouldFocusOpponentTarget) window.setTimeout(scrollToOpponentBattlefield, 50);
@@ -15345,8 +15445,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                         </div>
                         {canAct && selectedCard.controllerId === viewAsPlayerId && (
                           <div className="grid grid-cols-2 gap-2">
-                            <button onClick={() => { if (!canAct) return; setTargetingState({ source: selectedCard, mode: 'ABILITY', selectedIds: [] }); setSelectedCard(null); }} className="min-h-10 bg-blue-900/50 hover:bg-blue-800 text-blue-100 p-2 rounded-lg text-sm flex items-center justify-center gap-2 border border-blue-800">Ability 🎯</button>
-                            <button onClick={() => { if (!canAct) return; setTargetingState({ source: selectedCard, mode: 'MANUAL', selectedIds: [] }); setSelectedCard(null); }} className="min-h-10 bg-slate-700 hover:bg-slate-600 text-slate-300 p-2 rounded-lg text-sm flex items-center justify-center gap-2 border border-slate-600">Target... 🎯</button>
+                            <button onClick={() => { if (!canAct) return; setTargetingState({ source: selectedCard, mode: 'ABILITY', selectedIds: [] }); if ((game.stack || []).length > 0) setStackDetailOpen(true); setSelectedCard(null); }} className="min-h-10 bg-blue-900/50 hover:bg-blue-800 text-blue-100 p-2 rounded-lg text-sm flex items-center justify-center gap-2 border border-blue-800">Ability 🎯</button>
+                            <button onClick={() => { if (!canAct) return; setTargetingState({ source: selectedCard, mode: 'MANUAL', selectedIds: [] }); if ((game.stack || []).length > 0) setStackDetailOpen(true); setSelectedCard(null); }} className="min-h-10 bg-slate-700 hover:bg-slate-600 text-slate-300 p-2 rounded-lg text-sm flex items-center justify-center gap-2 border border-slate-600">Target... 🎯</button>
                             <button disabled={clearableTargets.length === 0} onClick={() => clearTargets(selectedCard)} className={`col-span-2 min-h-10 p-2 rounded-lg text-sm flex items-center justify-center gap-2 ${clearableTargets.length === 0 ? 'bg-slate-800/60 text-slate-500 cursor-not-allowed border border-slate-700' : 'bg-slate-700 hover:bg-slate-600 text-slate-300'}`}>✖ Clear Targets</button>
                             <button onClick={() => { handleAction('CLONE_CARD', { cardId: selectedCard.instanceId }); setSelectedCard(null); }} className="min-h-10 bg-slate-700 text-slate-300 p-2 rounded-lg text-sm flex items-center justify-center gap-2"><Copy size={12}/> Clone</button>
                             <button onClick={() => { handleAction('CHANGE_CONTROL', { cardId: selectedCard.instanceId, cardName: getCardDisplayName(selectedCard) }); setSelectedCard(null); }} className="min-h-10 bg-slate-700 text-slate-300 p-2 rounded-lg text-sm flex items-center justify-center gap-2"><UserCheck size={12}/> Give Control</button>

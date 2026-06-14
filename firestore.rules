@@ -16,27 +16,58 @@ service cloud.firestore {
         return isSignedIn() && resource.data.hostId == request.auth.uid;
       }
 
-      function playerAt(index) {
-        return resource.data.players[index];
+      function hasPlayerIds(gameData) {
+        return 'playerIds' in gameData && gameData.playerIds is list;
       }
 
-      function isPlayer() {
-        return isSignedIn() &&
-          resource.data.players is list &&
-          (
-            (resource.data.players.size() > 0 && playerAt(0).id == request.auth.uid) ||
-            (resource.data.players.size() > 1 && playerAt(1).id == request.auth.uid)
+      function isLegacyTwoPlayerMember(gameData, uid) {
+        return gameData.players is list
+          && (
+            (gameData.players.size() > 0 && gameData.players[0].id == uid)
+            || (gameData.players.size() > 1 && gameData.players[1].id == uid)
           );
       }
 
+      function isGameMember(gameData, uid) {
+        // playerIds is the authoritative membership field for new games.
+        // The fixed players[0]/players[1] fallback is only for legacy two-player games.
+        return hasPlayerIds(gameData)
+          ? uid in gameData.playerIds
+          : isLegacyTwoPlayerMember(gameData, uid);
+      }
+
+      function isPlayer() {
+        return isSignedIn() && isGameMember(resource.data, request.auth.uid);
+      }
+
       function isJoiningAsPlayer2() {
+        let changed = request.resource.data.diff(resource.data).changedKeys();
+
+        // Future 3-4 player joins need stricter mutation validation or a callable function.
         return isSignedIn()
           && resource.data.players is list
           && request.resource.data.players is list
           && resource.data.players.size() == 1
           && request.resource.data.players.size() == 2
-          && request.resource.data.players[0].id == resource.data.players[0].id
-          && request.resource.data.players[1].id == request.auth.uid;
+          && request.resource.data.players[0] == resource.data.players[0]
+          && request.resource.data.players[1].id == request.auth.uid
+          && request.resource.data.playerIds is list
+          && request.resource.data.playerIds.size() == 2
+          && request.resource.data.playerIds[0] == resource.data.players[0].id
+          && request.resource.data.playerIds[1] == request.auth.uid
+          && request.resource.data.turnOrderPlayerIds is list
+          && request.resource.data.turnOrderPlayerIds.size() == 2
+          && request.resource.data.turnOrderPlayerIds[0] == resource.data.players[0].id
+          && request.resource.data.turnOrderPlayerIds[1] == request.auth.uid
+          && changed.hasOnly([
+            'players',
+            'playerIds',
+            'turnOrderPlayerIds',
+            'state',
+            'undoStack',
+            'updatedAt',
+            'log'
+          ]);
       }
 
       function isSpectator() {
@@ -123,12 +154,7 @@ service cloud.firestore {
 
         function isPlayerOnThisGame() {
           return request.auth != null
-            && parentGame().players is list
-            && (
-              (parentGame().players.size() > 0 && parentGame().players[0].id == request.auth.uid)
-              ||
-              (parentGame().players.size() > 1 && parentGame().players[1].id == request.auth.uid)
-            );
+            && isGameMember(parentGame(), request.auth.uid);
         }
 
         allow read: if request.auth != null;

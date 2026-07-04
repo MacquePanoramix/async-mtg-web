@@ -6363,7 +6363,9 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
   const viewAsPlayerId = isSpectator ? viewAsId : userId;
   const viewAsPlayer = players.find(p => p?.id === viewAsPlayerId);
-  const opponent = players.find(p => p?.id !== viewAsPlayerId);
+  const remotePlayers = useMemo(() => getOtherPlayers(game, viewAsPlayerId), [game, viewAsPlayerId]);
+  // Keep the singular alias for two-player gameplay code until later multiplayer stages.
+  const opponent = remotePlayers[0] || null;
   const canAct = !isSpectator;
   const showGameSizeDebug = isDebugActionsEnabled() || isPerfActionsEnabled();
   const gameDocumentSizeEstimate = useMemo(() => (showGameSizeDebug && game ? getGameDocumentSizeEstimate(game) : null), [showGameSizeDebug, game]);
@@ -9076,7 +9078,6 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const hasPriority = game?.priorityPlayerId === viewAsPlayerId;
 
   const privateHandPeekPlayer = privateHandPeek?.playerId ? players.find(p => p?.id === privateHandPeek.playerId) : null;
-  const isOppTurn = !!opponent && game?.turnPlayerId === opponent.id;
   const closePrivateHandPeek = () => {
     setPrivatePeekInspectCard(null);
     setPrivateHandPeek(null);
@@ -12265,12 +12266,22 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     }
   };
 
-  const gameCards = game?.cards || [];
+  const gameCards = useMemo(() => game?.cards || [], [game?.cards]);
   // FIX: Add defaults (|| []) to prevent crashes on initial sync
   const myHand = gameCards.filter(c => c.controllerId === viewAsPlayerId && c.zone === ZONES.HAND);
   const myBattlefield = gameCards.filter(c => c.controllerId === viewAsPlayerId && c.zone === ZONES.BATTLEFIELD);
-  const oppBattlefield = gameCards.filter(c => c.controllerId !== viewAsPlayerId && c.zone === ZONES.BATTLEFIELD);
-  const oppHand = gameCards.filter(c => c.controllerId !== viewAsPlayerId && c.zone === ZONES.HAND);
+  const remoteBattlefields = useMemo(() => new Map(remotePlayers.map((player) => [
+    player.id,
+    gameCards.filter(c => c.controllerId === player.id && c.zone === ZONES.BATTLEFIELD)
+  ])), [gameCards, remotePlayers]);
+  const remoteHands = useMemo(() => new Map(remotePlayers.map((player) => [
+    player.id,
+    gameCards.filter(c => c.controllerId === player.id && c.zone === ZONES.HAND)
+  ])), [gameCards, remotePlayers]);
+  const oppBattlefield = useMemo(
+    () => opponent ? (remoteBattlefields.get(opponent.id) || []) : [],
+    [opponent, remoteBattlefields]
+  );
   const privatePeekHandCards = privateHandPeek?.playerId
     ? gameCards.filter(c => c.controllerId === privateHandPeek.playerId && c.zone === ZONES.HAND)
     : [];
@@ -12350,8 +12361,6 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     battlefieldType: 'opponent'
   }), [oppBattlefield, opponent?.id, opponentBattlefieldSizePx.width, battlefieldViewport.width]);
   const myBattlefieldMinHeightPx = myBattlefieldLayout.battlefieldHeightPx;
-  const opponentBattlefieldMinHeightPx = opponentBattlefieldLayout.battlefieldHeightPx;
-
   useEffect(() => {
     console.log('[BATTLEFIELD_PANEL_SIZE]', {
       battlefieldWidthPx: myBattlefieldLayout.battlefieldWidth,
@@ -12501,8 +12510,6 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
   if (loading) return <div className="text-white p-10 flex justify-center"><RotateCw className="animate-spin"/></div>;
   if (!game) return <div className="text-white p-10">Game not found</div>;
-
-  const opponentIsRevealing = players.find(p => p?.id !== viewAsPlayerId)?.handRevealed;
 
   const getZoneCount = (pid, zone) => (game.cards || []).filter(c => c.ownerId === pid && c.zone === zone).length;
   const myGYCount = getZoneCount(viewAsPlayerId, ZONES.GRAVEYARD);
@@ -12739,8 +12746,6 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   });
 
   const isSelfTargeted = targetingState?.selectedIds.includes(getPlayerTargetId(viewAsPlayerId)) || stackPlayerTargets.has(viewAsPlayerId);
-  const opponentTargetId = opponent?.id ? getPlayerTargetId(opponent.id) : null;
-  const isOpponentTargetSelected = Boolean(opponent?.id && (targetingState?.selectedIds.includes(opponentTargetId) || stackPlayerTargets.has(opponent.id)));
   const isTutorialLightningBoltTargeting = Boolean(
     targetingState
     && isTutorialGame
@@ -13140,68 +13145,87 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       {/* 2. Board */}
       <div className="flex-1 overflow-hidden relative bg-slate-900/95" style={{ backgroundImage: 'radial-gradient(circle at center, #1e293b 0%, #0f172a 100%)' }}>
         <div ref={battlefieldScrollRef} className="h-full overflow-y-auto overflow-x-hidden px-3 pb-4 pt-2 sm:px-4">
+          <div className="remote-player-area">
+            {remotePlayers.map((remotePlayer, remotePlayerIndex) => {
+              const remoteBattlefield = remoteBattlefields.get(remotePlayer.id) || [];
+              const remoteHand = remoteHands.get(remotePlayer.id) || [];
+              const remoteBattlefieldLayout = computeAutoBattlefieldLayout({
+                cards: remoteBattlefield,
+                controllerId: remotePlayer.id,
+                containerWidth: opponentBattlefieldSizePx.width,
+                isMobile: battlefieldViewport.width <= 900,
+                debugLabel: `REMOTE_BATTLEFIELD_AUTO_LAYOUT_${remotePlayer.id}`,
+                battlefieldType: 'opponent'
+              });
+              const remoteBattlefieldMinHeightPx = remoteBattlefieldLayout.battlefieldHeightPx;
+              const remoteTargetId = getPlayerTargetId(remotePlayer.id);
+              const isRemoteTargetSelected = Boolean(targetingState?.selectedIds.includes(remoteTargetId) || stackPlayerTargets.has(remotePlayer.id));
+              const isRemoteTurn = game?.turnPlayerId === remotePlayer.id;
+
+              return (
           <section
-            ref={opponentSectionRef}
-            data-tutorial-anchor="opponent-battlefield"
+            key={remotePlayer.id}
+            ref={remotePlayerIndex === 0 ? opponentSectionRef : undefined}
+            data-tutorial-anchor={remotePlayerIndex === 0 ? 'opponent-battlefield' : undefined}
             onClick={() => { maybeCompleteTutorialStep('G02_opponent_area'); maybeCompleteTutorialStep('B2_02_bolas_swamp'); }}
-            className={`rounded-xl border p-3 mb-3 min-h-[280px] transition-all duration-300 ${opponentSectionHighlighted ? 'border-blue-400 bg-blue-900/20 ring-2 ring-blue-400/60' : 'border-slate-700 bg-slate-800/30'}${isOpponentTargetSelected ? ' ring-2 ring-blue-400 bg-blue-900/20 border-blue-400' : ''}${getTutorialAnchorClass(currentTutorialAnchor, 'opponent-battlefield', tutorialPulseAnchor)}`}
+            className={`rounded-xl border p-3 mb-3 min-h-[280px] transition-all duration-300 ${opponentSectionHighlighted && remotePlayerIndex === 0 ? 'border-blue-400 bg-blue-900/20 ring-2 ring-blue-400/60' : 'border-slate-700 bg-slate-800/30'}${isRemoteTargetSelected ? ' ring-2 ring-blue-400 bg-blue-900/20 border-blue-400' : ''}${remotePlayerIndex === 0 ? getTutorialAnchorClass(currentTutorialAnchor, 'opponent-battlefield', tutorialPulseAnchor) : ''}`}
           >
             <div
-              data-tutorial-anchor="opponent-player-target"
-              role={targetingState && opponent ? 'button' : undefined}
-              tabIndex={targetingState && opponent ? 0 : undefined}
-              aria-label={targetingState && opponent ? `Target ${opponent.name || 'opponent player'}` : undefined}
+              data-tutorial-anchor={remotePlayerIndex === 0 ? 'opponent-player-target' : undefined}
+              role={targetingState && remotePlayer ? 'button' : undefined}
+              tabIndex={targetingState && remotePlayer ? 0 : undefined}
+              aria-label={targetingState && remotePlayer ? `Target ${remotePlayer.name || 'remote player'}` : undefined}
               onClick={(event) => {
-                if (!targetingState || !opponent?.id) return;
+                if (!targetingState || !remotePlayer?.id) return;
                 event.stopPropagation();
-                toggleTargetPlayer(opponent.id);
+                toggleTargetPlayer(remotePlayer.id);
               }}
               onKeyDown={(event) => {
-                if (!targetingState || !opponent?.id || !['Enter', ' '].includes(event.key)) return;
+                if (!targetingState || !remotePlayer?.id || !['Enter', ' '].includes(event.key)) return;
                 event.preventDefault();
-                toggleTargetPlayer(opponent.id);
+                toggleTargetPlayer(remotePlayer.id);
               }}
-              className={`flex min-h-16 justify-between items-start mb-2 rounded-lg p-2 transition-all ${targetingState && opponent ? 'cursor-crosshair border border-blue-400/60 bg-blue-950/30 hover:bg-blue-900/40 active:scale-[0.99]' : 'border border-transparent'}${isOpponentTargetSelected ? ' ring-2 ring-blue-300 bg-blue-800/30' : ''}${getTutorialAnchorClass(currentTutorialAnchor, 'opponent-player-target', tutorialPulseAnchor)}`}>
+              className={`flex min-h-16 justify-between items-start mb-2 rounded-lg p-2 transition-all ${targetingState && remotePlayer ? 'cursor-crosshair border border-blue-400/60 bg-blue-950/30 hover:bg-blue-900/40 active:scale-[0.99]' : 'border border-transparent'}${isRemoteTargetSelected ? ' ring-2 ring-blue-300 bg-blue-800/30' : ''}${remotePlayerIndex === 0 ? getTutorialAnchorClass(currentTutorialAnchor, 'opponent-player-target', tutorialPulseAnchor) : ''}`}>
               <div className="flex items-center gap-2">
                 <Shield size={16} className="text-red-400"/>
                 <div>
-                  <div className="text-[10px] uppercase tracking-widest text-slate-400 font-bold">Opponent Battlefield</div>
+                  <div className="text-[10px] uppercase tracking-widest text-slate-400 font-bold">{remotePlayer.name || 'Remote player'} Battlefield</div>
                   <div className="flex items-center gap-2 font-bold text-slate-100">
-                    <span>{opponent?.name || 'Waiting...'}</span>
-                    {isOpponentTargetSelected && <span className="rounded-full bg-blue-500 px-2 py-0.5 text-xs font-black text-white shadow">🎯 Targeted</span>}
+                    <span>{remotePlayer.name || 'Remote player'}</span>
+                    {isRemoteTargetSelected && <span className="rounded-full bg-blue-500 px-2 py-0.5 text-xs font-black text-white shadow">🎯 Targeted</span>}
                   </div>
                 </div>
-                {isOppTurn && (
+                {isRemoteTurn && (
                   <span className="text-[10px] font-extrabold uppercase tracking-widest px-2 py-0.5 rounded-full bg-amber-600/30 text-amber-200 border border-amber-500/40">
                     TURN
                   </span>
                 )}
-                {opponent && getPlayerAttachmentCount(opponent.id) > 0 && (
-                  <span className="inline-flex items-center gap-1 rounded-full border border-fuchsia-500/40 bg-fuchsia-900/40 px-2 py-0.5 text-[10px] font-bold text-fuchsia-100" title={getCardsAttachedToPlayer(game.cards || [], opponent.id).map(c => getDisplayCardName(c)).join(', ')}>
-                    <Paperclip size={10} /> {getPlayerAttachmentCount(opponent.id)}
+                {remotePlayer && getPlayerAttachmentCount(remotePlayer.id) > 0 && (
+                  <span className="inline-flex items-center gap-1 rounded-full border border-fuchsia-500/40 bg-fuchsia-900/40 px-2 py-0.5 text-[10px] font-bold text-fuchsia-100" title={getCardsAttachedToPlayer(game.cards || [], remotePlayer.id).map(c => getDisplayCardName(c)).join(', ')}>
+                    <Paperclip size={10} /> {getPlayerAttachmentCount(remotePlayer.id)}
                   </span>
                 )}
               </div>
-              {opponent && (
+              {remotePlayer && (
                 <div className="flex max-w-[55%] flex-wrap justify-end gap-1 text-xs">
-                  <span className={`px-2 py-0.5 rounded h-fit ${targetingState ? 'bg-blue-700 text-white ring-1 ring-blue-300' : 'bg-slate-700'}`}>Life: {opponent?.life}</span>
-                  {getVisiblePlayerCounters(opponent).map((counter) => (
+                  <span className={`px-2 py-0.5 rounded h-fit ${targetingState ? 'bg-blue-700 text-white ring-1 ring-blue-300' : 'bg-slate-700'}`}>Life: {remotePlayer.life}</span>
+                  {getVisiblePlayerCounters(remotePlayer).map((counter) => (
                     <span key={counter.key} className="rounded bg-slate-700 px-2 py-0.5 text-slate-100" title={counter.label}>{counter.label}: {counter.value}</span>
                   ))}
-                  {renderManaPoolBadge(opponent)}
-                  {renderPlayerStatusBadges(opponent)}
-                  {renderPlayerEmblemBadges(opponent)}
-                  {commanderModeEnabled && getTotalCommanderDamageToPlayer(opponent.id) > 0 && (
-                    <button onClick={() => setCommanderDamageSummaryPlayerId(opponent.id)} className="rounded border border-amber-500/50 bg-amber-900/50 px-2 py-0.5 font-bold text-amber-100">Cmd: {getTotalCommanderDamageToPlayer(opponent.id)}</button>
+                  {renderManaPoolBadge(remotePlayer)}
+                  {renderPlayerStatusBadges(remotePlayer)}
+                  {renderPlayerEmblemBadges(remotePlayer)}
+                  {commanderModeEnabled && getTotalCommanderDamageToPlayer(remotePlayer.id) > 0 && (
+                    <button onClick={() => setCommanderDamageSummaryPlayerId(remotePlayer.id)} className="rounded border border-amber-500/50 bg-amber-900/50 px-2 py-0.5 font-bold text-amber-100">Cmd: {getTotalCommanderDamageToPlayer(remotePlayer.id)}</button>
                   )}
-                  {commanderModeEnabled && getZoneCount(opponent.id, ZONES.COMMAND) > 0 && (
-                    <button onClick={() => setViewZone({ zone: ZONES.COMMAND, ownerId: opponent.id })} className="rounded border border-amber-500/50 bg-slate-700 px-2 py-0.5 font-bold text-amber-100">CZ: {getZoneCount(opponent.id, ZONES.COMMAND)}</button>
+                  {commanderModeEnabled && getZoneCount(remotePlayer.id, ZONES.COMMAND) > 0 && (
+                    <button onClick={() => setViewZone({ zone: ZONES.COMMAND, ownerId: remotePlayer.id })} className="rounded border border-amber-500/50 bg-slate-700 px-2 py-0.5 font-bold text-amber-100">CZ: {getZoneCount(remotePlayer.id, ZONES.COMMAND)}</button>
                   )}
-                  {getPlayerReminders(opponent.id).map((reminder) => (
+                  {getPlayerReminders(remotePlayer.id).map((reminder) => (
                     <button
                       key={reminder.id}
                       type="button"
-                      onClick={(event) => { event.stopPropagation(); if (canAct) removePlayerReminder(opponent.id, reminder.id); }}
+                      onClick={(event) => { event.stopPropagation(); if (canAct) removePlayerReminder(remotePlayer.id, reminder.id); }}
                       className="max-w-[9rem] truncate rounded border border-violet-500/50 bg-violet-950/60 px-2 py-0.5 text-left font-bold text-violet-100"
                       title={`${getReminderTitle(reminder)}${canAct ? ' · Tap to remove' : ''}`}
                     >
@@ -13212,24 +13236,24 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               )}
             </div>
 
-            {opponent && canAct && (
+            {remotePlayer && canAct && (
               <div className="mb-2 flex justify-end">
                 <button
                   type="button"
-                  onClick={() => openPrivateHandPeek(opponent.id)}
-                  data-tutorial-anchor="private-hand-peek-button"
-                  className={`min-h-9 rounded-lg border border-cyan-500/40 bg-cyan-950/40 px-3 py-1.5 text-xs font-bold text-cyan-100 hover:bg-cyan-900/60 flex items-center gap-1.5${getTutorialAnchorClass(currentTutorialAnchor, 'private-hand-peek-button', tutorialPulseAnchor)}`}
-                  title="Open a private local view of the opponent's hand"
+                  onClick={() => openPrivateHandPeek(remotePlayer.id)}
+                  data-tutorial-anchor={remotePlayerIndex === 0 ? 'private-hand-peek-button' : undefined}
+                  className={`min-h-9 rounded-lg border border-cyan-500/40 bg-cyan-950/40 px-3 py-1.5 text-xs font-bold text-cyan-100 hover:bg-cyan-900/60 flex items-center gap-1.5${remotePlayerIndex === 0 ? getTutorialAnchorClass(currentTutorialAnchor, 'private-hand-peek-button', tutorialPulseAnchor) : ''}`}
+                  title={`Open a private local view of ${remotePlayer.name || 'this player'}'s hand`}
                 >
                   <Eye size={14} /> Private hand peek
                 </button>
               </div>
             )}
 
-            {opponentIsRevealing && (
+            {remotePlayer.handRevealed && (
               <div className="mb-2 p-2 bg-purple-900/20 rounded border border-purple-500/30 flex gap-2 overflow-x-auto">
                 <span className="text-[10px] text-purple-300 uppercase vertical-text">Revealed</span>
-                {oppHand.map(c => (
+                {remoteHand.map(c => (
                   <div key={c.instanceId} className="w-12 h-16 shrink-0 relative">
                     <img src={getCardImageUri(c)} className="w-full h-full rounded object-cover opacity-80" alt={getCardDisplayName(c)} />
                   </div>
@@ -13238,13 +13262,13 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             )}
 
             <div
-              ref={opponentBattlefieldRef}
+              ref={remotePlayerIndex === 0 ? opponentBattlefieldRef : undefined}
               className="border-t border-slate-700/70 pt-2 w-full relative"
-              style={{ minHeight: `${opponentBattlefieldMinHeightPx}px`, height: `${opponentBattlefieldMinHeightPx}px` }}
+              style={{ minHeight: `${remoteBattlefieldMinHeightPx}px`, height: `${remoteBattlefieldMinHeightPx}px` }}
             >
-              {oppBattlefield.map(card => {
-                const liveLayoutPosition = opponentBattlefieldLayout.tidyPositions.get(card.instanceId);
-                const normalized = getOpponentBattlefieldRenderPosition(card, liveLayoutPosition, opponentBattlefieldLayout);
+              {remoteBattlefield.map(card => {
+                const liveLayoutPosition = remoteBattlefieldLayout.tidyPositions.get(card.instanceId);
+                const normalized = getOpponentBattlefieldRenderPosition(card, liveLayoutPosition, remoteBattlefieldLayout);
                 return (
                   <div
                     key={card.instanceId}
@@ -13277,6 +13301,9 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               })}
             </div>
           </section>
+              );
+            })}
+          </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-[1fr_18rem] gap-3 mb-3">
             {stackCards.length > 0 ? (

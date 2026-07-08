@@ -6366,6 +6366,23 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const remotePlayers = useMemo(() => getOtherPlayers(game, viewAsPlayerId), [game, viewAsPlayerId]);
   // Keep the singular alias for two-player gameplay code until later multiplayer stages.
   const opponent = remotePlayers[0] || null;
+  const getPlayerName = useCallback((playerId, fallback = 'Player') => getPlayerNameById(game, playerId, fallback), [game]);
+  const getDefaultRemotePlayerId = useCallback(() => remotePlayers[0]?.id || null, [remotePlayers]);
+  const choosePlayerId = useCallback(({ candidates = players, title = 'Choose player', defaultPlayerId = null, excludePlayerId = null } = {}) => {
+    const validCandidates = (Array.isArray(candidates) ? candidates : [])
+      .filter((player) => player?.id && player.id !== excludePlayerId);
+    if (validCandidates.length === 0) return null;
+    if (validCandidates.length === 1) return validCandidates[0].id;
+    const fallbackId = defaultPlayerId && validCandidates.some((player) => player.id === defaultPlayerId)
+      ? defaultPlayerId
+      : validCandidates[0].id;
+    const promptText = `${title}:\n${validCandidates.map((player, index) => `${index + 1}. ${player.name || 'Player'}`).join('\n')}`;
+    const answer = window.prompt(promptText, String(validCandidates.findIndex((player) => player.id === fallbackId) + 1));
+    if (answer === null) return null;
+    const selectedIndex = Number.parseInt(answer, 10) - 1;
+    return validCandidates[selectedIndex]?.id || fallbackId;
+  }, [players]);
+  const chooseRemotePlayerId = useCallback((title = 'Choose player') => choosePlayerId({ candidates: remotePlayers, title, defaultPlayerId: getDefaultRemotePlayerId() }), [choosePlayerId, getDefaultRemotePlayerId, remotePlayers]);
   const canAct = !isSpectator;
   const showGameSizeDebug = isDebugActionsEnabled() || isPerfActionsEnabled();
   const gameDocumentSizeEstimate = useMemo(() => (showGameSizeDebug && game ? getGameDocumentSizeEstimate(game) : null), [showGameSizeDebug, game]);
@@ -9083,11 +9100,12 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     setPrivateHandPeek(null);
   };
 
-  const openPrivateHandPeek = (targetPlayerId = opponent?.id) => {
-    if (!canAct || !targetPlayerId) return;
+  const openPrivateHandPeek = (targetPlayerId = null) => {
+    const chosenPlayerId = targetPlayerId || chooseRemotePlayerId('Peek at which player hand?');
+    if (!canAct || !chosenPlayerId) return;
     setPrivatePeekInspectCard(null);
-    setPrivateHandPeek({ playerId: targetPlayerId });
-    handleAction('PRIVATE_PEEK_HAND', { targetPlayerId });
+    setPrivateHandPeek({ playerId: chosenPlayerId });
+    handleAction('PRIVATE_PEEK_HAND', { targetPlayerId: chosenPlayerId });
   };
   const handRevealed = myPlayer?.handRevealed || false;
 
@@ -9096,7 +9114,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   const opponentPlaneswalkers = (game?.cards || []).filter(c => c.controllerId !== viewAsPlayerId && getAttackableCardKind(c) === 'planeswalker');
   const battlefieldBattles = (game?.cards || []).filter(c => getAttackableCardKind(c) === 'battle');
   const attackTargetOptions = [
-    opponent ? { type: 'player', id: opponent.id, targetId: opponent.id, label: `${opponent.name} (Player)`, kind: 'player' } : null,
+    ...remotePlayers.map((player) => ({ type: 'player', id: player.id, targetId: player.id, label: `${player.name || 'Player'} (Player)`, kind: 'player' })),
     ...opponentPlaneswalkers.map(c => ({ type: 'card', id: c.instanceId, targetId: c.instanceId, label: getCardDisplayName(c, 'Planeswalker'), kind: 'planeswalker' })),
     ...battlefieldBattles.map(c => ({ type: 'card', id: c.instanceId, targetId: c.instanceId, label: getCardDisplayName(c, 'Battle'), kind: 'battle' }))
   ].filter(Boolean);
@@ -10305,7 +10323,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       const libCards = game.cards.filter(c => c.ownerId === ownerId && c.zone === ZONES.LIBRARY);
       const otherCards = game.cards.filter(c => !(c.ownerId === ownerId && c.zone === ZONES.LIBRARY));
       updates.cards = [...otherCards, ...shuffleArray([...libCards])];
-      updates.log = arrayUnion(makeActionLog('SHUFFLE_LIBRARY', `${actorName} shuffled ${ownerId === userId ? 'their' : "opponent's"} library.`, { category: 'library' }));
+      const ownerName = getPlayerNameById(game, ownerId, ownerId === userId ? actorName : 'Player');
+      updates.log = arrayUnion(makeActionLog('SHUFFLE_LIBRARY', `${actorName} shuffled ${ownerId === userId ? 'their' : `${ownerName}'s`} library.`, { category: 'library', targetOwnerId: ownerId, targetPlayerName: ownerName }));
     } else if (actionType === 'MULLIGAN') {
       const handCards = game.cards.filter(c => c.controllerId === userId && c.zone === ZONES.HAND);
       const movedToLibrary = new Set(handCards.map(c => c.instanceId));
@@ -10649,7 +10668,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       if (lib.length > 0) {
         setScryCard({ ...lib[0], ownerId: targetId });
         if (targetId !== userId) {
-          updates.log = arrayUnion(makeActionLog('SCRY_TOP', `${actorName} looked at the top card of opponent's library.`, { category: 'library' }));
+          const targetName = getPlayerNameById(game, targetId, 'Player');
+          updates.log = arrayUnion(makeActionLog('SCRY_TOP', `${actorName} looked at the top card of ${targetName}'s library.`, { category: 'library', targetOwnerId: targetId, targetPlayerName: targetName }));
         } else {
           return;
         }
@@ -10700,7 +10720,14 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
     } else if (actionType === 'CHANGE_CONTROL') {
       const changedCard = game.cards.find(c => c.instanceId === payload.cardId);
-      const nextControllerId = changedCard?.controllerId === userId ? (opponent?.id || userId) : userId;
+      const validControllerIds = new Set((game.players || []).map((player) => player.id).filter(Boolean));
+      const fallbackControllerId = changedCard?.controllerId === userId ? (opponent?.id || userId) : userId;
+      const nextControllerId = validControllerIds.has(payload.nextControllerId)
+        ? payload.nextControllerId
+        : fallbackControllerId;
+      if (!changedCard || !validControllerIds.has(nextControllerId) || nextControllerId === changedCard.controllerId) return;
+      const oldControllerName = getPlayerNameById(game, changedCard.controllerId, 'Unknown');
+      const nextControllerName = getPlayerNameById(game, nextControllerId, 'another player');
       const spawnPosition = getBattlefieldGridPosition({
         card: { ...changedCard, controllerId: nextControllerId, zone: ZONES.BATTLEFIELD },
         existingBattlefieldCards: game.cards,
@@ -10718,10 +10745,10 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             }
           : c
       );
-      logBattlefieldEntry(changedCard, 'CHANGE_CONTROL', spawnPosition);
+      logBattlefieldEntry({ ...changedCard, controllerId: nextControllerId }, 'CHANGE_CONTROL', spawnPosition);
       updates.cards = newCards;
       updates.combat = clearCombatAssignmentsForCard(game.combat || getEmptyCombatState(), payload.cardId);
-      updates.log = arrayUnion(makeActionLog('CHANGE_CONTROL', `${actorName} gave control of ${getSafeCardName(changedCard, payload.cardName || 'a card')} to ${getPlayerNameById(game, nextControllerId, 'another player')}.`, { category: 'control', cardId: payload.cardId, cardName: getSafeCardName(changedCard, payload.cardName || 'a card') }));
+      updates.log = arrayUnion(makeActionLog('CHANGE_CONTROL', `${actorName} changed control of ${getSafeCardName(changedCard, payload.cardName || 'a card')} from ${oldControllerName} to ${nextControllerName}.`, { category: 'control', cardId: payload.cardId, cardName: getSafeCardName(changedCard, payload.cardName || 'a card'), oldControllerId: changedCard.controllerId, oldControllerName, nextControllerId, nextControllerName }));
 
     } else if (actionType === 'SET_ATTACK_TARGET') {
       if (game.phase !== 'combat_attackers') return;
@@ -11079,7 +11106,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     } else if (actionType === 'BATCH_DRAW_LIBRARY' || actionType === 'BATCH_MILL_LIBRARY' || actionType === 'BATCH_EXILE_LIBRARY') {
       const requested = clamp(Number.parseInt(payload.n, 10) || 1, 1, 99);
       const targetZone = actionType === 'BATCH_DRAW_LIBRARY' ? ZONES.HAND : actionType === 'BATCH_MILL_LIBRARY' ? ZONES.GRAVEYARD : ZONES.EXILE;
-      const libCards = game.cards.filter(c => c.ownerId === userId && c.zone === ZONES.LIBRARY);
+      const ownerId = payload.targetOwnerId || userId;
+      const libCards = game.cards.filter(c => c.ownerId === ownerId && c.zone === ZONES.LIBRARY);
       const movedCards = libCards.slice(0, Math.min(requested, libCards.length));
       if (movedCards.length === 0) {
         setNotification('No cards left in library.');
@@ -11095,14 +11123,17 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       if (actionType === 'BATCH_DRAW_LIBRARY') {
         updates.log = arrayUnion(makeActionLog('BATCH_DRAW_LIBRARY', `${actorName} drew ${count} ${plural}.`, { category: 'draw', count }));
       } else if (actionType === 'BATCH_MILL_LIBRARY') {
-        updates.log = arrayUnion(makeActionLog('BATCH_MILL_LIBRARY', `${actorName} milled ${count} ${plural}.`, { category: 'library', count }));
+        const ownerName = getPlayerNameById(game, ownerId, 'Player');
+        updates.log = arrayUnion(makeActionLog('BATCH_MILL_LIBRARY', `${actorName} milled ${count} ${plural} from ${ownerId === userId ? 'their' : `${ownerName}'s`} library.`, { category: 'library', count, targetOwnerId: ownerId, targetPlayerName: ownerName }));
       } else {
-        updates.log = arrayUnion(makeActionLog('BATCH_EXILE_LIBRARY', `${actorName} exiled the top ${count} ${plural} of their library.`, { category: 'library', count }));
+        const ownerName = getPlayerNameById(game, ownerId, 'Player');
+        updates.log = arrayUnion(makeActionLog('BATCH_EXILE_LIBRARY', `${actorName} exiled the top ${count} ${plural} of ${ownerId === userId ? 'their' : `${ownerName}'s`} library.`, { category: 'library', count, targetOwnerId: ownerId, targetPlayerName: ownerName }));
       }
 
     } else if (actionType === 'BATCH_REVEAL_LIBRARY') {
       const requested = clamp(Number.parseInt(payload.n, 10) || 1, 1, 99);
-      const libCards = game.cards.filter(c => c.ownerId === userId && c.zone === ZONES.LIBRARY);
+      const ownerId = payload.targetOwnerId || userId;
+      const libCards = game.cards.filter(c => c.ownerId === ownerId && c.zone === ZONES.LIBRARY);
       const revealedCards = libCards.slice(0, Math.min(requested, libCards.length));
       if (revealedCards.length === 0) {
         setNotification('No cards left in library to reveal.');
@@ -11121,7 +11152,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       }));
       const count = revealedCards.length;
       updates.reveals = arrayUnion(...revealEntries);
-      updates.log = arrayUnion(makeActionLog('BATCH_REVEAL_LIBRARY', `${actorName} revealed the top ${count} ${count === 1 ? 'card' : 'cards'} of their library.`, { category: 'reveal', count }));
+      const ownerName = getPlayerNameById(game, ownerId, 'Player');
+      updates.log = arrayUnion(makeActionLog('BATCH_REVEAL_LIBRARY', `${actorName} revealed the top ${count} ${count === 1 ? 'card' : 'cards'} of ${ownerId === userId ? 'their' : `${ownerName}'s`} library.`, { category: 'reveal', count, targetOwnerId: ownerId, targetPlayerName: ownerName }));
 
     } else if (actionType === 'BATCH_SCRY_LIBRARY' || actionType === 'BATCH_SURVEIL_LIBRARY') {
       const ownerId = payload.ownerId || userId;
@@ -11252,7 +11284,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
         }
         return c;
       });
-      updates.log = arrayUnion(makeActionLog('REORDER_TOP_LIBRARY', `${actorName} reordered the top ${orderedIds.length} cards of ${ownerId === userId ? 'their' : "opponent's"} library.`, { category: 'library' }));
+      const ownerName = getPlayerNameById(game, ownerId, 'Player');
+      updates.log = arrayUnion(makeActionLog('REORDER_TOP_LIBRARY', `${actorName} reordered the top ${orderedIds.length} cards of ${ownerId === userId ? 'their' : `${ownerName}'s`} library.`, { category: 'library', targetOwnerId: ownerId, targetPlayerName: ownerName }));
 
     } else if (actionType === 'LIFE_CHANGE') {
       const targetPlayer = game.players.find(p => p.id === payload.targetPlayerId);
@@ -12185,7 +12218,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       return;
     }
     recordPerfActionClick({ actionType, buttonName: 'Library Batch', currentGame: game });
-    handleAction(actionType, { n });
+    handleAction(actionType, { n, targetOwnerId: userId });
     setLibraryBatchOpen(false);
     setLibraryMenuOpen(false);
   };
@@ -13767,21 +13800,21 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
               <Shuffle size={12} /> Shuffle
             </button>
 
-            {opponent && (
+            {remotePlayers.length > 0 && (
               <>
-                <div className="border-t border-slate-600 my-1 pt-1 px-2 text-[10px] text-slate-500 uppercase tracking-widest font-bold">Opponent Library</div>
+                <div className="border-t border-slate-600 my-1 pt-1 px-2 text-[10px] text-slate-500 uppercase tracking-widest font-bold">Other Player Library</div>
                 <div className="px-2 text-[9px] text-slate-500 mb-1 italic">Use only when allowed</div>
-                <button onClick={() => { setSearchLibraryOwner(opponent.id); setLibraryMenuOpen(false); }} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-700 flex items-center gap-2 text-green-300">
-                  <Search size={12} /> Search Opp Lib
+                <button onClick={() => { const targetId = chooseRemotePlayerId('Search which player library?'); if (targetId) { setSearchLibraryOwner(targetId); setLibraryMenuOpen(false); } }} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-700 flex items-center gap-2 text-green-300">
+                  <Search size={12} /> Search Player Lib
                 </button>
-                <button onClick={() => { handleAction('SCRY_TOP', { targetOwnerId: opponent.id }); setLibraryMenuOpen(false); }} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-700 flex items-center gap-2 text-purple-300">
-                  <Eye size={12} /> Peek Opp Top
+                <button onClick={() => { const targetId = chooseRemotePlayerId('Peek at which player library?'); if (targetId) { handleAction('SCRY_TOP', { targetOwnerId: targetId }); setLibraryMenuOpen(false); } }} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-700 flex items-center gap-2 text-purple-300">
+                  <Eye size={12} /> Peek Player Top
                 </button>
-                <button onClick={() => startReorderTop(opponent.id)} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-700 flex items-center gap-2 text-indigo-300">
-                  <Layers size={12} /> Reorder Opp Top...
+                <button onClick={() => { const targetId = chooseRemotePlayerId('Reorder which player library?'); if (targetId) startReorderTop(targetId); }} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-700 flex items-center gap-2 text-indigo-300">
+                  <Layers size={12} /> Reorder Player Top...
                 </button>
-                <button onClick={() => { handleAction('SHUFFLE_LIBRARY', { targetOwnerId: opponent.id }); setLibraryMenuOpen(false); }} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-700 flex items-center gap-2 text-yellow-300">
-                  <Shuffle size={12} /> Shuffle Opp Lib
+                <button onClick={() => { const targetId = chooseRemotePlayerId('Shuffle which player library?'); if (targetId) { handleAction('SHUFFLE_LIBRARY', { targetOwnerId: targetId }); setLibraryMenuOpen(false); } }} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-700 flex items-center gap-2 text-yellow-300">
+                  <Shuffle size={12} /> Shuffle Player Lib
                 </button>
               </>
             )}
@@ -13853,7 +13886,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
             <div className="flex items-start justify-between gap-3 border-b border-cyan-500/30 bg-cyan-950/30 p-4">
               <div>
                 <div className="text-[10px] uppercase tracking-[0.2em] text-cyan-200 font-black flex items-center gap-1.5"><Lock size={12} /> Private view</div>
-                <h2 className="text-xl font-black text-white">Private view of opponent hand</h2>
+                <h2 className="text-xl font-black text-white">Private view of player hand</h2>
                 <p className="text-sm text-slate-300">Only you can see {privateHandPeekPlayer.name || 'this player'}'s hand here. This does not publicly reveal it.</p>
               </div>
               <button onClick={closePrivateHandPeek} className="min-h-11 min-w-11 rounded-full bg-slate-950 text-slate-300 hover:text-white hover:bg-slate-800 flex items-center justify-center" aria-label="Close private hand peek">
@@ -14750,7 +14783,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
       {searchLibraryOwner && (
         <div className="fixed inset-0 bg-black/95 z-[60] flex flex-col p-4 animate-in fade-in">
           <div className="flex justify-between items-center mb-4 border-b border-slate-700 pb-2">
-            <h2 className="text-lg font-bold text-white">Searching {searchLibraryOwner === userId ? 'Your' : "Opponent's"} Library</h2>
+            <h2 className="text-lg font-bold text-white">Searching {searchLibraryOwner === userId ? 'Your' : `${getPlayerName(searchLibraryOwner, 'Player')}'s`} Library</h2>
             <button onClick={() => setSearchLibraryOwner(null)}><X className="text-white"/></button>
           </div>
           <input type="text" placeholder="Filter cards..." className="bg-slate-800 text-white p-2 rounded mb-4 border border-slate-700" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
@@ -15615,7 +15648,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
                             <button onClick={() => { if (!canAct) return; setTargetingState({ source: selectedCard, mode: 'MANUAL', selectedIds: [] }); if ((game.stack || []).length > 0) setStackDetailOpen(true); setSelectedCard(null); }} className="min-h-10 bg-slate-700 hover:bg-slate-600 text-slate-300 p-2 rounded-lg text-sm flex items-center justify-center gap-2 border border-slate-600">Target... 🎯</button>
                             <button disabled={clearableTargets.length === 0} onClick={() => clearTargets(selectedCard)} className={`col-span-2 min-h-10 p-2 rounded-lg text-sm flex items-center justify-center gap-2 ${clearableTargets.length === 0 ? 'bg-slate-800/60 text-slate-500 cursor-not-allowed border border-slate-700' : 'bg-slate-700 hover:bg-slate-600 text-slate-300'}`}>✖ Clear Targets</button>
                             <button onClick={() => { handleAction('CLONE_CARD', { cardId: selectedCard.instanceId }); setSelectedCard(null); }} className="min-h-10 bg-slate-700 text-slate-300 p-2 rounded-lg text-sm flex items-center justify-center gap-2"><Copy size={12}/> Clone</button>
-                            <button onClick={() => { handleAction('CHANGE_CONTROL', { cardId: selectedCard.instanceId, cardName: getCardDisplayName(selectedCard) }); setSelectedCard(null); }} className="min-h-10 bg-slate-700 text-slate-300 p-2 rounded-lg text-sm flex items-center justify-center gap-2"><UserCheck size={12}/> Give Control</button>
+                            <button onClick={() => { const nextControllerId = choosePlayerId({ candidates: players, title: `Give ${getCardDisplayName(selectedCard)} to which player?`, defaultPlayerId: selectedCard.controllerId === userId ? getDefaultRemotePlayerId() : userId, excludePlayerId: selectedCard.controllerId }); if (nextControllerId) handleAction('CHANGE_CONTROL', { cardId: selectedCard.instanceId, cardName: getCardDisplayName(selectedCard), nextControllerId }); setSelectedCard(null); }} className="min-h-10 bg-slate-700 text-slate-300 p-2 rounded-lg text-sm flex items-center justify-center gap-2"><UserCheck size={12}/> Give Control</button>
                           </div>
                         )}
                       </>

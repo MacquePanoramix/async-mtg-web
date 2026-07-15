@@ -4035,12 +4035,20 @@ const buildFreshTutorialResetFields = ({ playerId, playerName, bolasId, existing
   tutorialNotification: null
 });
 const normalizeCombatAssignmentMap = (assignments) => (isPlainObject(assignments) ? assignments : {});
+const normalizeCombatBlockerMap = (blockers) => {
+  if (!isPlainObject(blockers)) return {};
+  return Object.fromEntries(
+    Object.entries(blockers)
+      .map(([blockerId, attackerIds]) => [blockerId, Array.isArray(attackerIds) ? attackerIds.filter(Boolean) : []])
+      .filter(([, attackerIds]) => attackerIds.length > 0)
+  );
+};
 const normalizeCombatState = (combatState = getEmptyCombatState()) => {
   const safeCombatState = isPlainObject(combatState) ? combatState : {};
   return {
     ...safeCombatState,
     attackers: normalizeCombatAssignmentMap(safeCombatState.attackers),
-    blockers: normalizeCombatAssignmentMap(safeCombatState.blockers),
+    blockers: normalizeCombatBlockerMap(safeCombatState.blockers),
     combatDamageStep: getCombatDamageStep(safeCombatState)
   };
 };
@@ -4239,9 +4247,10 @@ const getCombatDisplayName = (cardOrId, currentGame, displayNameMap = null) => {
 
 const getAttackTargetObjectId = (attackTarget) => attackTarget?.id || attackTarget?.targetId || null;
 
+const getOpponentPlayersForController = (currentGame, controllerId) => getActivePlayers(currentGame).filter((player) => player.id !== controllerId);
 const getOpponentPlayerForController = (currentGame, controllerId) => {
-  const players = currentGame?.players || [];
-  return players.find((player) => player.id !== controllerId) || players[0] || null;
+  const opponents = getOpponentPlayersForController(currentGame, controllerId);
+  return opponents[0] || getActivePlayers(currentGame)[0] || null;
 };
 
 const getAttackableCardKind = (card) => {
@@ -4259,22 +4268,35 @@ const getAttackTargetLabelPrefix = (kind) => {
   return null;
 };
 
+const inferDefendingPlayerIdForAttackTarget = (currentGame, attackTarget, attackerCard = null) => {
+  const rawType = attackTarget?.targetType || attackTarget?.type || 'player';
+  const rawKind = attackTarget?.kind || rawType;
+  const rawId = getAttackTargetObjectId(attackTarget);
+  if ((rawType === 'player' || rawKind === 'player') && rawId) return rawId;
+  const targetCard = (currentGame?.cards || []).find((candidate) => candidate.instanceId === rawId);
+  if (targetCard?.controllerId && targetCard.controllerId !== attackerCard?.controllerId) return targetCard.controllerId;
+  if (attackTarget?.defendingPlayerId) return attackTarget.defendingPlayerId;
+  return getOpponentPlayerForController(currentGame, attackerCard?.controllerId)?.id || null;
+};
+
 const normalizeAttackTarget = (attackTarget, currentGame, attackerCard = null, displayNameMap = null) => {
   if (!attackTarget || typeof attackTarget !== 'object') {
     const defender = getOpponentPlayerForController(currentGame, attackerCard?.controllerId);
-    return defender ? { type: 'player', id: defender.id, targetId: defender.id, label: defender.name || 'Player', kind: 'player' } : null;
+    return defender ? { type: 'player', targetType: 'player', id: defender.id, targetId: defender.id, defendingPlayerId: defender.id, label: defender.name || 'Player', kind: 'player' } : null;
   }
 
-  const rawType = attackTarget.type || 'player';
+  const rawType = attackTarget.targetType || attackTarget.type || 'player';
   const rawId = getAttackTargetObjectId(attackTarget);
-  if (rawType === 'player') {
+  if (rawType === 'player' || attackTarget.kind === 'player') {
     const playerId = rawId || getOpponentPlayerForController(currentGame, attackerCard?.controllerId)?.id || null;
     const player = (currentGame?.players || []).find((candidate) => candidate.id === playerId);
     return {
       ...attackTarget,
       type: 'player',
+      targetType: 'player',
       id: playerId,
       targetId: playerId,
+      defendingPlayerId: playerId,
       label: attackTarget.label || player?.name || 'Player',
       kind: 'player'
     };
@@ -4283,21 +4305,69 @@ const normalizeAttackTarget = (attackTarget, currentGame, attackerCard = null, d
   const targetCard = (currentGame?.cards || []).find((candidate) => candidate.instanceId === rawId);
   const detectedKind = getAttackableCardKind(targetCard);
   const kind = attackTarget.kind || (rawType === 'planeswalker' || rawType === 'battle' ? rawType : detectedKind) || 'card';
+  const targetType = kind === 'planeswalker' || kind === 'battle' ? kind : 'card';
+  const defendingPlayerId = inferDefendingPlayerIdForAttackTarget(currentGame, attackTarget, attackerCard);
   const cardLabel = targetCard ? getCombatDisplayName(targetCard, currentGame, displayNameMap) : null;
   return {
     ...attackTarget,
     type: 'card',
+    targetType,
     id: rawId,
     targetId: rawId,
+    defendingPlayerId,
     label: attackTarget.label || cardLabel || attackTarget.name || 'Card',
     kind
   };
 };
 
-const getCombatAttackTargetName = (attackTarget, currentGame, displayNameMap = null, attackerCard = null) => {
-  const normalizedTarget = normalizeAttackTarget(attackTarget, currentGame, attackerCard, displayNameMap);
+const normalizeAttackAssignment = (currentGame, attackerId, rawTarget) => {
+  const attackerCard = (currentGame?.cards || []).find((candidate) => candidate.instanceId === attackerId);
+  return normalizeAttackTarget(rawTarget, currentGame, attackerCard);
+};
+
+const getAttackAssignment = (currentGame, attackerId) => {
+  const combat = normalizeCombatState(currentGame?.combat);
+  if (!attackerId || !Object.prototype.hasOwnProperty.call(combat.attackers || {}, attackerId)) return null;
+  return normalizeAttackAssignment(currentGame, attackerId, combat.attackers[attackerId]);
+};
+
+const getDefendingPlayerId = (currentGame, assignment) => assignment?.defendingPlayerId || inferDefendingPlayerIdForAttackTarget(currentGame, assignment, null);
+
+const getAttackTargetName = (currentGame, assignment, displayNameMap = null, attackerCard = null) => {
+  const normalizedTarget = normalizeAttackTarget(assignment, currentGame, attackerCard, displayNameMap);
   if (!normalizedTarget) return null;
   return normalizedTarget.label || null;
+};
+
+const getCombatAttackTargetName = (attackTarget, currentGame, displayNameMap = null, attackerCard = null) => getAttackTargetName(currentGame, attackTarget, displayNameMap, attackerCard);
+
+const getLegalAttackTargetsForCreature = (currentGame, attackerCard, attackingPlayerId = attackerCard?.controllerId) => {
+  if (!attackerCard || attackerCard.zone !== ZONES.BATTLEFIELD) return [];
+  const opponents = getOpponentPlayersForController(currentGame, attackingPlayerId);
+  const opponentIds = new Set(opponents.map((player) => player.id));
+  const playerTargets = opponents.map((player) => ({ type: 'player', targetType: 'player', id: player.id, targetId: player.id, defendingPlayerId: player.id, label: `${player.name || 'Player'} (Player)`, kind: 'player' }));
+  const permanentTargets = (currentGame?.cards || [])
+    .filter((card) => card.zone === ZONES.BATTLEFIELD && opponentIds.has(card.controllerId))
+    .map((card) => ({ card, kind: getAttackableCardKind(card) }))
+    .filter(({ kind }) => kind === 'planeswalker' || kind === 'battle')
+    .map(({ card, kind }) => ({ type: 'card', targetType: kind, id: card.instanceId, targetId: card.instanceId, defendingPlayerId: card.controllerId, label: getCardDisplayName(card, kind === 'planeswalker' ? 'Planeswalker' : 'Battle'), kind }));
+  return [...playerTargets, ...permanentTargets];
+};
+
+const canPlayerBlockAttacker = (currentGame, blockingPlayerId, attackerId) => {
+  const attacker = (currentGame?.cards || []).find((card) => card.instanceId === attackerId);
+  if (!attacker || attacker.zone !== ZONES.BATTLEFIELD || attacker.controllerId === blockingPlayerId) return false;
+  const assignment = getAttackAssignment(currentGame, attackerId);
+  if (!assignment) return false;
+  return getDefendingPlayerId(currentGame, assignment) === blockingPlayerId;
+};
+
+const getLegalAttackersForBlocker = (currentGame, blockerCard, blockingPlayerId = blockerCard?.controllerId) => {
+  if (!blockerCard || blockerCard.zone !== ZONES.BATTLEFIELD || blockerCard.controllerId !== blockingPlayerId) return [];
+  return Object.keys(normalizeCombatState(currentGame?.combat).attackers || {})
+    .filter((attackerId) => canPlayerBlockAttacker(currentGame, blockingPlayerId, attackerId))
+    .map((attackerId) => (currentGame?.cards || []).find((card) => card.instanceId === attackerId))
+    .filter(Boolean);
 };
 
 const getCardCombatInfo = (card, currentGame, displayNameMapOverride = null) => {
@@ -9111,13 +9181,7 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
   const isAttackersStep = game?.phase === 'combat_attackers';
   const isBlockersStep = game?.phase === 'combat_blockers';
-  const opponentPlaneswalkers = (game?.cards || []).filter(c => c.controllerId !== viewAsPlayerId && getAttackableCardKind(c) === 'planeswalker');
-  const battlefieldBattles = (game?.cards || []).filter(c => getAttackableCardKind(c) === 'battle');
-  const attackTargetOptions = [
-    ...remotePlayers.map((player) => ({ type: 'player', id: player.id, targetId: player.id, label: `${player.name || 'Player'} (Player)`, kind: 'player' })),
-    ...opponentPlaneswalkers.map(c => ({ type: 'card', id: c.instanceId, targetId: c.instanceId, label: getCardDisplayName(c, 'Planeswalker'), kind: 'planeswalker' })),
-    ...battlefieldBattles.map(c => ({ type: 'card', id: c.instanceId, targetId: c.instanceId, label: getCardDisplayName(c, 'Battle'), kind: 'battle' }))
-  ].filter(Boolean);
+  const attackTargetOptions = getLegalAttackTargetsForCreature(game, attackTargetPickerCard, viewAsPlayerId);
 
   const waitingForPlayers = players.length < 2;
   const isAutoPassEnabled = autoPassConfig.mode !== AUTO_PASS_MODE.OFF;
@@ -10753,7 +10817,9 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     } else if (actionType === 'SET_ATTACK_TARGET') {
       if (game.phase !== 'combat_attackers') return;
       const attackingCard = game.cards.find(c => c.instanceId === payload.cardId);
-      const attackTarget = normalizeAttackTarget(payload.attackTarget || { type: 'player', id: opponent?.id || null, targetId: opponent?.id || null }, game, attackingCard);
+      const legalAttackTargets = getLegalAttackTargetsForCreature(game, attackingCard, attackingCard?.controllerId);
+      const requestedAttackTarget = normalizeAttackAssignment(game, payload.cardId, payload.attackTarget || { type: 'player', id: opponent?.id || null, targetId: opponent?.id || null });
+      const attackTarget = legalAttackTargets.find((target) => target.targetType === requestedAttackTarget?.targetType && target.targetId === requestedAttackTarget?.targetId) || null;
       if (!attackTarget) return;
       const nextAttackers = { ...(game.combat?.attackers || {}) };
       nextAttackers[payload.cardId] = attackTarget;
@@ -10766,9 +10832,11 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
 
     } else if (actionType === 'TOGGLE_BLOCK_TARGET') {
       if (game.phase !== 'combat_blockers') return;
+      const blockingCard = game.cards.find(c => c.instanceId === payload.cardId);
       const nextBlockers = { ...(game.combat?.blockers || {}) };
       const existing = nextBlockers[payload.cardId] || [];
       const isBlocking = existing.includes(payload.attackerId);
+      if (!blockingCard || (!isBlocking && !canPlayerBlockAttacker(game, blockingCard.controllerId, payload.attackerId))) return;
       const nextBlocking = isBlocking ? existing.filter(id => id !== payload.attackerId) : [...existing, payload.attackerId];
       if (nextBlocking.length === 0) delete nextBlockers[payload.cardId];
       else nextBlockers[payload.cardId] = nextBlocking;
@@ -12704,8 +12772,8 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
     .map((id) => cardsMap.get(id))
     .filter((c) => c && c.zone === ZONES.BATTLEFIELD);
   const validBlockerCandidates = myBattlefield.filter((c) => getCardTypeLine(c).toLowerCase().includes('creature'));
-  const validBlockTargetAttackers = attackingCards.filter((c) => c.controllerId !== viewAsPlayerId);
-  const activeAttackers = validBlockTargetAttackers;
+  const validBlockTargetAttackers = attackingCards.filter((c) => canPlayerBlockAttacker(game, viewAsPlayerId, c.instanceId));
+  const activeAttackers = blockPickerCard ? getLegalAttackersForBlocker(game, blockPickerCard, viewAsPlayerId) : validBlockTargetAttackers;
   const getCombatDisplayCardName = (cardOrId) => getCombatDisplayName(cardOrId, game, allBattlefieldDisplayNames);
   const getAttackTargetLabel = (attackTarget, attackerCard = null) => getCombatAttackTargetName(attackTarget, game, allBattlefieldDisplayNames, attackerCard);
   const getCardAttackTargetLabel = (cardId) => {
@@ -12750,7 +12818,10 @@ const GameBoard = ({ gameId, realUserId, displayName, onExit }) => {
   };
 
   const attackSummaryGroups = attackingCards.reduce((groups, attacker) => {
-    const label = getCardAttackTargetLabel(attacker.instanceId) || 'Defender';
+    const assignment = getAttackAssignment(game, attacker.instanceId);
+    const defenderName = getPlayerNameById(game, getDefendingPlayerId(game, assignment), null);
+    const targetName = getCardAttackTargetLabel(attacker.instanceId) || 'Defender';
+    const label = defenderName && defenderName !== targetName ? `${targetName} (${defenderName} defending)` : targetName;
     const existingGroup = groups.find((group) => group.label === label);
     if (existingGroup) existingGroup.attackers.push(attacker);
     else groups.push({ label, attackers: [attacker] });
